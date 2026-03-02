@@ -12,7 +12,10 @@ if(PLATFORM STREQUAL "")
 endif()
 
 file(GLOB SOURCES src/*.c)
-add_executable(butterscotch ${SOURCES})
+# Platform specific files builds
+file(GLOB PLATFORM_SOURCES src/platforms/${PLATFORM}/*.c)
+
+add_executable(butterscotch ${SOURCES} ${PLATFORM_SOURCES})
 target_include_directories(butterscotch PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 if(PLATFORM STREQUAL "glfw")
@@ -20,10 +23,13 @@ if(PLATFORM STREQUAL "glfw")
     add_library(glad STATIC vendor/glad/src/glad.c)
     target_include_directories(glad PUBLIC vendor/glad/include)
 
+    # STB
+    target_include_directories(butterscotch PUBLIC vendor/stb)
+
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW3 REQUIRED glfw3)
     target_include_directories(butterscotch PRIVATE ${GLFW3_INCLUDE_DIRS})
-    target_link_libraries(butterscotch ${GLFW3_LIBRARIES} glad)
+    target_link_libraries(butterscotch ${GLFW3_LIBRARIES} glad m)
 
     # Enable useful things to figure out when things have gone wrong related to memory corruption
     # (Also set -DCMAKE_BUILD_TYPE=Debug to get debug symbols!)

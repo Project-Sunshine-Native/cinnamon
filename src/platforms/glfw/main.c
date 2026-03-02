@@ -1,10 +1,10 @@
-#include "data_win.h"
+#include "../../data_win.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <stdio.h>
 
-#include "utils.h"
+#include "../../utils.h"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    GLFWwindow* window = glfwCreateWindow((int)gen8->defaultWindowWidth, (int)gen8->defaultWindowHeight, windowTitle, nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow((int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight, windowTitle, nullptr, nullptr);
     if (window == nullptr) {
         fprintf(stderr, "Failed to create GLFW window\n");
         glfwTerminate();
@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
     glfwMakeContextCurrent(window);
 
     // Load OpenGL function pointers via GLAD
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    if (!gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) {
         fprintf(stderr, "Failed to initialize GLAD\n");
         glfwDestroyWindow(window);
         glfwTerminate();
