@@ -876,7 +876,7 @@ static void handleBranch(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
 
 static void handleBranchTrue(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
     RValue val = stackPop(&ctx->stack);
-    bool condition = RValue_toBool(val);
+    bool condition = RValue_toInt32(val) != 0;
     RValue_free(&val);
     if (condition) {
         int32_t offset = instrJumpOffset(instr);
@@ -886,7 +886,7 @@ static void handleBranchTrue(VMContext* ctx, uint32_t instr, uint32_t instrAddr)
 
 static void handleBranchFalse(VMContext* ctx, uint32_t instr, uint32_t instrAddr) {
     RValue val = stackPop(&ctx->stack);
-    bool condition = RValue_toBool(val);
+    bool condition = RValue_toInt32(val) != 0;
     RValue_free(&val);
     if (!condition) {
         int32_t offset = instrJumpOffset(instr);
@@ -903,11 +903,11 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
 
     const char* funcName = ctx->dataWin->func.functions[funcIndex].name;
 
-    // Pop arguments from stack (they were pushed left-to-right, so pop in reverse)
+    // Pop arguments from stack (args pushed right-to-left, so first arg is on top)
     RValue* args = nullptr;
     if (argCount > 0) {
         args = malloc(argCount * sizeof(RValue));
-        for (int32_t i = argCount - 1; i >= 0; i--) {
+        repeat(argCount, i) {
             args[i] = stackPop(&ctx->stack);
         }
     }
