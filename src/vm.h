@@ -134,6 +134,10 @@ typedef struct VMContext {
     StringBooleanEntry* globalVarsToBeTraced;
     StringBooleanEntry* instanceVarsToBeTraced;
     StringBooleanEntry* functionCallsToBeTraced;
+    // Current event context (set by Runner_executeEvent, -1 when not in an event)
+    int32_t currentEventType;
+    int32_t currentEventSubtype;
+    int32_t currentEventObjectIndex; // objectIndex of the object that owns the executing event handler
     // Resolved reference maps: absolute file offset of operand -> resolved value
     // varRefMap value = upper 5 bits (varType) | varIndex in lower 27 bits
     // funcRefMap value = funcIndex

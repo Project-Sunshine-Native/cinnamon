@@ -1147,6 +1147,9 @@ VMContext* VM_create(DataWin* dataWin) {
     ctx->selfId = -1;
     ctx->otherId = -1;
     ctx->callDepth = 0;
+    ctx->currentEventType = -1;
+    ctx->currentEventSubtype = -1;
+    ctx->currentEventObjectIndex = -1;
 
     // Build reference lookup maps (file buffer stays read-only)
     buildReferenceMaps(ctx);

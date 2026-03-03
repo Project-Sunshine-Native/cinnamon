@@ -1118,6 +1118,23 @@ static RValue builtinInstanceCreate(VMContext* ctx, RValue* args, int32_t argCou
     return RValue_makeReal((double) inst->instanceId);
 }
 
+static RValue builtinEventInherited(VMContext* ctx, RValue* args, int32_t argCount) {
+    (void) args; (void) argCount;
+    Runner* runner = (Runner*) ctx->runner;
+    Instance* inst = (Instance*) ctx->currentInstance;
+    if (inst == nullptr || 0 > ctx->currentEventObjectIndex || 0 > ctx->currentEventType) return RValue_makeReal(0.0);
+
+    DataWin* dataWin = ctx->dataWin;
+    int32_t ownerObjectIndex = ctx->currentEventObjectIndex;
+    if ((uint32_t) ownerObjectIndex >= dataWin->objt.count) return RValue_makeReal(0.0);
+
+    int32_t parentObjectIndex = dataWin->objt.objects[ownerObjectIndex].parentId;
+    if (0 > parentObjectIndex) return RValue_makeReal(0.0);
+
+    Runner_executeEventFromObject(runner, inst, parentObjectIndex, ctx->currentEventType, ctx->currentEventSubtype);
+    return RValue_makeReal(0.0);
+}
+
 static RValue builtinActionKillObject(VMContext* ctx, RValue* args, int32_t argCount) {
     (void) args; (void) argCount;
     Runner* runner = (Runner*) ctx->runner;
@@ -1411,6 +1428,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("instance_destroy", builtinInstanceDestroy);
     registerBuiltin("instance_create", builtinInstanceCreate);
     registerBuiltin("action_kill_object", builtinActionKillObject);
+    registerBuiltin("event_inherited", builtinEventInherited);
 
     // Buffer
     registerBuiltin("buffer_create", builtin_buffer_create);

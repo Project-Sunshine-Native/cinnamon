@@ -9,9 +9,10 @@
 #include "stb_ds.h"
 
 // ===[ Helper: Find event action in object hierarchy ]===
-// Walks the parent chain to find an event handler.
+// Walks the parent chain starting from objectIndex to find an event handler.
 // Returns the EventAction's codeId, or -1 if not found.
-static int32_t findEventCodeId(DataWin* dataWin, int32_t objectIndex, int32_t eventType, int32_t eventSubtype) {
+// If outOwnerObjectIndex is non-null, it is set to the objectIndex that owns the found event (or -1 if not found).
+static int32_t findEventCodeIdAndOwner(DataWin* dataWin, int32_t objectIndex, int32_t eventType, int32_t eventSubtype, int32_t* outOwnerObjectIndex) {
     int32_t currentObj = objectIndex;
     int depth = 0;
 
@@ -25,8 +26,10 @@ static int32_t findEventCodeId(DataWin* dataWin, int32_t objectIndex, int32_t ev
                 if ((int32_t) evt->eventSubtype == eventSubtype) {
                     // Found it - return the first action's codeId
                     if (evt->actionCount > 0 && evt->actions[0].codeId >= 0) {
+                        if (outOwnerObjectIndex != nullptr) *outOwnerObjectIndex = currentObj;
                         return evt->actions[0].codeId;
                     }
+                    if (outOwnerObjectIndex != nullptr) *outOwnerObjectIndex = -1;
                     return -1;
                 }
             }
@@ -37,6 +40,7 @@ static int32_t findEventCodeId(DataWin* dataWin, int32_t objectIndex, int32_t ev
         depth++;
     }
 
+    if (outOwnerObjectIndex != nullptr) *outOwnerObjectIndex = -1;
     return -1;
 }
 
@@ -75,10 +79,28 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     restoreVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
 }
 
-void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, int32_t eventSubtype) {
-    int32_t codeId = findEventCodeId(runner->dataWin, instance->objectIndex, eventType, eventSubtype);
+void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t startObjectIndex, int32_t eventType, int32_t eventSubtype) {
+    int32_t ownerObjectIndex = -1;
+    int32_t codeId = findEventCodeIdAndOwner(runner->dataWin, startObjectIndex, eventType, eventSubtype, &ownerObjectIndex);
+
+    VMContext* vm = runner->vmContext;
+    int32_t savedEventType = vm->currentEventType;
+    int32_t savedEventSubtype = vm->currentEventSubtype;
+    int32_t savedEventObjectIndex = vm->currentEventObjectIndex;
+
+    vm->currentEventType = eventType;
+    vm->currentEventSubtype = eventSubtype;
+    vm->currentEventObjectIndex = ownerObjectIndex;
 
     executeCode(runner, instance, codeId);
+
+    vm->currentEventType = savedEventType;
+    vm->currentEventSubtype = savedEventSubtype;
+    vm->currentEventObjectIndex = savedEventObjectIndex;
+}
+
+void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, int32_t eventSubtype) {
+    Runner_executeEventFromObject(runner, instance, instance->objectIndex, eventType, eventSubtype);
 }
 
 void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventSubtype) {

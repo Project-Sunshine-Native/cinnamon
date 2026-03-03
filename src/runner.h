@@ -39,6 +39,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm);
 void Runner_initFirstRoom(Runner* runner);
 void Runner_step(Runner* runner);
 void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, int32_t eventSubtype);
+void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t startObjectIndex, int32_t eventType, int32_t eventSubtype);
 void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventSubtype);
 Instance* Runner_createInstance(Runner* runner, double x, double y, int32_t objectIndex);
 void Runner_destroyInstance(Runner* runner, Instance* inst);
