@@ -48,7 +48,7 @@ static void setVMInstanceContext(VMContext* vm, Instance* instance) {
     vm->currentInstance = instance;
 }
 
-static void clearVMInstanceContext(VMContext* vm, RValue* savedSelfVars, uint32_t savedSelfVarCount, Instance* savedInstance) {
+static void restoreVMInstanceContext(VMContext* vm, RValue* savedSelfVars, uint32_t savedSelfVarCount, Instance* savedInstance) {
     vm->selfVars = savedSelfVars;
     vm->selfVarCount = savedSelfVarCount;
     vm->currentInstance = savedInstance;
@@ -73,7 +73,7 @@ void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, 
     RValue_free(&result);
 
     // Restore
-    clearVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
+    restoreVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
 }
 
 void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventSubtype) {
@@ -103,7 +103,7 @@ static void executeCodeIfValid(Runner* runner, Instance* instance, int32_t codeI
     RValue result = VM_executeCode(vm, codeId);
     RValue_free(&result);
 
-    clearVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
+    restoreVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
 }
 
 static void initRoom(Runner* runner, int32_t roomIndex) {
