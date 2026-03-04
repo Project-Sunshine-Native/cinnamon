@@ -886,11 +886,21 @@ void Runner_dumpState(Runner* runner) {
         Instance* inst = runner->instances[i];
         if (!inst->active) continue;
 
-        const char* objName = (inst->objectIndex >= 0 && dataWin->objt.count > (uint32_t) inst->objectIndex) ? dataWin->objt.objects[inst->objectIndex].name : "<unknown>";
+        GameObject* gameObject = nullptr;
+        const char* objName = "<unknown>";
+        if (inst->objectIndex >= 0 && dataWin->objt.count > (uint32_t) inst->objectIndex) {
+            gameObject = &dataWin->objt.objects[inst->objectIndex];
+            objName = gameObject->name;
+        }
 
         const char* spriteName = "<none>";
         if (inst->spriteIndex >= 0 && dataWin->sprt.count > (uint32_t) inst->spriteIndex) {
             spriteName = dataWin->sprt.sprites[inst->spriteIndex].name;
+        }
+
+        const char* parentName = "<none>";
+        if (gameObject != nullptr && gameObject->parentId >= 0 && dataWin->objt.count > (uint32_t) gameObject->parentId) {
+            parentName = dataWin->objt.objects[gameObject->parentId].name;
         }
 
         printf("\n--- Instance #%d (%s, objectIndex=%d) ---\n", inst->instanceId, objName, inst->objectIndex);
@@ -899,6 +909,7 @@ void Runner_dumpState(Runner* runner) {
         printf("  Sprite: %s (index %d), imageIndex=%g, imageSpeed=%g\n", spriteName, inst->spriteIndex, inst->imageIndex, inst->imageSpeed);
         printf("  Scale: (%g, %g), Angle: %g, Alpha: %g, Blend: 0x%06X\n", inst->imageXscale, inst->imageYscale, inst->imageAngle, inst->imageAlpha, inst->imageBlend);
         printf("  Visible: %s, Active: %s, Solid: %s, Persistent: %s\n", inst->visible ? "true" : "false", inst->active ? "true" : "false", inst->solid ? "true" : "false", inst->persistent ? "true" : "false");
+        printf("  Parent: %s (parentId=%d)\n", parentName, gameObject != nullptr ? gameObject->parentId : -1);
 
         // Active alarms
         bool hasAlarm = false;
@@ -1062,6 +1073,19 @@ char* Runner_dumpStateJson(Runner* runner) {
         JsonWriter_propertyInt(&w, "instanceId", inst->instanceId);
         JsonWriter_propertyString(&w, "objectName", objName);
         JsonWriter_propertyInt(&w, "objectIndex", inst->objectIndex);
+
+        // Parent object
+        const char* parentName = nullptr;
+        int32_t parentId = -1;
+        if (inst->objectIndex >= 0 && dataWin->objt.count > (uint32_t) inst->objectIndex) {
+            parentId = dataWin->objt.objects[inst->objectIndex].parentId;
+            if (parentId >= 0 && dataWin->objt.count > (uint32_t) parentId) {
+                parentName = dataWin->objt.objects[parentId].name;
+            }
+        }
+        JsonWriter_propertyString(&w, "parentObjectName", parentName);
+        JsonWriter_propertyInt(&w, "parentObjectIndex", parentId);
+
         JsonWriter_propertyDouble(&w, "x", inst->x);
         JsonWriter_propertyDouble(&w, "y", inst->y);
         JsonWriter_propertyInt(&w, "depth", inst->depth);
