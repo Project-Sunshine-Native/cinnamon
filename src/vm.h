@@ -136,6 +136,7 @@ typedef struct VMContext {
     StringBooleanEntry* functionCallsToBeTraced;
     StringBooleanEntry* alarmsToBeTraced;
     StringBooleanEntry* instanceLifecyclesToBeTraced;
+    StringBooleanEntry* eventsToBeTraced;
     // Current event context (set by Runner_executeEvent, -1 when not in an event)
     int32_t currentEventType;
     int32_t currentEventSubtype;

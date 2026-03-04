@@ -79,6 +79,30 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     restoreVMInstanceContext(vm, savedSelfVars, savedSelfVarCount, savedInstance);
 }
 
+static const char* getEventName(int32_t eventType, int32_t eventSubtype) {
+    switch (eventType) {
+        case EVENT_CREATE:  return "Create";
+        case EVENT_DESTROY: return "Destroy";
+        case EVENT_ALARM:   return "Alarm";
+        case EVENT_STEP:
+            switch (eventSubtype) {
+                case STEP_BEGIN:  return "BeginStep";
+                case STEP_NORMAL: return "NormalStep";
+                case STEP_END:    return "EndStep";
+                default:          return "Step";
+            }
+        case EVENT_DRAW: return "Draw";
+        case EVENT_OTHER:
+            switch (eventSubtype) {
+                case OTHER_GAME_START: return "GameStart";
+                case OTHER_ROOM_START: return "RoomStart";
+                case OTHER_ROOM_END:   return "RoomEnd";
+                default:               return "Other";
+            }
+        default: return "Unknown";
+    }
+}
+
 void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t startObjectIndex, int32_t eventType, int32_t eventSubtype) {
     int32_t ownerObjectIndex = -1;
     int32_t codeId = findEventCodeIdAndOwner(runner->dataWin, startObjectIndex, eventType, eventSubtype, &ownerObjectIndex);
@@ -91,6 +115,21 @@ void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t s
     vm->currentEventType = eventType;
     vm->currentEventSubtype = eventSubtype;
     vm->currentEventObjectIndex = ownerObjectIndex;
+
+    if (codeId >= 0 && shlen(vm->eventsToBeTraced) != -1) {
+        const char* eventName = getEventName(eventType, eventSubtype);
+        const char* objectName = runner->dataWin->objt.objects[instance->objectIndex].name;
+
+        bool shouldTrace = shgeti(vm->eventsToBeTraced, "*") != -1 || shgeti(vm->eventsToBeTraced, eventName) != -1 || shgeti(vm->eventsToBeTraced, objectName) != -1;
+
+        if (shouldTrace) {
+            if (eventType == EVENT_ALARM) {
+                printf("Runner: [%s] %s %d (instanceId=%d)\n", objectName, eventName, eventSubtype, instance->instanceId);
+            } else {
+                printf("Runner: [%s] %s (instanceId=%d)\n", objectName, eventName, instance->instanceId);
+            }
+        }
+    }
 
     executeCode(runner, instance, codeId);
 
