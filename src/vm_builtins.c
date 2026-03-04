@@ -173,6 +173,49 @@ RValue VMBuiltins_getVariable(VMContext* ctx, const char* name, int32_t arrayInd
             }
             return RValue_makeReal(0.0);
         }
+
+        // Background properties
+        if (strcmp(name, "background_visible") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) return RValue_makeBool(runner->backgrounds[arrayIndex].visible);
+            return RValue_makeBool(false);
+        }
+        if (strcmp(name, "background_index") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) return RValue_makeReal((double) runner->backgrounds[arrayIndex].backgroundIndex);
+            return RValue_makeReal(-1.0);
+        }
+        if (strcmp(name, "background_x") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) return RValue_makeReal((double) runner->backgrounds[arrayIndex].x);
+            return RValue_makeReal(0.0);
+        }
+        if (strcmp(name, "background_y") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) return RValue_makeReal((double) runner->backgrounds[arrayIndex].y);
+            return RValue_makeReal(0.0);
+        }
+        if (strcmp(name, "background_hspeed") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) return RValue_makeReal((double) runner->backgrounds[arrayIndex].speedX);
+            return RValue_makeReal(0.0);
+        }
+        if (strcmp(name, "background_vspeed") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) return RValue_makeReal((double) runner->backgrounds[arrayIndex].speedY);
+            return RValue_makeReal(0.0);
+        }
+        if (strcmp(name, "background_width") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) {
+                int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, runner->backgrounds[arrayIndex].backgroundIndex);
+                if (tpagIndex >= 0) return RValue_makeReal((double) runner->dataWin->tpag.items[tpagIndex].boundingWidth);
+            }
+            return RValue_makeReal(0.0);
+        }
+        if (strcmp(name, "background_height") == 0) {
+            if (arrayIndex >= 0 && 8 > arrayIndex) {
+                int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, runner->backgrounds[arrayIndex].backgroundIndex);
+                if (tpagIndex >= 0) return RValue_makeReal((double) runner->dataWin->tpag.items[tpagIndex].boundingHeight);
+            }
+            return RValue_makeReal(0.0);
+        }
+        if (strcmp(name, "background_color") == 0 || strcmp(name, "background_colour") == 0) {
+            return RValue_makeReal((double) runner->backgroundColor);
+        }
     }
 
     // Timing
@@ -273,6 +316,36 @@ void VMBuiltins_setVariable(VMContext* ctx, const char* name, RValue val, int32_
         if (arrayIndex >= 0 && 8 > arrayIndex) {
             runner->currentRoom->views[arrayIndex].viewX = RValue_toInt32(val);
         }
+        return;
+    }
+
+    // Background properties
+    if (strcmp(name, "background_visible") == 0) {
+        if (arrayIndex >= 0 && 8 > arrayIndex) runner->backgrounds[arrayIndex].visible = RValue_toBool(val);
+        return;
+    }
+    if (strcmp(name, "background_index") == 0) {
+        if (arrayIndex >= 0 && 8 > arrayIndex) runner->backgrounds[arrayIndex].backgroundIndex = RValue_toInt32(val);
+        return;
+    }
+    if (strcmp(name, "background_x") == 0) {
+        if (arrayIndex >= 0 && 8 > arrayIndex) runner->backgrounds[arrayIndex].x = (float) RValue_toReal(val);
+        return;
+    }
+    if (strcmp(name, "background_y") == 0) {
+        if (arrayIndex >= 0 && 8 > arrayIndex) runner->backgrounds[arrayIndex].y = (float) RValue_toReal(val);
+        return;
+    }
+    if (strcmp(name, "background_hspeed") == 0) {
+        if (arrayIndex >= 0 && 8 > arrayIndex) runner->backgrounds[arrayIndex].speedX = (float) RValue_toReal(val);
+        return;
+    }
+    if (strcmp(name, "background_vspeed") == 0) {
+        if (arrayIndex >= 0 && 8 > arrayIndex) runner->backgrounds[arrayIndex].speedY = (float) RValue_toReal(val);
+        return;
+    }
+    if (strcmp(name, "background_color") == 0 || strcmp(name, "background_colour") == 0) {
+        runner->backgroundColor = (uint32_t) RValue_toInt32(val);
         return;
     }
 
@@ -1405,8 +1478,99 @@ STUB_RETURN_UNDEFINED(draw_text_ext)
 STUB_RETURN_UNDEFINED(draw_text_ext_transformed)
 STUB_RETURN_UNDEFINED(draw_surface)
 STUB_RETURN_UNDEFINED(draw_surface_ext)
-STUB_RETURN_UNDEFINED(draw_background)
-STUB_RETURN_UNDEFINED(draw_background_ext)
+static RValue builtin_drawBackground(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || 3 > argCount) return RValue_makeUndefined();
+
+    int32_t bgIndex = RValue_toInt32(args[0]);
+    float x = (float) RValue_toReal(args[1]);
+    float y = (float) RValue_toReal(args[2]);
+
+    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, bgIndex);
+    if (0 > tpagIndex) return RValue_makeUndefined();
+
+    runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, x, y, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0xFFFFFF, runner->renderer->drawAlpha);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_drawBackgroundExt(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || 8 > argCount) return RValue_makeUndefined();
+
+    int32_t bgIndex = RValue_toInt32(args[0]);
+    float x = (float) RValue_toReal(args[1]);
+    float y = (float) RValue_toReal(args[2]);
+    float xscale = (float) RValue_toReal(args[3]);
+    float yscale = (float) RValue_toReal(args[4]);
+    float rot = (float) RValue_toReal(args[5]);
+    uint32_t color = (uint32_t) RValue_toInt32(args[6]);
+    float alpha = (float) RValue_toReal(args[7]);
+
+    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, bgIndex);
+    if (0 > tpagIndex) return RValue_makeUndefined();
+
+    runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, x, y, 0.0f, 0.0f, xscale, yscale, rot, color, alpha);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_drawBackgroundStretched(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || 5 > argCount) return RValue_makeUndefined();
+
+    int32_t bgIndex = RValue_toInt32(args[0]);
+    float x = (float) RValue_toReal(args[1]);
+    float y = (float) RValue_toReal(args[2]);
+    float w = (float) RValue_toReal(args[3]);
+    float h = (float) RValue_toReal(args[4]);
+
+    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, bgIndex);
+    if (0 > tpagIndex) return RValue_makeUndefined();
+
+    TexturePageItem* tpag = &runner->dataWin->tpag.items[tpagIndex];
+    float xscale = w / (float) tpag->boundingWidth;
+    float yscale = h / (float) tpag->boundingHeight;
+
+    runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, x, y, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, runner->renderer->drawAlpha);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_drawBackgroundPartExt(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || 11 > argCount) return RValue_makeUndefined();
+
+    int32_t bgIndex = RValue_toInt32(args[0]);
+    int32_t left = RValue_toInt32(args[1]);
+    int32_t top = RValue_toInt32(args[2]);
+    int32_t width = RValue_toInt32(args[3]);
+    int32_t height = RValue_toInt32(args[4]);
+    float x = (float) RValue_toReal(args[5]);
+    float y = (float) RValue_toReal(args[6]);
+    // xscale (args[7]) and yscale (args[8]) are unused for drawSpritePart
+    uint32_t color = (uint32_t) RValue_toInt32(args[9]);
+    float alpha = (float) RValue_toReal(args[10]);
+
+    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, bgIndex);
+    if (0 > tpagIndex) return RValue_makeUndefined();
+
+    runner->renderer->vtable->drawSpritePart(runner->renderer, tpagIndex, left, top, width, height, x, y, color, alpha);
+    return RValue_makeUndefined();
+}
+
+static RValue builtinBackgroundGetWidth(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+    int32_t bgIndex = RValue_toInt32(args[0]);
+    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
+    if (0 > tpagIndex) return RValue_makeReal(0.0);
+    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingWidth);
+}
+
+static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+    int32_t bgIndex = RValue_toInt32(args[0]);
+    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
+    if (0 > tpagIndex) return RValue_makeReal(0.0);
+    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingHeight);
+}
 
 static RValue builtin_draw_self(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
@@ -1745,8 +1909,12 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("draw_text_ext_transformed", builtin_draw_text_ext_transformed);
     registerBuiltin("draw_surface", builtin_draw_surface);
     registerBuiltin("draw_surface_ext", builtin_draw_surface_ext);
-    registerBuiltin("draw_background", builtin_draw_background);
-    registerBuiltin("draw_background_ext", builtin_draw_background_ext);
+    registerBuiltin("draw_background", builtin_drawBackground);
+    registerBuiltin("draw_background_ext", builtin_drawBackgroundExt);
+    registerBuiltin("draw_background_stretched", builtin_drawBackgroundStretched);
+    registerBuiltin("draw_background_part_ext", builtin_drawBackgroundPartExt);
+    registerBuiltin("background_get_width", builtinBackgroundGetWidth);
+    registerBuiltin("background_get_height", builtinBackgroundGetHeight);
     registerBuiltin("draw_self", builtin_draw_self);
     registerBuiltin("draw_line", builtin_draw_line);
     registerBuiltin("draw_set_colour", builtin_draw_set_colour);

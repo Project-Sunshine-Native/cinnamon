@@ -477,10 +477,14 @@ int main(int argc, char* argv[]) {
         renderer->vtable->beginFrame(renderer, viewX, viewY, viewW, viewH, fbWidth, fbHeight);
 
         // Now FBO is bound, clear with room background color
-        int rInt = BGR_R(activeRoom->backgroundColor);
-        int gInt = BGR_G(activeRoom->backgroundColor);
-        int bInt = BGR_B(activeRoom->backgroundColor);
-        glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
+        if (runner->drawBackgroundColor) {
+            int rInt = BGR_R(runner->backgroundColor);
+            int gInt = BGR_G(runner->backgroundColor);
+            int bInt = BGR_B(runner->backgroundColor);
+            glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
+        } else {
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        }
         glClear(GL_COLOR_BUFFER_BIT);
 
         // Fire Draw events for all visible instances, sorted by depth

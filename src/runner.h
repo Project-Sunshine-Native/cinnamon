@@ -37,6 +37,16 @@
 #define OTHER_ROOM_START 4
 #define OTHER_ROOM_END   5
 
+typedef struct {
+    bool visible;
+    bool foreground;
+    int32_t backgroundIndex;  // BGND resource index (mutable at runtime)
+    float x, y;               // float for sub-pixel scrolling accumulation
+    bool tileX, tileY;
+    float speedX, speedY;
+    bool stretch;
+} RuntimeBackground;
+
 typedef struct Runner {
     DataWin* dataWin;
     VMContext* vmContext;
@@ -50,6 +60,9 @@ typedef struct Runner {
     int frameCount;
     uint32_t nextInstanceId;
     RunnerKeyboardState* keyboard;
+    RuntimeBackground backgrounds[8];
+    uint32_t backgroundColor;      // runtime-mutable (BGR format)
+    bool drawBackgroundColor;
 } Runner;
 
 Runner* Runner_create(DataWin* dataWin, VMContext* vm);
@@ -59,6 +72,8 @@ void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, 
 void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t startObjectIndex, int32_t eventType, int32_t eventSubtype);
 void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventSubtype);
 void Runner_draw(Runner* runner);
+void Runner_drawBackgrounds(Runner* runner, bool foreground);
+void Runner_scrollBackgrounds(Runner* runner);
 Instance* Runner_createInstance(Runner* runner, double x, double y, int32_t objectIndex);
 void Runner_destroyInstance(Runner* runner, Instance* inst);
 void Runner_cleanupDestroyedInstances(Runner* runner);

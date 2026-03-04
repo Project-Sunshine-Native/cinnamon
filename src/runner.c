@@ -205,6 +205,46 @@ void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventS
     }
 }
 
+// ===[ Background Scrolling & Drawing ]===
+
+void Runner_scrollBackgrounds(Runner* runner) {
+    repeat(8, i) {
+        RuntimeBackground* bg = &runner->backgrounds[i];
+        if (!bg->visible) continue;
+        bg->x += bg->speedX;
+        bg->y += bg->speedY;
+    }
+}
+
+void Runner_drawBackgrounds(Runner* runner, bool foreground) {
+    if (runner->renderer == nullptr) return;
+    DataWin* dataWin = runner->dataWin;
+    float roomW = (float) runner->currentRoom->width;
+    float roomH = (float) runner->currentRoom->height;
+
+    repeat(8, i) {
+        RuntimeBackground* bg = &runner->backgrounds[i];
+        if (!bg->visible || bg->foreground != foreground) continue;
+        if (0 > bg->backgroundIndex) continue;
+
+        int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(dataWin, bg->backgroundIndex);
+        if (0 > tpagIndex) continue;
+
+        if (bg->stretch) {
+            // Stretch to fill room dimensions
+            TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
+            float xscale = roomW / (float) tpag->boundingWidth;
+            float yscale = roomH / (float) tpag->boundingHeight;
+            runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, 1.0f);
+        } else if (bg->tileX || bg->tileY) {
+            Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, roomW, roomH);
+        } else {
+            // Single placement
+            runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, bg->x, bg->y, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0xFFFFFF, 1.0f);
+        }
+    }
+}
+
 // ===[ Draw ]===
 
 static int compareInstanceDepth(const void* a, const void* b) {
@@ -239,6 +279,9 @@ void Runner_draw(Runner* runner) {
         qsort(drawList, drawCount, sizeof(Instance*), compareInstanceDepth);
     }
 
+    // Draw non-foreground backgrounds (behind everything)
+    Runner_drawBackgrounds(runner, false);
+
     // Fire draw subtypes in correct GameMaker order
     fireDrawSubtype(runner, drawList, drawCount, DRAW_PRE);
     fireDrawSubtype(runner, drawList, drawCount, DRAW_BEGIN);
@@ -255,6 +298,10 @@ void Runner_draw(Runner* runner) {
     }
 
     fireDrawSubtype(runner, drawList, drawCount, DRAW_END);
+
+    // Draw foreground backgrounds (in front of instances, behind GUI)
+    Runner_drawBackgrounds(runner, true);
+
     fireDrawSubtype(runner, drawList, drawCount, DRAW_POST);
     fireDrawSubtype(runner, drawList, drawCount, DRAW_GUI_BEGIN);
     fireDrawSubtype(runner, drawList, drawCount, DRAW_GUI);
@@ -299,6 +346,24 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     Room* room = &dataWin->room.rooms[roomIndex];
     runner->currentRoom = room;
     runner->currentRoomIndex = roomIndex;
+
+    // Copy room background definitions into mutable runtime state
+    runner->backgroundColor = room->backgroundColor;
+    runner->drawBackgroundColor = room->drawBackgroundColor;
+    repeat(8, i) {
+        RoomBackground* src = &room->backgrounds[i];
+        RuntimeBackground* dst = &runner->backgrounds[i];
+        dst->visible = src->enabled;
+        dst->foreground = src->foreground;
+        dst->backgroundIndex = src->backgroundDefinition;
+        dst->x = (float) src->x;
+        dst->y = (float) src->y;
+        dst->tileX = (bool) src->tileX;
+        dst->tileY = (bool) src->tileY;
+        dst->speedX = (float) src->speedX;
+        dst->speedY = (float) src->speedY;
+        dst->stretch = src->stretch;
+    }
 
     // Find position in room order
     runner->currentRoomOrderPosition = -1;
@@ -437,6 +502,9 @@ void Runner_initFirstRoom(Runner* runner) {
 }
 
 void Runner_step(Runner* runner) {
+    // Scroll backgrounds
+    Runner_scrollBackgrounds(runner);
+
     // Execute Begin Step for all instances
     Runner_executeEventForAll(runner, EVENT_STEP, STEP_BEGIN);
 

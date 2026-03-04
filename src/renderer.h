@@ -106,6 +106,53 @@ static void Renderer_drawSpritePart(Renderer* renderer, int32_t spriteIndex, int
     renderer->vtable->drawSpritePart(renderer, tpagIndex, left, top, width, height, x, y, 0xFFFFFF, renderer->drawAlpha);
 }
 
+// Resolves a BGND index to a TPAG index via Background.textureOffset -> DataWin_resolveTPAG()
+static int32_t Renderer_resolveBackgroundTPAGIndex(DataWin* dataWin, int32_t bgndIndex) {
+    if (0 > bgndIndex || (uint32_t) bgndIndex >= dataWin->bgnd.count) return -1;
+    Background* bg = &dataWin->bgnd.backgrounds[bgndIndex];
+    return DataWin_resolveTPAG(dataWin, bg->textureOffset);
+}
+
+// Draws a tiled background
+static void Renderer_drawBackgroundTiled(Renderer* renderer, int32_t tpagIndex, float bgX, float bgY, bool tileX, bool tileY, float roomW, float roomH) {
+    DataWin* dw = renderer->dataWin;
+    if (0 > tpagIndex || (uint32_t) tpagIndex >= dw->tpag.count) return;
+
+    TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
+    float bgW = (float) tpag->boundingWidth;
+    float bgH = (float) tpag->boundingHeight;
+    if (0 >= bgW || 0 >= bgH) return;
+
+    // Compute start/end for each axis
+    float startX, endX, startY, endY;
+
+    if (tileX) {
+        startX = fmodf(bgX, bgW);
+        if (startX > 0) startX -= bgW;
+        endX = roomW;
+    } else {
+        startX = bgX;
+        endX = bgX + bgW;
+    }
+
+    if (tileY) {
+        startY = fmodf(bgY, bgH);
+        if (startY > 0) startY -= bgH;
+        endY = roomH;
+    } else {
+        startY = bgY;
+        endY = bgY + bgH;
+    }
+
+    for (float dy = startY; endY > dy; dy += bgH) {
+        for (float dx = startX; endX > dx; dx += bgW) {
+            renderer->vtable->drawSprite(renderer, tpagIndex, dx, dy, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0xFFFFFF, 1.0f);
+            if (!tileX) break;
+        }
+        if (!tileY) break;
+    }
+}
+
 // Default draw: draws instance's sprite using its image_* properties
 static void Renderer_drawSelf(Renderer* renderer, Instance* instance) {
     if (0 > instance->spriteIndex) return;
