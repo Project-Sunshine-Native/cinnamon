@@ -10,6 +10,7 @@ typedef struct Instance {
     int32_t objectIndex;
     double x, y;
     double xprevious, yprevious;
+    double xstart, ystart;
     bool persistent, solid, active, visible, createEventFired;
     int32_t maskIndex; // collision mask sprite override (-1 = use spriteIndex)
 

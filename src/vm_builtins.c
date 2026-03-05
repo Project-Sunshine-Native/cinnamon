@@ -153,6 +153,8 @@ RValue VMBuiltins_getVariable(VMContext* ctx, const char* name, int32_t arrayInd
         if (strcmp(name, "y") == 0) return RValue_makeReal(inst->y);
         if (strcmp(name, "xprevious") == 0) return RValue_makeReal(inst->xprevious);
         if (strcmp(name, "yprevious") == 0) return RValue_makeReal(inst->yprevious);
+        if (strcmp(name, "xstart") == 0) return RValue_makeReal(inst->xstart);
+        if (strcmp(name, "ystart") == 0) return RValue_makeReal(inst->ystart);
         if (strcmp(name, "mask_index") == 0) return RValue_makeReal((double) inst->maskIndex);
         if (strcmp(name, "id") == 0) return RValue_makeReal((double) inst->instanceId);
         if (strcmp(name, "object_index") == 0) return RValue_makeReal((double) inst->objectIndex);
@@ -323,6 +325,8 @@ void VMBuiltins_setVariable(VMContext* ctx, const char* name, RValue val, int32_
         if (strcmp(name, "solid") == 0) { inst->solid = RValue_toBool(val); return; }
         if (strcmp(name, "xprevious") == 0) { inst->xprevious = RValue_toReal(val); return; }
         if (strcmp(name, "yprevious") == 0) { inst->yprevious = RValue_toReal(val); return; }
+        if (strcmp(name, "xstart") == 0) { inst->xstart = RValue_toReal(val); return; }
+        if (strcmp(name, "ystart") == 0) { inst->ystart = RValue_toReal(val); return; }
         if (strcmp(name, "mask_index") == 0) { inst->maskIndex = RValue_toInt32(val); return; }
         if (strcmp(name, "speed") == 0) { inst->speed = RValue_toReal(val); Instance_computeComponentsFromSpeed(inst); return; }
         if (strcmp(name, "direction") == 0) {
