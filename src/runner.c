@@ -431,8 +431,62 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
 
     Room* room = &dataWin->room.rooms[roomIndex];
+    SavedRoomState* savedState = &runner->savedRoomStates[roomIndex];
+
     runner->currentRoom = room;
     runner->currentRoomIndex = roomIndex;
+
+    // Find position in room order
+    runner->currentRoomOrderPosition = -1;
+    repeat(dataWin->gen8.roomOrderCount, i) {
+        if (dataWin->gen8.roomOrder[i] == roomIndex) {
+            runner->currentRoomOrderPosition = (int32_t) i;
+            break;
+        }
+    }
+
+    // If this is a persistent room that was previously visited, restore saved state
+    if (room->persistent && savedState->initialized) {
+        // Restore backgrounds from saved state
+        memcpy(runner->backgrounds, savedState->backgrounds, sizeof(runner->backgrounds));
+        runner->backgroundColor = savedState->backgroundColor;
+        runner->drawBackgroundColor = savedState->drawBackgroundColor;
+
+        // Restore tile layer map
+        hmfree(runner->tileLayerMap);
+        runner->tileLayerMap = savedState->tileLayerMap;
+        savedState->tileLayerMap = nullptr;
+
+        // Keep only persistent instances (which travel between rooms), free non-persistent
+        // ones from the previous room. When the old room was also persistent, Runner_step
+        // already separated them; when it was NOT persistent, they're still here.
+        Instance** keptInstances = nullptr;
+        int32_t oldCount = (int32_t) arrlen(runner->instances);
+        repeat(oldCount, i) {
+            Instance* inst = runner->instances[i];
+            if (inst->persistent) {
+                arrput(keptInstances, inst);
+            } else {
+                Instance_free(inst);
+            }
+        }
+        arrfree(runner->instances);
+        runner->instances = keptInstances;
+
+        // Add back the saved room instances
+        int32_t savedCount = (int32_t) arrlen(savedState->instances);
+        repeat(savedCount, i) {
+            arrput(runner->instances, savedState->instances[i]);
+        }
+        arrfree(savedState->instances);
+        savedState->instances = nullptr;
+
+        // No Create events, no preCreateCode, no creationCode, no room creation code
+        fprintf(stderr, "Runner: Room restored (persistent): %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+        return;
+    }
+
+    // === Normal room initialization (first visit, or non-persistent room) ===
 
     // Reset tile layer state for the new room
     hmfree(runner->tileLayerMap);
@@ -454,15 +508,6 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         dst->speedX = (float) src->speedX;
         dst->speedY = (float) src->speedY;
         dst->stretch = src->stretch;
-    }
-
-    // Find position in room order
-    runner->currentRoomOrderPosition = -1;
-    repeat(dataWin->gen8.roomOrderCount, i) {
-        if (dataWin->gen8.roomOrder[i] == roomIndex) {
-            runner->currentRoomOrderPosition = (int32_t) i;
-            break;
-        }
     }
 
     // Handle persistent instances: keep persistent ones, free non-persistent
@@ -535,6 +580,9 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         RValue_free(&result);
     }
 
+    // Mark this room as initialized for persistent room support
+    savedState->initialized = true;
+
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
 }
 
@@ -552,6 +600,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm) {
     runner->currentRoomOrderPosition = -1;
     runner->nextInstanceId = dataWin->gen8.lastObj + 1;
     runner->keyboard = RunnerKeyboard_create();
+    runner->savedRoomStates = calloc(dataWin->room.count, sizeof(SavedRoomState));
 
     // Link runner to VM context
     vm->runner = (struct Runner*) runner;
@@ -938,7 +987,8 @@ void Runner_step(Runner* runner) {
     // Handle room transition
     if (runner->pendingRoom >= 0) {
         int32_t oldRoomIndex = runner->currentRoomIndex;
-        const char* oldRoomName = runner->currentRoom->name;
+        Room* oldRoom = runner->currentRoom;
+        const char* oldRoomName = oldRoom->name;
 
         // Fire Room End for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
@@ -948,6 +998,48 @@ void Runner_step(Runner* runner) {
         const char* newRoomName = runner->dataWin->room.rooms[newRoomIndex].name;
 
         fprintf(stderr, "Room changed: %s (room %d) -> %s (room %d)\n", oldRoomName, oldRoomIndex, newRoomName, newRoomIndex);
+
+        // If the old room is persistent, save its instance and visual state
+        if (oldRoom->persistent) {
+            SavedRoomState* state = &runner->savedRoomStates[oldRoomIndex];
+
+            // Free any previously saved instances (from an earlier visit)
+            int32_t prevSavedCount = (int32_t) arrlen(state->instances);
+            repeat(prevSavedCount, i) {
+                Instance_free(state->instances[i]);
+            }
+            arrfree(state->instances);
+            state->instances = nullptr;
+            hmfree(state->tileLayerMap);
+            state->tileLayerMap = nullptr;
+
+            // Separate persistent instances (travel with player) from room instances (saved)
+            Instance** keptInstances = nullptr;
+            int32_t count = (int32_t) arrlen(runner->instances);
+            repeat(count, i) {
+                Instance* inst = runner->instances[i];
+                if (inst->persistent) {
+                    arrput(keptInstances, inst);
+                } else if (inst->active) {
+                    arrput(state->instances, inst);
+                } else {
+                    Instance_free(inst);
+                }
+            }
+            arrfree(runner->instances);
+            runner->instances = keptInstances;
+
+            // Save room visual state
+            memcpy(state->backgrounds, runner->backgrounds, sizeof(runner->backgrounds));
+            state->backgroundColor = runner->backgroundColor;
+            state->drawBackgroundColor = runner->drawBackgroundColor;
+
+            // Transfer tile layer map ownership to saved state
+            state->tileLayerMap = runner->tileLayerMap;
+            runner->tileLayerMap = nullptr;
+
+            state->initialized = true;
+        }
 
         // Load new room
         initRoom(runner, newRoomIndex);
@@ -1333,6 +1425,20 @@ void Runner_free(Runner* runner) {
         Instance_free(runner->instances[i]);
     }
     arrfree(runner->instances);
+
+    // Free saved room states
+    if (runner->savedRoomStates != nullptr) {
+        repeat(runner->dataWin->room.count, i) {
+            SavedRoomState* state = &runner->savedRoomStates[i];
+            int32_t savedCount = (int32_t) arrlen(state->instances);
+            repeat(savedCount, j) {
+                Instance_free(state->instances[j]);
+            }
+            arrfree(state->instances);
+            hmfree(state->tileLayerMap);
+        }
+        free(runner->savedRoomStates);
+    }
 
     hmfree(runner->tileLayerMap);
     RunnerKeyboard_free(runner->keyboard);

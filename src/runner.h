@@ -56,6 +56,24 @@ typedef struct {
     float offsetY;
 } TileLayerState;
 
+// stb_ds hashmap entry: depth -> tile layer state
+typedef struct {
+    int32_t key;
+    TileLayerState value;
+} TileLayerMapEntry;
+
+// Saved state for persistent rooms. When leaving a persistent room, instance state
+// and visual properties are saved here. When returning, they are restored instead
+// of re-creating from the room definition.
+typedef struct {
+    bool initialized;
+    Instance** instances; // stb_ds array of saved Instance*
+    RuntimeBackground backgrounds[8];
+    uint32_t backgroundColor;
+    bool drawBackgroundColor;
+    TileLayerMapEntry* tileLayerMap; // stb_ds hashmap: depth -> tile layer state
+} SavedRoomState;
+
 typedef struct Runner {
     DataWin* dataWin;
     VMContext* vmContext;
@@ -74,7 +92,8 @@ typedef struct Runner {
     bool drawBackgroundColor;
     bool shouldExit;
     bool debugMode;
-    struct { int32_t key; TileLayerState value; }* tileLayerMap; // stb_ds hashmap: depth -> tile layer state
+    TileLayerMapEntry* tileLayerMap; // stb_ds hashmap: depth -> tile layer state
+    SavedRoomState* savedRoomStates; // array of size dataWin->room.count, for persistent room support
 } Runner;
 
 const char* Runner_getEventName(int32_t eventType, int32_t eventSubtype);
