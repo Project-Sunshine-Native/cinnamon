@@ -844,6 +844,48 @@ static RValue builtinDistanceToPoint(VMContext* ctx, RValue* args, int32_t argCo
     return RValue_makeReal(sqrt(xd * xd + yd * yd));
 }
 
+// distance_to_object(obj)
+// Returns the minimum bbox-to-bbox distance between the calling instance and the nearest instance of the given object.
+static RValue builtinDistanceToObject(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner == nullptr) return RValue_makeReal(0.0);
+
+    int32_t targetObjIndex = RValue_toInt32(args[0]);
+    Instance* self = ctx->currentInstance;
+
+    // Compute self bbox
+    Sprite* selfSpr = Collision_getSprite(ctx->dataWin, self);
+    if (selfSpr == nullptr) return RValue_makeReal(0.0);
+    InstanceBBox selfBBox = Collision_computeBBox(ctx->dataWin, self);
+    if (!selfBBox.valid) return RValue_makeReal(0.0);
+
+    double minDist = 10000000000.0;
+    int32_t count = (int32_t) arrlen(runner->instances);
+
+    repeat(count, i) {
+        Instance* inst = runner->instances[i];
+        if (!inst->active || inst == self) continue;
+        if (!Collision_matchesTarget(ctx->dataWin, inst, targetObjIndex)) continue;
+
+        InstanceBBox otherBBox = Collision_computeBBox(ctx->dataWin, inst);
+        if (!otherBBox.valid) continue;
+
+        double xd = 0.0;
+        double yd = 0.0;
+        if (otherBBox.left > selfBBox.right)  xd = otherBBox.left - selfBBox.right;
+        if (selfBBox.left > otherBBox.right)  xd = selfBBox.left - otherBBox.right;
+        if (otherBBox.top > selfBBox.bottom)  yd = otherBBox.top - selfBBox.bottom;
+        if (selfBBox.top > otherBBox.bottom)  yd = selfBBox.top - otherBBox.bottom;
+
+        double dist = sqrt(xd * xd + yd * yd);
+        if (minDist > dist) minDist = dist;
+    }
+
+    return RValue_makeReal(minDist);
+}
+
 static RValue builtinPointDirection([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
     if (4 > argCount) return RValue_makeReal(0.0);
     double dx = RValue_toReal(args[2]) - RValue_toReal(args[0]);
@@ -2637,6 +2679,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("point_distance", builtinPointDistance);
     registerBuiltin("point_direction", builtinPointDirection);
     registerBuiltin("distance_to_point", builtinDistanceToPoint);
+    registerBuiltin("distance_to_object", builtinDistanceToObject);
     registerBuiltin("move_towards_point", builtinMoveTowardsPoint);
     registerBuiltin("move_snap", builtinMoveSnap);
     registerBuiltin("lengthdir_x", builtinLengthdir_x);
