@@ -164,11 +164,6 @@ typedef struct VMContext {
     int32_t currentEventType;
     int32_t currentEventSubtype;
     int32_t currentEventObjectIndex; // objectIndex of the object that owns the executing event handler
-    // Resolved reference maps: absolute file offset of operand -> resolved value
-    // varRefMap value = upper 5 bits (varType) | varIndex in lower 27 bits
-    // funcRefMap value = funcIndex
-    struct { uint32_t key; uint32_t value; }* varRefMap;
-    struct { uint32_t key; uint32_t value; }* funcRefMap;
     bool traceEventInherited;
     bool hasFixedSeed;
     bool actionRelativeFlag; // D&D action relative flag (set by action_set_relative)

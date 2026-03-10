@@ -96,6 +96,10 @@ static uint32_t readUint32(const uint8_t* p) {
     return val;
 }
 
+static void writeUint32(uint8_t* p, uint32_t val) {
+    memcpy(p, &val, 4);
+}
+
 
 // Read a little-endian int32 from a byte pointer
 static int32_t readInt32(const uint8_t* p) {
@@ -130,15 +134,14 @@ static int64_t readInt64(const uint8_t* p) {
 // Walks reference chains from the bytecode buffer and builds hash maps
 // mapping absolute file offsets to resolved operand values.
 // The bytecode buffer stays completely read-only.
-static void buildReferenceMaps(VMContext* ctx) {
+// Patches bytecode operands in-place so that variable/function reference chain deltas
+// are replaced with resolved indices. This avoids needing hash map lookups at runtime.
+static void patchReferenceOperands(VMContext* ctx) {
     DataWin* dataWin = ctx->dataWin;
     uint8_t* buf = dataWin->bytecodeBuffer;
     size_t base = dataWin->bytecodeBufferBase;
 
-    ctx->varRefMap = nullptr;
-    ctx->funcRefMap = nullptr;
-
-    // Build variable reference map
+    // Patch variable operands: replace delta with varIdx (preserving upper 5 bits)
     repeat(dataWin->vari.variableCount, varIdx) {
         Variable* v = &dataWin->vari.variables[varIdx];
         if (v->occurrences == 0) continue;
@@ -150,8 +153,8 @@ static void buildReferenceMaps(VMContext* ctx) {
             uint32_t delta = operand & 0x07FFFFFF;
             uint32_t upperBits = operand & 0xF8000000;
 
-            // Store resolved operand: upper bits preserved, lower 27 = varIdx
-            hmput(ctx->varRefMap, operandAddr, upperBits | (varIdx & 0x07FFFFFF));
+            // Patch in-place: upper bits preserved, lower 27 = varIdx
+            writeUint32(&buf[operandAddr - base], upperBits | (varIdx & 0x07FFFFFF));
 
             if (v->occurrences > occ + 1) {
                 addr += delta;
@@ -159,7 +162,7 @@ static void buildReferenceMaps(VMContext* ctx) {
         }
     }
 
-    // Build function reference map
+    // Patch function operands: replace delta with funcIdx
     repeat(dataWin->func.functionCount, funcIdx) {
         Function* f = &dataWin->func.functions[funcIdx];
         if (f->occurrences == 0) continue;
@@ -170,7 +173,8 @@ static void buildReferenceMaps(VMContext* ctx) {
             uint32_t operand = readUint32(&buf[operandAddr - base]);
             uint32_t delta = operand & 0x07FFFFFF;
 
-            hmput(ctx->funcRefMap, operandAddr, funcIdx);
+            // Patch in-place: store funcIdx directly
+            writeUint32(&buf[operandAddr - base], funcIdx);
 
             if (f->occurrences > occ + 1) {
                 addr += delta;
@@ -179,16 +183,14 @@ static void buildReferenceMaps(VMContext* ctx) {
     }
 }
 
-// Resolve a variable operand: returns upper bits | varIndex (same format as old patched operand)
-static uint32_t resolveVarOperand(VMContext* ctx, const uint8_t* extraData) {
-    uint32_t absoluteOffset = (uint32_t)(ctx->dataWin->bytecodeBufferBase + (extraData - ctx->dataWin->bytecodeBuffer));
-    return hmget(ctx->varRefMap, absoluteOffset);
+// Resolve a variable operand: returns upper bits | varIndex (read directly from patched bytecode)
+static uint32_t resolveVarOperand(const uint8_t* extraData) {
+    return readUint32(extraData);
 }
 
-// Resolve a function operand: returns funcIndex
-static uint32_t resolveFuncOperand(VMContext* ctx, const uint8_t* extraData) {
-    uint32_t absoluteOffset = (uint32_t)(ctx->dataWin->bytecodeBufferBase + (extraData - ctx->dataWin->bytecodeBuffer));
-    return hmget(ctx->funcRefMap, absoluteOffset);
+// Resolve a function operand: returns funcIndex (read directly from patched bytecode)
+static uint32_t resolveFuncOperand(const uint8_t* extraData) {
+    return readUint32(extraData);
 }
 
 // ===[ Array Map Helpers ]===
@@ -810,7 +812,7 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
             break;
         case GML_TYPE_VARIABLE: {
             int32_t instanceType = (int32_t) instrInstanceType(instr);
-            uint32_t varRef = resolveVarOperand(ctx, extraData);
+            uint32_t varRef = resolveVarOperand(extraData);
             RValue val = resolveVariableRead(ctx, instanceType, varRef);
             stackPush(ctx,val);
             break;
@@ -834,7 +836,7 @@ static void handlePush(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
 
 static void handlePushScoped(VMContext* ctx, uint32_t instr, const uint8_t* extraData, ArrayMapEntry* variableMap, uint32_t count, RValue* variables, const char* scopeName, const char* altScopeName, StringBooleanEntry* traceMap) {
     (void) instr;
-    uint32_t varRef = resolveVarOperand(ctx, extraData);
+    uint32_t varRef = resolveVarOperand(extraData);
     Variable* varDef = resolveVarDef(ctx, varRef);
 
     ArrayAccess access = popArrayAccess(ctx, varRef);
@@ -870,7 +872,7 @@ static void handlePushGlb(VMContext* ctx, uint32_t instr, const uint8_t* extraDa
 
 static void handlePushBltn(VMContext* ctx, uint32_t instr, const uint8_t* extraData) {
     (void) instr;
-    uint32_t varRef = resolveVarOperand(ctx, extraData);
+    uint32_t varRef = resolveVarOperand(extraData);
     Variable* varDef = resolveVarDef(ctx, varRef);
 
     ArrayAccess access = popArrayAccess(ctx, varRef);
@@ -888,7 +890,7 @@ static void handlePop(VMContext* ctx, uint32_t instr, const uint8_t* extraData) 
     int32_t instanceType = (int32_t) instrInstanceType(instr);
     uint8_t type1 = instrType1(instr);   // destination type
     uint8_t type2 = instrType2(instr);   // source type (what's on stack)
-    uint32_t varRef = resolveVarOperand(ctx, extraData);
+    uint32_t varRef = resolveVarOperand(extraData);
     uint8_t varType = (varRef >> 24) & 0xF8;
 
     RValue val;
@@ -1414,7 +1416,7 @@ static void handleBranchFalse(VMContext* ctx, uint32_t instr, uint32_t instrAddr
 
 static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData) {
     int32_t argCount = instr & 0xFFFF;
-    uint32_t funcIndex = resolveFuncOperand(ctx, extraData);
+    uint32_t funcIndex = resolveFuncOperand(extraData);
     require(ctx->dataWin->func.functionCount > funcIndex);
 
     const char* funcName = ctx->dataWin->func.functions[funcIndex].name;
@@ -1886,7 +1888,7 @@ VMContext* VM_create(DataWin* dataWin) {
     ctx->currentEventObjectIndex = -1;
 
     // Build reference lookup maps (file buffer stays read-only)
-    buildReferenceMaps(ctx);
+    patchReferenceOperands(ctx);
 
     // Scan VARI entries to find max varID for each scope
     // Built-in variables have varID == -6 (sentinel), skip those
@@ -2177,7 +2179,7 @@ static const char* disasmScopeName(VMContext* ctx, int32_t instanceType) {
 // If scopeOverride is set (e.g. "local", "global"), uses that instead of resolving instrInstType.
 // Shows VARI instanceType mismatch annotation when scopeOverride is nullptr and types differ.
 static void disasmFormatVar(VMContext* ctx, const uint8_t* extraData, const char* scopeOverride, int32_t instrInstType, char* buf, size_t bufSize) {
-    uint32_t varRef = resolveVarOperand(ctx, extraData);
+    uint32_t varRef = resolveVarOperand(extraData);
     Variable* varDef = resolveVarDef(ctx, varRef);
     const char* vType = varTypeName(varRef);
     const char* scope = scopeOverride != nullptr ? scopeOverride : disasmScopeName(ctx, instrInstType);
@@ -2192,7 +2194,7 @@ static void disasmFormatVar(VMContext* ctx, const uint8_t* extraData, const char
 
 // Returns stack effect comment for a variable access instruction
 static void disasmFormatVarComment(VMContext* ctx, const uint8_t* extraData, bool isPop, char* buf, size_t bufSize) {
-    uint32_t varRef = resolveVarOperand(ctx, extraData);
+    uint32_t varRef = resolveVarOperand(extraData);
     uint8_t varType = (varRef >> 24) & 0xF8;
     if (isPop) {
         switch (varType) {
@@ -2416,7 +2418,7 @@ static void formatInstruction(VMContext* ctx, const uint8_t* bytecodeBase, uint3
         case OP_CALL: {
             snprintf(opcodeStr, opcodeSize, "Call.i");
             int32_t argCount = instr & 0xFFFF;
-            uint32_t funcIdx = resolveFuncOperand(ctx, extraData);
+            uint32_t funcIdx = resolveFuncOperand(extraData);
             const char* funcName = (dw->func.functionCount > funcIdx) ? dw->func.functions[funcIdx].name : "???";
             snprintf(operandStr, operandSize, "%s(%d)", funcName, argCount);
             if (argCount > 0) {
@@ -2492,7 +2494,7 @@ void VM_buildCrossReferences(VMContext* ctx) {
             }
 
             if (instrOpcode(instr) == OP_CALL) {
-                uint32_t funcIdx = resolveFuncOperand(ctx, ed);
+                uint32_t funcIdx = resolveFuncOperand(ed);
                 if (dw->func.functionCount > funcIdx) {
                     const char* funcName = dw->func.functions[funcIdx].name;
                     ptrdiff_t codeMapIdx = shgeti(ctx->funcMap, (char*) funcName);
@@ -2673,8 +2675,6 @@ void VM_free(VMContext* ctx) {
     shfree(ctx->eventsToBeTraced);
     shfree(ctx->opcodesToBeTraced);
     shfree(ctx->stackToBeTraced);
-    hmfree(ctx->varRefMap);
-    hmfree(ctx->funcRefMap);
 
     // Free cross-reference map
     if (ctx->crossRefMap != nullptr) {
