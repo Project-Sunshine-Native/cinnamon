@@ -127,12 +127,13 @@ static int64_t readInt64(const uint8_t* p) {
 
 // ===[ Reference Chain Resolution ]===
 
-// Walks reference chains from the unmodified file buffer and builds hash maps
+// Walks reference chains from the bytecode buffer and builds hash maps
 // mapping absolute file offsets to resolved operand values.
-// The file buffer stays completely read-only.
+// The bytecode buffer stays completely read-only.
 static void buildReferenceMaps(VMContext* ctx) {
     DataWin* dataWin = ctx->dataWin;
-    uint8_t* buf = dataWin->fileBuffer;
+    uint8_t* buf = dataWin->bytecodeBuffer;
+    size_t base = dataWin->bytecodeBufferBase;
 
     ctx->varRefMap = nullptr;
     ctx->funcRefMap = nullptr;
@@ -145,7 +146,7 @@ static void buildReferenceMaps(VMContext* ctx) {
         uint32_t addr = v->firstAddress;
         repeat(v->occurrences, occ) {
             uint32_t operandAddr = addr + 4;
-            uint32_t operand = readUint32(&buf[operandAddr]);
+            uint32_t operand = readUint32(&buf[operandAddr - base]);
             uint32_t delta = operand & 0x07FFFFFF;
             uint32_t upperBits = operand & 0xF8000000;
 
@@ -166,7 +167,7 @@ static void buildReferenceMaps(VMContext* ctx) {
         uint32_t addr = f->firstAddress;
         repeat(f->occurrences, occ) {
             uint32_t operandAddr = addr + 4;
-            uint32_t operand = readUint32(&buf[operandAddr]);
+            uint32_t operand = readUint32(&buf[operandAddr - base]);
             uint32_t delta = operand & 0x07FFFFFF;
 
             hmput(ctx->funcRefMap, operandAddr, funcIdx);
@@ -180,13 +181,13 @@ static void buildReferenceMaps(VMContext* ctx) {
 
 // Resolve a variable operand: returns upper bits | varIndex (same format as old patched operand)
 static uint32_t resolveVarOperand(VMContext* ctx, const uint8_t* extraData) {
-    uint32_t absoluteOffset = (uint32_t)(extraData - ctx->dataWin->fileBuffer);
+    uint32_t absoluteOffset = (uint32_t)(ctx->dataWin->bytecodeBufferBase + (extraData - ctx->dataWin->bytecodeBuffer));
     return hmget(ctx->varRefMap, absoluteOffset);
 }
 
 // Resolve a function operand: returns funcIndex
 static uint32_t resolveFuncOperand(VMContext* ctx, const uint8_t* extraData) {
-    uint32_t absoluteOffset = (uint32_t)(extraData - ctx->dataWin->fileBuffer);
+    uint32_t absoluteOffset = (uint32_t)(ctx->dataWin->bytecodeBufferBase + (extraData - ctx->dataWin->bytecodeBuffer));
     return hmget(ctx->funcRefMap, absoluteOffset);
 }
 
@@ -1972,7 +1973,7 @@ RValue VM_executeCode(VMContext* ctx, int32_t codeIndex) {
     require(codeIndex >= 0 && ctx->dataWin->code.count > (uint32_t) codeIndex);
     CodeEntry* code = &ctx->dataWin->code.entries[codeIndex];
 
-    ctx->bytecodeBase = ctx->dataWin->fileBuffer + code->bytecodeAbsoluteOffset;
+    ctx->bytecodeBase = ctx->dataWin->bytecodeBuffer + (code->bytecodeAbsoluteOffset - ctx->dataWin->bytecodeBufferBase);
     ctx->ip = 0;
     ctx->codeEnd = code->length;
     ctx->currentCodeName = code->name;
@@ -2043,7 +2044,7 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     ctx->callDepth++;
 
     // Set up callee
-    ctx->bytecodeBase = ctx->dataWin->fileBuffer + code->bytecodeAbsoluteOffset;
+    ctx->bytecodeBase = ctx->dataWin->bytecodeBuffer + (code->bytecodeAbsoluteOffset - ctx->dataWin->bytecodeBufferBase);
     ctx->ip = 0;
     ctx->codeEnd = code->length;
     ctx->currentCodeName = code->name;
@@ -2479,7 +2480,7 @@ void VM_buildCrossReferences(VMContext* ctx) {
 
     repeat(dw->code.count, callerIdx) {
         CodeEntry* code = &dw->code.entries[callerIdx];
-        const uint8_t* base = dw->fileBuffer + code->bytecodeAbsoluteOffset;
+        const uint8_t* base = dw->bytecodeBuffer + (code->bytecodeAbsoluteOffset - dw->bytecodeBufferBase);
         uint32_t ip = 0;
 
         while (code->length > ip) {
@@ -2555,7 +2556,7 @@ void VM_disassemble(VMContext* ctx, int32_t codeIndex) {
 
     printf("\n");
 
-    const uint8_t* bytecodeBase = dw->fileBuffer + code->bytecodeAbsoluteOffset;
+    const uint8_t* bytecodeBase = dw->bytecodeBuffer + (code->bytecodeAbsoluteOffset - dw->bytecodeBufferBase);
     uint32_t codeLength = code->length;
 
     // Pass 1: collect branch targets for labels

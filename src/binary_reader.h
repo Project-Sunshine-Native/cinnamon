@@ -2,14 +2,14 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 
 typedef struct {
-    const uint8_t* buffer;
-    size_t size;
-    size_t position;
+    FILE* file;
+    size_t fileSize;
 } BinaryReader;
 
-BinaryReader BinaryReader_create(const uint8_t* buffer, size_t size);
+BinaryReader BinaryReader_create(FILE* file, size_t fileSize);
 
 uint8_t BinaryReader_readUint8(BinaryReader* reader);
 int16_t BinaryReader_readInt16(BinaryReader* reader);
@@ -20,12 +20,12 @@ float BinaryReader_readFloat32(BinaryReader* reader);
 uint64_t BinaryReader_readUint64(BinaryReader* reader);
 bool BinaryReader_readBool32(BinaryReader* reader);
 
-// Reads a uint32 absolute file offset and returns a pointer to the null-terminated string at that offset.
-// Returns nullptr if the offset is 0.
-const char* BinaryReader_readStringPtr(BinaryReader* reader);
-
 // Copies 'count' bytes from the current position into 'dest'.
 void BinaryReader_readBytes(BinaryReader* reader, void* dest, size_t count);
+
+// Reads 'count' bytes from position 'offset' into a newly allocated buffer.
+// Caller must free the returned buffer.
+uint8_t* BinaryReader_readBytesAt(BinaryReader* reader, size_t offset, size_t count);
 
 void BinaryReader_skip(BinaryReader* reader, size_t bytes);
 void BinaryReader_seek(BinaryReader* reader, size_t position);

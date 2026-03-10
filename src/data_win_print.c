@@ -264,5 +264,5 @@ void DataWin_printDebugSummary(DataWin* dataWin) {
     }
 
     // Overall summary
-    printf("===== File: %.2f MB =====\n", dataWin->fileSize / (1024.0 * 1024.0));
+    printf("===== DataWin parse complete =====\n");
 }

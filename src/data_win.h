@@ -558,7 +558,7 @@ typedef struct {
 // ===[ STRG - Strings ]===
 typedef struct {
     uint32_t count;
-    const char** strings; // pointers into file buffer
+    const char** strings; // pointers into strgBuffer
 } Strg;
 
 // ===[ TXTR - Embedded Textures ]===
@@ -566,6 +566,7 @@ typedef struct {
     uint32_t scaled;
     uint32_t blobOffset; // absolute file offset to PNG data
     uint32_t blobSize;   // computed size of blob data
+    uint8_t* blobData;   // owned copy of PNG data
 } Texture;
 
 typedef struct {
@@ -577,6 +578,7 @@ typedef struct {
 typedef struct {
     uint32_t dataOffset; // absolute file offset to audio data
     uint32_t dataSize;   // length of audio data
+    uint8_t* data;       // owned copy of audio data
 } AudioEntry;
 
 typedef struct {
@@ -586,8 +588,13 @@ typedef struct {
 
 // ===[ Top-level DataWin container ]===
 typedef struct DataWin {
-    uint8_t* fileBuffer;
-    size_t fileSize;
+    uint8_t* strgBuffer;        // owned copy of STRG chunk raw data
+    // Absolute file offset of strgBuffer[0], we need this because data.win stores absolute offsets (from the beginning of the data.win file) instead of relative offsets
+    size_t strgBufferBase;
+
+    uint8_t* bytecodeBuffer;     // owned copy of CODE bytecode blob
+    // Absolute file offset of bytecodeBuffer[0], we need this because data.win stores absolute offsets (from the beginning of the data.win file) instead of relative offsets
+    size_t bytecodeBufferBase;
 
     Gen8 gen8;
     Optn optn;

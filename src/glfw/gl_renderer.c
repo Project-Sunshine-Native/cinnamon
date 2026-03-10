@@ -163,7 +163,7 @@ static void glInit(Renderer* renderer, DataWin* dataWin) {
 
     for (uint32_t i = 0; gl->textureCount > i; i++) {
         Texture* txtr = &dataWin->txtr.textures[i];
-        uint8_t* pngData = dataWin->fileBuffer + txtr->blobOffset;
+        uint8_t* pngData = txtr->blobData;
         uint32_t pngSize = txtr->blobSize;
 
         int w, h, channels;
