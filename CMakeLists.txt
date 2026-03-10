@@ -41,9 +41,9 @@ if(PLATFORM STREQUAL "glfw")
 elseif(PLATFORM STREQUAL "ps2")
     if(PS2)
         # Compiling on the Docker container
-        target_include_directories(butterscotch PRIVATE $ENV{PS2SDK}/ee/include $ENV{PS2SDK}/common/include $ENV{PS2DEV}/ee/include)
-        target_link_directories(butterscotch PRIVATE $ENV{PS2SDK}/ee/lib)
-        target_link_libraries(butterscotch kernel c m)
+        target_include_directories(butterscotch PRIVATE $ENV{PS2SDK}/ee/include $ENV{PS2SDK}/common/include $ENV{PS2DEV}/ee/include $ENV{GSKIT}/include)
+        target_link_directories(butterscotch PRIVATE $ENV{PS2SDK}/ee/lib $ENV{GSKIT}/lib)
+        target_link_libraries(butterscotch gskit dmakit kernel c m)
     else()
         # This block is for when we are developing Butterscotch with CLion!
         # ps2sdk and gsKit scatter headers across per-module subdirectories;
