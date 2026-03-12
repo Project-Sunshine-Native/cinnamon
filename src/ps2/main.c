@@ -6,7 +6,9 @@
 #include <dmaKit.h>
 #include <gsKit.h>
 #include <gsToolkit.h>
+#include <gsFontM.h>
 #include <libpad.h>
+#include <timer.h>
 
 #include "runner.h"
 #include "runner_keyboard.h"
@@ -102,6 +104,11 @@ int main(int argc, char* argv[]) {
     // Use ONE SHOT mode
     gsKit_mode_switch(gsGlobal, GS_ONESHOT);
 
+    // ===[ Initialize FONTM (ROM font) for debug overlay ]===
+    GSFONTM* gsFontM = gsKit_init_fontm();
+    gsKit_fontm_upload(gsGlobal, gsFontM);
+    gsFontM->Spacing = 0.95f;
+
     // ===[ Parse data.win ]===
     DataWin* dataWin = DataWin_parse(
         dataWinPath,
@@ -159,7 +166,11 @@ int main(int argc, char* argv[]) {
     int32_t gameH = (int32_t) gen8->defaultWindowHeight;
 
     // ===[ Main Loop ]===
+    float lastFrameTimeMs = 0.0f;
+
     while (!runner->shouldExit) {
+        u32 frameStartTicks = cpu_ticks();
+
         struct mallinfo mi = mallinfo();
         printf("Memory: used=%d bytes (%.1f KB), total=%d bytes (%.1f KB), free=%d bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f, MAX_MEMORY_BYTES, MAX_MEMORY_BYTES / 1024.0f, MAX_MEMORY_BYTES - mi.uordblks, (MAX_MEMORY_BYTES - mi.uordblks) / 1024.0f);
 
@@ -267,6 +278,22 @@ int main(int argc, char* argv[]) {
         runner->viewCurrent = 0;
 
         renderer->vtable->endFrame(renderer);
+
+        // Measure frame time BEFORE flipping
+        u32 frameEndTicks = cpu_ticks();
+        u32 elapsedTicks = frameEndTicks - frameStartTicks;
+        // cpu_ticks() runs at kBUSCLK (147.456 MHz), so ticks / (kBUSCLK / 1000) = milliseconds
+        lastFrameTimeMs = (float) elapsedTicks / (float) (kBUSCLK / 1000);
+
+        // ===[ Debug Overlay ]===
+        {
+            u64 debugColor = GS_SETREG_RGBAQ(0xFF, 0xFF, 0xFF, 0x80, 0x00);
+            int32_t freeBytes = MAX_MEMORY_BYTES - mi.uordblks;
+
+            char debugText[128];
+            snprintf(debugText, sizeof(debugText), "Tick: %.2fms\nFree: %d bytes", lastFrameTimeMs, freeBytes);
+            gsKit_fontm_print_scaled(gsGlobal, gsFontM, 10.0f, 10.0f, 10, 0.6f, debugColor, debugText);
+        }
 
         // Execute draw queue and flip
         gsKit_queue_exec(gsGlobal);
