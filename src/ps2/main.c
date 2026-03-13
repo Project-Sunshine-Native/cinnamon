@@ -165,11 +165,15 @@ int main(int argc, char* argv[]) {
     int32_t gameW = (int32_t) gen8->defaultWindowWidth;
     int32_t gameH = (int32_t) gen8->defaultWindowHeight;
 
+    // ===[ Initialize Timer ]===
+    InitTimer(kBUSCLK);
+    StartTimerSystemTime();
+
     // ===[ Main Loop ]===
     float lastFrameTimeMs = 0.0f;
 
     while (!runner->shouldExit) {
-        u32 frameStartTicks = cpu_ticks();
+        u64 frameStartTime = GetTimerSystemTime();
 
         struct mallinfo mi = mallinfo();
         printf("Memory: used=%d bytes (%.1f KB), total=%d bytes (%.1f KB), free=%d bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f, MAX_MEMORY_BYTES, MAX_MEMORY_BYTES / 1024.0f, MAX_MEMORY_BYTES - mi.uordblks, (MAX_MEMORY_BYTES - mi.uordblks) / 1024.0f);
@@ -213,10 +217,11 @@ int main(int argc, char* argv[]) {
         // Go to previous room
         if (RunnerKeyboard_checkPressed(runner->keyboard, VK_PAGEDOWN)) {
             DataWin* dw = runner->dataWin;
-            if (runner->currentRoomOrderPosition > 0) {
-                int32_t prevIdx = dw->gen8.roomOrder[runner->currentRoomOrderPosition - 1];
-                runner->pendingRoom = prevIdx;
-                fprintf(stderr, "Debug: Going to previous room -> %s\n", dw->room.rooms[prevIdx].name);
+            forEachIndexed(Room, room, i, dw->room.rooms, dw->room.count) {
+                if (strcmp(room->name, "room_castle_barrier") == 0) {
+                    runner->pendingRoom = i;
+                    break;
+                }
             }
         }
 
@@ -280,10 +285,8 @@ int main(int argc, char* argv[]) {
         renderer->vtable->endFrame(renderer);
 
         // Measure frame time BEFORE flipping
-        u32 frameEndTicks = cpu_ticks();
-        u32 elapsedTicks = frameEndTicks - frameStartTicks;
-        // cpu_ticks() runs at kBUSCLK (147.456 MHz), so ticks / (kBUSCLK / 1000) = milliseconds
-        lastFrameTimeMs = (float) elapsedTicks / (float) (kBUSCLK / 1000);
+        u64 frameEndTime = GetTimerSystemTime();
+        lastFrameTimeMs = (float) (frameEndTime - frameStartTime) / (float) (kBUSCLK / 1000);
 
         // ===[ Debug Overlay ]===
         {
