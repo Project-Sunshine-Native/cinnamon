@@ -384,20 +384,34 @@ int main(int argc, char* argv[]) {
 
     // ===[ Main Loop ]===
     float lastFrameTimeMs = 0.0f;
+    u64 lastVsyncTime = GetTimerSystemTime();
+    double accumulator = 0.0; // seconds of game time accumulated
+
+    // FPS tracking: count rendered frames (screen flips) over a 1-second window
+    int renderFpsCounter = 0;
+    int displayedRenderFps = 0;
+    u64 fpsTimerStart = GetTimerSystemTime();
 
     while (!runner->shouldExit) {
         u64 frameStartTime = GetTimerSystemTime();
 
-        struct mallinfo mi = mallinfo();
-        // printf("Memory: used=%d bytes (%.1f KB), total=%d bytes (%.1f KB), free=%d bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f, MAX_MEMORY_BYTES, MAX_MEMORY_BYTES / 1024.0f, MAX_MEMORY_BYTES - mi.uordblks, (MAX_MEMORY_BYTES - mi.uordblks) / 1024.0f);
+        // Calculate delta time since last vsync
+        double deltaTime = (double) (frameStartTime - lastVsyncTime) / (double) kBUSCLK;
+        lastVsyncTime = frameStartTime;
 
-        // ===[ Poll Controller ]===
-        RunnerKeyboard_beginFrame(runner->keyboard);
+        struct mallinfo mi = mallinfo();
+
+        // ===[ Poll Controller (always poll every vsync) ]===
+        // NOTE: We do NOT call RunnerKeyboard_beginFrame here! Pressed/released edges accumulate across vsyncs so that quick taps on non-game-frame
+        // vsyncs are not lost
+        //
+        // beginFrame is called after the game consumes input.
 
         struct padButtonStatus padStatus;
         unsigned char padResult = padRead(0, 0, &padStatus);
+        uint16_t buttons = 0xFFFF; // all released by default
         if (padResult != 0) {
-            uint16_t buttons = padStatus.btns;
+            buttons = padStatus.btns;
 
             for (int i = 0; PAD_MAPPING_COUNT > i; i++) {
                 uint16_t mask = PAD_MAPPINGS[i].padButton;
@@ -416,6 +430,9 @@ int main(int argc, char* argv[]) {
 
             prevButtons = buttons;
         }
+
+        // R2 removes speed cap (run at full vsync rate)
+        bool speedCapRemoved = (padResult != 0) && ((buttons & PAD_R2) == 0);
 
         // Go to next room
         if (RunnerKeyboard_checkPressed(runner->keyboard, VK_PAGEUP)) {
@@ -446,83 +463,134 @@ int main(int argc, char* argv[]) {
             printf("Changed global.interact [%d] value!\n", interactVarId);
         }
 
-        // Run one game step
-        Runner_step(runner);
+        // ===[ Game Logic (accumulator-based frame pacing) ]===
+        uint32_t roomSpeed = runner->currentRoom->speed;
+        // TODO: In the future, we'll need to check if roomSpeed == 0 and, if it is, use the game's default FPS for GameMaker: Studio 2+ games!
+        double targetFrameTime = (roomSpeed > 0) ? (1.0 / roomSpeed) : (1.0 / 60.0);
 
-        // ===[ Render ]===
-        gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
+        accumulator += deltaTime;
 
-        renderer->vtable->beginFrame(renderer, gameW, gameH, 640, 448);
-
-        // Clear with room background color
-        if (runner->drawBackgroundColor) {
-            uint8_t bgR = BGR_R(runner->backgroundColor);
-            uint8_t bgG = BGR_G(runner->backgroundColor);
-            uint8_t bgB = BGR_B(runner->backgroundColor);
-            u64 bgColor = GS_SETREG_RGBAQ(bgR, bgG, bgB, 0x80, 0x00);
-            gsKit_prim_sprite(gsGlobal, 0, 0, 640, 448, 0, bgColor);
+        // Cap accumulator to prevent spiral of death (max 4 game frames per vsync)
+        double maxAccumulator = targetFrameTime * 4.0;
+        if (accumulator > maxAccumulator) {
+            accumulator = maxAccumulator;
         }
 
-        // Render views
-        Room* activeRoom = runner->currentRoom;
-        bool anyViewRendered = false;
-
-        bool viewsEnabled = (activeRoom->flags & 1) != 0;
-
-        if (viewsEnabled) {
-            repeat(8, vi) {
-                if (!activeRoom->views[vi].enabled) continue;
-
-                int32_t viewX = activeRoom->views[vi].viewX;
-                int32_t viewY = activeRoom->views[vi].viewY;
-                int32_t viewW = activeRoom->views[vi].viewWidth;
-                int32_t viewH = activeRoom->views[vi].viewHeight;
-                int32_t portX = activeRoom->views[vi].portX;
-                int32_t portY = activeRoom->views[vi].portY;
-                int32_t portW = activeRoom->views[vi].portWidth;
-                int32_t portH = activeRoom->views[vi].portHeight;
-                float viewAngle = runner->viewAngles[vi];
-
-                runner->viewCurrent = (int32_t) vi;
-                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
-
-                Runner_draw(runner);
-
-                renderer->vtable->endView(renderer);
-                anyViewRendered = true;
+        // If R2 is held, force at least one game frame per vsync
+        if (speedCapRemoved) {
+            if (targetFrameTime > accumulator) {
+                accumulator = targetFrameTime;
             }
         }
 
-        if (!anyViewRendered) {
-            // No views enabled: render with default full-screen view
+        int gameFramesRan = 0;
+        while (accumulator >= targetFrameTime) {
+            // Clear pressed/released before 2nd+ steps so press events, don't fire multiple times when catching up
+            if (gameFramesRan > 0)
+                RunnerKeyboard_beginFrame(runner->keyboard);
+
+            Runner_step(runner);
+            accumulator -= targetFrameTime;
+            gameFramesRan++;
+        }
+
+        // Update FPS counter (counts actual rendered frames, not game logic steps)
+        if (gameFramesRan > 0) {
+            renderFpsCounter++;
+        }
+        u64 fpsElapsed = frameStartTime - fpsTimerStart;
+        if (fpsElapsed >= (u64) kBUSCLK) {
+            displayedRenderFps = renderFpsCounter;
+            renderFpsCounter = 0;
+            fpsTimerStart = frameStartTime;
+        }
+
+        // ===[ Render (only if game logic ran) ]===
+        if (gameFramesRan > 0) {
+            gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
+
+            renderer->vtable->beginFrame(renderer, gameW, gameH, 640, 448);
+
+            // Clear with room background color
+            if (runner->drawBackgroundColor) {
+                uint8_t bgR = BGR_R(runner->backgroundColor);
+                uint8_t bgG = BGR_G(runner->backgroundColor);
+                uint8_t bgB = BGR_B(runner->backgroundColor);
+                u64 bgColor = GS_SETREG_RGBAQ(bgR, bgG, bgB, 0x80, 0x00);
+                gsKit_prim_sprite(gsGlobal, 0, 0, 640, 448, 0, bgColor);
+            }
+
+            // Render views
+            Room* activeRoom = runner->currentRoom;
+            bool anyViewRendered = false;
+
+            bool viewsEnabled = (activeRoom->flags & 1) != 0;
+
+            if (viewsEnabled) {
+                repeat(8, vi) {
+                    if (!activeRoom->views[vi].enabled) continue;
+
+                    int32_t viewX = activeRoom->views[vi].viewX;
+                    int32_t viewY = activeRoom->views[vi].viewY;
+                    int32_t viewW = activeRoom->views[vi].viewWidth;
+                    int32_t viewH = activeRoom->views[vi].viewHeight;
+                    int32_t portX = activeRoom->views[vi].portX;
+                    int32_t portY = activeRoom->views[vi].portY;
+                    int32_t portW = activeRoom->views[vi].portWidth;
+                    int32_t portH = activeRoom->views[vi].portHeight;
+                    float viewAngle = runner->viewAngles[vi];
+
+                    runner->viewCurrent = (int32_t) vi;
+                    renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
+
+                    Runner_draw(runner);
+
+                    renderer->vtable->endView(renderer);
+                    anyViewRendered = true;
+                }
+            }
+
+            if (!anyViewRendered) {
+                // No views enabled: render with default full-screen view
+                runner->viewCurrent = 0;
+                renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+                Runner_draw(runner);
+                renderer->vtable->endView(renderer);
+            }
+
             runner->viewCurrent = 0;
-            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
-            Runner_draw(runner);
-            renderer->vtable->endView(renderer);
+
+            renderer->vtable->endFrame(renderer);
+
+            // Measure frame time BEFORE flipping
+            u64 frameEndTime = GetTimerSystemTime();
+            lastFrameTimeMs = (float) (frameEndTime - frameStartTime) / (float) (kBUSCLK / 1000);
+
+            // ===[ Debug Overlay ]===
+            {
+                u64 debugColor = GS_SETREG_RGBAQ(0xFF, 0xFF, 0xFF, 0x80, 0x00);
+                int32_t freeBytes = MAX_MEMORY_BYTES - mi.uordblks;
+
+                char debugText[192];
+                uint32_t vramFreeBytes = GS_VRAM_SIZE - gsGlobal->CurrentPointer;
+                snprintf(debugText, sizeof(debugText), "FPS: %d\nTick: %.2fms\nFree: %d bytes\nVRAM Free: %lu bytes\nRoom Speed: %u%s", displayedRenderFps, lastFrameTimeMs, freeBytes, (unsigned long) vramFreeBytes, roomSpeed, speedCapRemoved ? " [UNCAPPED]" : "");
+                gsKit_fontm_print_scaled(gsGlobal, gsFontM, 10.0f, 10.0f, 10, 0.6f, debugColor, debugText);
+            }
+
+            // Clear accumulated input after both Step and Draw events have consumed it, so edges don't re-fire on the next game frame
+            // This MUST be after Runner_draw because games CAN handle input in Draw events (example: Undertale's naming screen)
+            RunnerKeyboard_beginFrame(runner->keyboard);
         }
 
-        runner->viewCurrent = 0;
-
-        renderer->vtable->endFrame(renderer);
-
-        // Measure frame time BEFORE flipping
-        u64 frameEndTime = GetTimerSystemTime();
-        lastFrameTimeMs = (float) (frameEndTime - frameStartTime) / (float) (kBUSCLK / 1000);
-
-        // ===[ Debug Overlay ]===
-        {
-            u64 debugColor = GS_SETREG_RGBAQ(0xFF, 0xFF, 0xFF, 0x80, 0x00);
-            int32_t freeBytes = MAX_MEMORY_BYTES - mi.uordblks;
-
-            char debugText[128];
-            uint32_t vramFreeBytes = GS_VRAM_SIZE - gsGlobal->CurrentPointer;
-            snprintf(debugText, sizeof(debugText), "Tick: %.2fms\nFree: %d bytes\nVRAM Free: %lu bytes", lastFrameTimeMs, freeBytes, (unsigned long) vramFreeBytes);
-            gsKit_fontm_print_scaled(gsGlobal, gsFontM, 10.0f, 10.0f, 10, 0.6f, debugColor, debugText);
+        if (gameFramesRan > 0) {
+            // Execute draw queue and flip buffers
+            gsKit_queue_exec(gsGlobal);
+            gsKit_sync_flip(gsGlobal);
+        } else {
+            // No game frame ran, just wait for vsync without flipping
+            // (flipping would show the other buffer which has stale/black content)
+            gsKit_vsync_wait();
         }
-
-        // Execute draw queue and flip
-        gsKit_queue_exec(gsGlobal);
-        gsKit_sync_flip(gsGlobal);
     }
 
     renderer->vtable->destroy(renderer);
