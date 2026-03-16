@@ -24,6 +24,24 @@ Of course, there are exceptions that break game compatibility altogether:
 * Games compiled with YYC, because they use native code instead of bytecode. 
 * Games compiled with the new [GMRT](https://github.com/YoYoGames/GMRT-Beta/tree/main), because they use native code instead of bytecode.
 
+## Supported Platforms
+
+* Linux (GLFW, OpenGL)
+* PlayStation 2 (ps2sdk, gsKit)
+* ...and maybe more in the future!
+
+## Building Butterscotch
+
+```bash
+mkdir build && cd build
+cmake -DPLATFORM=glfw -DCMAKE_BUILD_TYPE=Debug ..
+make
+```
+
+If you are using CLion, set the platform in `Settings` > `Build, Execution, Deployment` > `CMake` and add `-DPLATFORM=glfw`
+
+Then run Butterscotch with `./butterscotch /path/to/data.win`!
+
 ## CLI parameters
 
 The GLFW target has a lot of nifty CLI parameters that you can use to trace and debug games running on it.
@@ -81,16 +99,6 @@ Having a transpiler also have other disadvantages:
 1. You lose the ability of debugging the runner at a "high level" by tracing opcodes.
 2. Compilation is SLOW, transpiling Undertale in a naive way to C and building it takes 90 seconds on a modern computer, and building it to other targets is so slow that I wasn't even able to test it.
 
-## Porting
-
-Butterscotch requires a C23 compiler.
-
-## Building Butterscotch
-
-Butterscotch uses CMake
-
-If you are using CLion, set the platform in `Settings` > `Build, Execution, Deployment` > `CMake` and add `-DPLATFORM=glfw`
-
 ## Screenshots
 
 ### Undertale (GLFW)
@@ -107,6 +115,10 @@ If you are using CLion, set the platform in `Settings` > `Build, Execution, Depl
 <img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/a9cbc57f-e9c1-4985-a6af-a98e5fce5ff3" />
 <img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/e5c67781-0ffc-43c8-9c7d-333254eed704" />
 <img width="160" height="120" alt="Image" src="https://github.com/user-attachments/assets/93900e3c-79b5-4a05-bd6c-d68814e9e101" />
+
+### Undertale (PlayStation 2)
+
+Here's a video :3 https://youtu.be/3MoAPO8H85U
 
 ## Tales of Agentic Engineering
 
