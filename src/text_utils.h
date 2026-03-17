@@ -109,6 +109,11 @@ static inline bool TextUtils_isNewlineChar(char c) {
     return c == '\n' || c == '\r';
 }
 
+// Returns true if c is ' ' or \t
+static inline bool TextUtils_isWhitespaceChar(char c) {
+    return c == ' ' || c == '\t';
+}
+
 // Counts the number of lines in preprocessed text, treating \r\n and \n\r as single breaks
 static inline int32_t TextUtils_countLines(const char* text, int32_t len) {
     int32_t count = 1;
@@ -131,4 +136,13 @@ static inline int32_t TextUtils_skipNewline(const char* text, int32_t lineEnd, i
         next++;
     }
     return next;
+}
+
+static char* TextUtils_trimTrailingWhitespace(char* str) {
+    size_t len = strlen(str);
+    while (len > 0 && (TextUtils_isWhitespaceChar(str[len - 1]) || TextUtils_isNewlineChar(str[len - 1]))) {
+        len--;
+    }
+    str[len] = '\0';
+    return str;
 }
