@@ -1486,10 +1486,32 @@ static IniFile* currentIni = nullptr;
 static char* currentIniPath = nullptr;
 static bool currentIniDirty = false;
 
+// Some games (like Undertale) open and close the same INI file EVERY SINGLE FRAME!
+// While on modern devices this isn't a huge deal, this WILL cause issues on devices that have less than stellar file systems (like the PlayStation 2)
+// To avoid unnecessary disk reads, we cache the last-closed INI and reuse it on reopen
+static IniFile* cachedIni = nullptr;
+static char* cachedIniPath = nullptr;
+
+static void discardIniCache(void) {
+    if (cachedIni != nullptr) {
+        Ini_free(cachedIni);
+        cachedIni = nullptr;
+    }
+    free(cachedIniPath);
+    cachedIniPath = nullptr;
+}
+
 static RValue builtinIniOpen(VMContext* ctx, RValue* args, int32_t argCount) {
     if (1 > argCount) return RValue_makeUndefined();
 
-    // Close any previously open INI
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+
+    // If the same file is already open, do nothing
+    if (currentIni != nullptr && currentIniPath != nullptr && strcmp(currentIniPath, path) == 0) {
+        return RValue_makeUndefined();
+    }
+
+    // Close any previously open INI (implicit close, no disk write)
     if (currentIni != nullptr) {
         Ini_free(currentIni);
         currentIni = nullptr;
@@ -1497,7 +1519,19 @@ static RValue builtinIniOpen(VMContext* ctx, RValue* args, int32_t argCount) {
     free(currentIniPath);
     currentIniPath = nullptr;
 
-    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    // Check if we have a cached INI for this path
+    if (cachedIni != nullptr && cachedIniPath != nullptr && strcmp(cachedIniPath, path) == 0) {
+        currentIni = cachedIni;
+        currentIniPath = cachedIniPath;
+        cachedIni = nullptr;
+        cachedIniPath = nullptr;
+        currentIniDirty = false;
+        return RValue_makeUndefined();
+    }
+
+    // Cache miss, discard the old cache and read from disk
+    discardIniCache();
+
     Runner* runner = (Runner*) ctx->runner;
     FileSystem* fs = runner->fileSystem;
 
@@ -1527,11 +1561,16 @@ static RValue builtinIniClose(VMContext* ctx, [[maybe_unused]] RValue* args, [[m
             free(serialized);
         }
 
-        Ini_free(currentIni);
+        // Move to cache instead of freeing
+        discardIniCache();
+        cachedIni = currentIni;
+        cachedIniPath = currentIniPath;
         currentIni = nullptr;
+        currentIniPath = nullptr;
+    } else {
+        free(currentIniPath);
+        currentIniPath = nullptr;
     }
-    free(currentIniPath);
-    currentIniPath = nullptr;
 
     return RValue_makeUndefined();
 }
