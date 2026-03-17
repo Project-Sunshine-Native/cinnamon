@@ -1063,6 +1063,12 @@ static RValue builtinRandomize(VMContext* ctx, [[maybe_unused]] RValue* args, [[
 
 // ===[ ROOM FUNCTIONS ]===
 
+static RValue builtinRoomGetName(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    if (1 > argCount) return RValue_makeUndefined();
+    Room* room = &ctx->dataWin->room.rooms[RValue_toInt32(args[0])];
+    return RValue_makeOwnedString(strdup(room->name));
+}
+
 static RValue builtinRoomGotoNext(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = requireNotNullMessage(ctx->runner, "VM: room_goto_next called but no runner!");
 
@@ -3344,7 +3350,6 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("string_upper", builtinStringUpper);
     registerBuiltin("string_lower", builtinStringLower);
     registerBuiltin("string_copy", builtinStringCopy);
-    registerBuiltin("substr", builtinStringCopy);
     registerBuiltin("string_pos", builtinStringPos);
     registerBuiltin("string_char_at", builtinStringCharAt);
     registerBuiltin("string_delete", builtinStringDelete);
@@ -3395,6 +3400,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("randomize", builtinRandomize);
 
     // Room
+    registerBuiltin("room_get_name", builtinRoomGetName);
     registerBuiltin("room_goto_next", builtinRoomGotoNext);
     registerBuiltin("room_goto_previous", builtinRoomGotoPrevious);
     registerBuiltin("room_goto", builtinRoomGoto);
