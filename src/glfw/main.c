@@ -14,6 +14,7 @@
 #include "runner.h"
 #include "input_recording.h"
 #include "gl_renderer.h"
+#include "glfw_file_system.h"
 #include "stb_ds.h"
 #include "stb_image_write.h"
 
@@ -459,8 +460,11 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // Initialize the file system
+    GlfwFileSystem* glfwFileSystem = GlfwFileSystem_create(args.dataWinPath);
+
     // Initialize the runner
-    Runner* runner = Runner_create(dataWin, vm);
+    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) glfwFileSystem);
     runner->debugMode = args.debug;
 
     // Set up input recording/playback (both can be active: playback then continue recording)
@@ -777,6 +781,7 @@ int main(int argc, char* argv[]) {
     glfwTerminate();
 
     Runner_free(runner);
+    GlfwFileSystem_destroy(glfwFileSystem);
     VM_free(vm);
     DataWin_free(dataWin);
 

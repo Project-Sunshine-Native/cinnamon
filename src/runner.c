@@ -613,10 +613,11 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
 
 // ===[ Public API ]===
 
-Runner* Runner_create(DataWin* dataWin, VMContext* vm) {
+Runner* Runner_create(DataWin* dataWin, VMContext* vm, FileSystem* fileSystem) {
     Runner* runner = safeCalloc(1, sizeof(Runner));
     runner->dataWin = dataWin;
     runner->vmContext = vm;
+    runner->fileSystem = fileSystem;
     runner->frameCount = 0;
     runner->instances = nullptr;
     runner->pendingRoom = -1;

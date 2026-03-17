@@ -15,6 +15,7 @@
 #include "runner_keyboard.h"
 #include "vm.h"
 #include "../data_win.h"
+#include "../noop_file_system.h"
 #include "gs_renderer.h"
 #include "ps2_utils.h"
 #include "utils.h"
@@ -357,7 +358,8 @@ int main(int argc, char* argv[]) {
     drawStatusScreen(gsGlobal, gsFontM, dataWin->gen8.displayName, "Creating VM and runner...", &loadingState);
 
     VMContext* vm = VM_create(dataWin);
-    Runner* runner = Runner_create(dataWin, vm);
+    FileSystem* fileSystem = NoopFileSystem_create();
+    Runner* runner = Runner_create(dataWin, vm, fileSystem);
 
     {
         struct mallinfo mi = mallinfo();

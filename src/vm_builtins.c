@@ -12,6 +12,8 @@
 #include "stb_ds.h"
 #include "text_utils.h"
 #include "collision.h"
+#include "ini.h"
+#include "file_system.h"
 
 #define MAX_VIEWS 8
 #define MAX_BACKGROUNDS 8
@@ -119,6 +121,13 @@ static bool isValidAlarmIndex(int alarmIndex) {
 RValue VMBuiltins_getVariable(VMContext* ctx, const char* name, int32_t arrayIndex) {
     Instance* inst = (Instance*) ctx->currentInstance;
     Runner* runner = (Runner*) ctx->runner;
+
+    // File system
+    if (strcmp(name, "working_directory") == 0) {
+        FileSystem* fs = runner->fileSystem;
+        char* path = fs->vtable->resolvePath(fs, "");
+        return RValue_makeOwnedString(path);
+    }
 
     // OS constants
     if (strcmp(name, "os_type") == 0) return RValue_makeReal(4.0); // os_linux
@@ -1465,15 +1474,68 @@ STUB_RETURN_ZERO(gamepad_axis_value)
 STUB_RETURN_ZERO(gamepad_get_description)
 STUB_RETURN_ZERO(gamepad_button_value)
 
-// INI stubs
-STUB_RETURN_UNDEFINED(ini_open)
-STUB_RETURN_UNDEFINED(ini_close)
-STUB_RETURN_UNDEFINED(ini_write_real)
-STUB_RETURN_UNDEFINED(ini_write_string)
+// ===[ INI Functions ]===
 
-static RValue builtinIniReadString(VMContext* ctx, RValue* args, int32_t argCount) {
-    logStubbedFunction(ctx, "ini_read_string");
-    if (3 > argCount) return RValue_makeOwnedString(strdup(""));
+static IniFile* currentIni = nullptr;
+static char* currentIniPath = nullptr;
+
+static RValue builtinIniOpen(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeUndefined();
+
+    // Close any previously open INI
+    if (currentIni != nullptr) {
+        Ini_free(currentIni);
+        currentIni = nullptr;
+    }
+    free(currentIniPath);
+    currentIniPath = nullptr;
+
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+
+    currentIniPath = strdup(path);
+
+    char* content = fs->vtable->readFileText(fs, path);
+    if (content != nullptr) {
+        currentIni = Ini_parse(content);
+        free(content);
+    } else {
+        currentIni = Ini_parse("");
+    }
+
+    return RValue_makeUndefined();
+}
+
+static RValue builtinIniClose(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    if (currentIni != nullptr) {
+        Runner* runner = (Runner*) ctx->runner;
+        FileSystem* fs = runner->fileSystem;
+
+        char* serialized = Ini_serialize(currentIni, INI_SERIALIZE_DEFAULT_INITIAL_CAPACITY);
+        fs->vtable->writeFileText(fs, currentIniPath, serialized);
+        free(serialized);
+
+        Ini_free(currentIni);
+        currentIni = nullptr;
+    }
+    free(currentIniPath);
+    currentIniPath = nullptr;
+
+    return RValue_makeUndefined();
+}
+
+static RValue builtinIniReadString([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (3 > argCount || currentIni == nullptr) return RValue_makeOwnedString(strdup(""));
+
+    const char* section = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    const char* key = (args[1].type == RVALUE_STRING ? args[1].string : "");
+
+    const char* value = Ini_getString(currentIni, section, key);
+    if (value != nullptr) {
+        return RValue_makeOwnedString(strdup(value));
+    }
+
     // Return the default value (3rd arg)
     if (args[2].type == RVALUE_STRING && args[2].string != nullptr) {
         return RValue_makeOwnedString(strdup(args[2].string));
@@ -1482,31 +1544,291 @@ static RValue builtinIniReadString(VMContext* ctx, RValue* args, int32_t argCoun
     return RValue_makeOwnedString(str);
 }
 
-static RValue builtinIniReadReal(VMContext* ctx, RValue* args, int32_t argCount) {
-    logStubbedFunction(ctx, "ini_read_real");
-    if (3 > argCount) return RValue_makeReal(0.0);
+static RValue builtinIniReadReal([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (3 > argCount || currentIni == nullptr) return RValue_makeReal(0.0);
+
+    const char* section = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    const char* key = (args[1].type == RVALUE_STRING ? args[1].string : "");
+
+    const char* value = Ini_getString(currentIni, section, key);
+    if (value != nullptr) {
+        return RValue_makeReal(atof(value));
+    }
+
     return RValue_makeReal(RValue_toReal(args[2]));
 }
 
-// File stubs
-STUB_RETURN_ZERO(file_exists)
-STUB_RETURN_ZERO(file_text_open_write)
-STUB_RETURN_ZERO(file_text_open_read)
-STUB_RETURN_UNDEFINED(file_text_close)
-STUB_RETURN_UNDEFINED(file_text_write_string)
-STUB_RETURN_UNDEFINED(file_text_writeln)
-STUB_RETURN_UNDEFINED(file_text_write_real)
-STUB_RETURN_ZERO(file_text_eof)
-STUB_RETURN_UNDEFINED(file_delete)
+static RValue builtinIniWriteString([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (3 > argCount || currentIni == nullptr) return RValue_makeUndefined();
 
-static RValue builtinFileTextReadString(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
-    logStubbedFunction(ctx, "file_text_read_string");
+    const char* section = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    const char* key = (args[1].type == RVALUE_STRING ? args[1].string : "");
+    const char* value = (args[2].type == RVALUE_STRING ? args[2].string : "");
+
+    Ini_setString(currentIni, section, key, value);
+    return RValue_makeUndefined();
+}
+
+static RValue builtinIniWriteReal([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (3 > argCount || currentIni == nullptr) return RValue_makeUndefined();
+
+    const char* section = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    const char* key = (args[1].type == RVALUE_STRING ? args[1].string : "");
+    char* valueStr = RValue_toString(args[2]);
+
+    Ini_setString(currentIni, section, key, valueStr);
+    free(valueStr);
+    return RValue_makeUndefined();
+}
+
+static RValue builtinIniSectionExists([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount || currentIni == nullptr) return RValue_makeBool(false);
+
+    const char* section = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    return RValue_makeBool(Ini_hasSection(currentIni, section));
+}
+
+// ===[ Text File Functions ]===
+
+typedef struct {
+    char* content; // full file content (for read mode)
+    char* writeBuffer; // accumulated text (for write mode)
+    char* filePath; // relative path (for write mode, to flush on close)
+    int32_t readPos;    // current byte position in content (read mode)
+    int32_t contentLen; // length of content string
+    bool isWriteMode;
+    bool isOpen;
+} OpenTextFile;
+
+#define MAX_OPEN_TEXT_FILES 32
+static OpenTextFile openTextFiles[MAX_OPEN_TEXT_FILES];
+
+static int32_t findFreeTextFileSlot(void) {
+    repeat(MAX_OPEN_TEXT_FILES, i) {
+        if (!openTextFiles[i].isOpen) return (int32_t) i;
+    }
+    return -1;
+}
+
+static RValue builtinFileExists(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeBool(false);
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+    return RValue_makeBool(fs->vtable->fileExists(fs, path));
+}
+
+static RValue builtinFileTextOpenRead(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(-1.0);
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+
+    int32_t slot = findFreeTextFileSlot();
+    if (0 > slot) {
+        fprintf(stderr, "Warning: Too many open text files!\n");
+        abort();
+    }
+
+    char* content = fs->vtable->readFileText(fs, path);
+    if (content == nullptr) {
+        // GML returns a valid handle even if the file doesn't exist; eof is immediately true
+        content = strdup("");
+    }
+
+    openTextFiles[slot] = (OpenTextFile) {
+        .content = content,
+        .writeBuffer = nullptr,
+        .filePath = nullptr,
+        .readPos = 0,
+        .contentLen = (int32_t) strlen(content),
+        .isWriteMode = false,
+        .isOpen = true,
+    };
+
+    return RValue_makeReal((double) slot);
+}
+
+static RValue builtinFileTextOpenWrite(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(-1.0);
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    (void) ctx;
+
+    int32_t slot = findFreeTextFileSlot();
+    if (0 > slot) {
+        fprintf(stderr, "Warning: Too many open text files!\n");
+        abort();
+    }
+
+    openTextFiles[slot] = (OpenTextFile) {
+        .content = nullptr,
+        .writeBuffer = strdup(""),
+        .filePath = strdup(path),
+        .readPos = 0,
+        .contentLen = 0,
+        .isWriteMode = true,
+        .isOpen = true,
+    };
+
+    return RValue_makeReal((double) slot);
+}
+
+static RValue builtinFileTextClose(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeUndefined();
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeUndefined();
+
+    OpenTextFile* file = &openTextFiles[handle];
+    if (file->isWriteMode && file->writeBuffer != nullptr && file->filePath != nullptr) {
+        Runner* runner = (Runner*) ctx->runner;
+        FileSystem* fs = runner->fileSystem;
+        fs->vtable->writeFileText(fs, file->filePath, file->writeBuffer);
+    }
+
+    free(file->content);
+    free(file->writeBuffer);
+    free(file->filePath);
+    *file = (OpenTextFile) {0};
+    return RValue_makeUndefined();
+}
+
+static RValue builtinFileTextReadString([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeOwnedString(strdup(""));
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeOwnedString(strdup(""));
+
+    OpenTextFile* file = &openTextFiles[handle];
+    if (file->readPos >= file->contentLen) return RValue_makeOwnedString(strdup(""));
+
+    // Read until newline, carriage return, or EOF (does NOT consume the newline)
+    int32_t start = file->readPos;
+    while (file->contentLen > file->readPos) {
+        char c = file->content[file->readPos];
+        if (TextUtils_isNewlineChar(c))
+            break;
+        file->readPos++;
+    }
+
+    int32_t len = file->readPos - start;
+    char* result = safeMalloc((size_t) len + 1);
+    memcpy(result, file->content + start, (size_t) len);
+    result[len] = '\0';
+    return RValue_makeOwnedString(result);
+}
+
+static RValue builtinFileTextReadln([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeOwnedString(strdup(""));
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || MAX_OPEN_TEXT_FILES <= handle || !openTextFiles[handle].isOpen) return RValue_makeOwnedString(strdup(""));
+
+    OpenTextFile* file = &openTextFiles[handle];
+
+    // Skip past the current line (consume everything up to and including the newline)
+    while (file->contentLen > file->readPos) {
+        char c = file->content[file->readPos];
+        file->readPos++;
+        if (c == '\n')
+            break;
+        if (c == '\r') {
+            // Handle \r\n
+            if (file->contentLen > file->readPos && file->content[file->readPos] == '\n') {
+                file->readPos++;
+            }
+            break;
+        }
+    }
+
     return RValue_makeOwnedString(strdup(""));
 }
 
-static RValue builtinFileTextReadReal(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
-    logStubbedFunction(ctx, "file_text_read_real");
-    return RValue_makeReal(0.0);
+static RValue builtinFileTextReadReal([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeReal(0.0);
+
+    OpenTextFile* file = &openTextFiles[handle];
+    if (file->readPos >= file->contentLen) return RValue_makeReal(0.0);
+
+    // strtod will parse the number and advance past it
+    char* endPtr = nullptr;
+    double value = strtod(file->content + file->readPos, &endPtr);
+    if (endPtr != nullptr) {
+        file->readPos = (int32_t) (endPtr - file->content);
+    }
+
+    return RValue_makeReal(value);
+}
+
+static RValue builtinFileTextWriteString([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (2 > argCount) return RValue_makeUndefined();
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeUndefined();
+
+    OpenTextFile* file = &openTextFiles[handle];
+    if (!file->isWriteMode) return RValue_makeUndefined();
+
+    char* str = RValue_toString(args[1]);
+    size_t oldLen = strlen(file->writeBuffer);
+    size_t addLen = strlen(str);
+    file->writeBuffer = safeRealloc(file->writeBuffer, oldLen + addLen + 1);
+    memcpy(file->writeBuffer + oldLen, str, addLen);
+    file->writeBuffer[oldLen + addLen] = '\0';
+    free(str);
+
+    return RValue_makeUndefined();
+}
+
+static RValue builtinFileTextWriteln([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeUndefined();
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeUndefined();
+
+    OpenTextFile* file = &openTextFiles[handle];
+    if (!file->isWriteMode) return RValue_makeUndefined();
+
+    size_t oldLen = strlen(file->writeBuffer);
+    file->writeBuffer = safeRealloc(file->writeBuffer, oldLen + 2);
+    file->writeBuffer[oldLen] = '\n';
+    file->writeBuffer[oldLen + 1] = '\0';
+
+    return RValue_makeUndefined();
+}
+
+static RValue builtinFileTextWriteReal([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (2 > argCount) return RValue_makeUndefined();
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeUndefined();
+
+    OpenTextFile* file = &openTextFiles[handle];
+    if (!file->isWriteMode) return RValue_makeUndefined();
+
+    char* str = RValue_toString(args[1]);
+    size_t oldLen = strlen(file->writeBuffer);
+    size_t addLen = strlen(str);
+    file->writeBuffer = safeRealloc(file->writeBuffer, oldLen + addLen + 1);
+    memcpy(file->writeBuffer + oldLen, str, addLen);
+    file->writeBuffer[oldLen + addLen] = '\0';
+    free(str);
+
+    return RValue_makeUndefined();
+}
+
+static RValue builtinFileTextEof([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeBool(true);
+    int32_t handle = RValue_toInt32(args[0]);
+    if (0 > handle || handle >= MAX_OPEN_TEXT_FILES || !openTextFiles[handle].isOpen) return RValue_makeBool(true);
+
+    OpenTextFile* file = &openTextFiles[handle];
+    return RValue_makeBool(file->readPos >= file->contentLen);
+}
+
+static RValue builtinFileDelete(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeUndefined();
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+    fs->vtable->deleteFile(fs, path);
+    return RValue_makeUndefined();
 }
 
 // Keyboard functions
@@ -3154,25 +3476,27 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("gamepad_button_value", builtin_gamepad_button_value);
 
     // INI
-    registerBuiltin("ini_open", builtin_ini_open);
-    registerBuiltin("ini_close", builtin_ini_close);
-    registerBuiltin("ini_write_real", builtin_ini_write_real);
-    registerBuiltin("ini_write_string", builtin_ini_write_string);
+    registerBuiltin("ini_open", builtinIniOpen);
+    registerBuiltin("ini_close", builtinIniClose);
+    registerBuiltin("ini_write_real", builtinIniWriteReal);
+    registerBuiltin("ini_write_string", builtinIniWriteString);
     registerBuiltin("ini_read_string", builtinIniReadString);
     registerBuiltin("ini_read_real", builtinIniReadReal);
+    registerBuiltin("ini_section_exists", builtinIniSectionExists);
 
     // File
-    registerBuiltin("file_exists", builtin_file_exists);
-    registerBuiltin("file_text_open_write", builtin_file_text_open_write);
-    registerBuiltin("file_text_open_read", builtin_file_text_open_read);
-    registerBuiltin("file_text_close", builtin_file_text_close);
-    registerBuiltin("file_text_write_string", builtin_file_text_write_string);
-    registerBuiltin("file_text_writeln", builtin_file_text_writeln);
-    registerBuiltin("file_text_write_real", builtin_file_text_write_real);
-    registerBuiltin("file_text_eof", builtin_file_text_eof);
-    registerBuiltin("file_delete", builtin_file_delete);
+    registerBuiltin("file_exists", builtinFileExists);
+    registerBuiltin("file_text_open_write", builtinFileTextOpenWrite);
+    registerBuiltin("file_text_open_read", builtinFileTextOpenRead);
+    registerBuiltin("file_text_close", builtinFileTextClose);
+    registerBuiltin("file_text_write_string", builtinFileTextWriteString);
+    registerBuiltin("file_text_writeln", builtinFileTextWriteln);
+    registerBuiltin("file_text_write_real", builtinFileTextWriteReal);
+    registerBuiltin("file_text_eof", builtinFileTextEof);
+    registerBuiltin("file_delete", builtinFileDelete);
     registerBuiltin("file_text_read_string", builtinFileTextReadString);
     registerBuiltin("file_text_read_real", builtinFileTextReadReal);
+    registerBuiltin("file_text_readln", builtinFileTextReadln);
 
     // Keyboard
     registerBuiltin("keyboard_check", builtinKeyboardCheck);

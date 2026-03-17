@@ -1,6 +1,7 @@
 #pragma once
 
 #include "data_win.h"
+#include "file_system.h"
 #include "instance.h"
 #include "renderer.h"
 #include "runner_keyboard.h"
@@ -81,6 +82,7 @@ typedef struct Runner {
     DataWin* dataWin;
     VMContext* vmContext;
     Renderer* renderer;
+    FileSystem* fileSystem;
     Room* currentRoom;
     int32_t currentRoomIndex;
     int32_t currentRoomOrderPosition;
@@ -102,7 +104,7 @@ typedef struct Runner {
 } Runner;
 
 const char* Runner_getEventName(int32_t eventType, int32_t eventSubtype);
-Runner* Runner_create(DataWin* dataWin, VMContext* vm);
+Runner* Runner_create(DataWin* dataWin, VMContext* vm, FileSystem* fileSystem);
 void Runner_initFirstRoom(Runner* runner);
 void Runner_step(Runner* runner);
 void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, int32_t eventSubtype);
