@@ -37,10 +37,16 @@ if(PLATFORM STREQUAL "glfw")
     # stb_image
     target_include_directories(butterscotch PUBLIC vendor/stb/image)
 
+    # stb_vorbis
+    target_include_directories(butterscotch PUBLIC vendor/stb/vorbis)
+
+    # miniaudio
+    target_include_directories(butterscotch PUBLIC vendor/miniaudio)
+
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW3 REQUIRED glfw3)
     target_include_directories(butterscotch PRIVATE ${GLFW3_INCLUDE_DIRS})
-    target_link_libraries(butterscotch ${GLFW3_LIBRARIES} glad m)
+    target_link_libraries(butterscotch ${GLFW3_LIBRARIES} glad m pthread dl)
 
     # Enable useful things to figure out when things have gone wrong related to memory corruption
     # (Also set -DCMAKE_BUILD_TYPE=Debug to get debug symbols!)

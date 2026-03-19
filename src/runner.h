@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio_system.h"
 #include "data_win.h"
 #include "file_system.h"
 #include "instance.h"
@@ -83,6 +84,7 @@ typedef struct Runner {
     VMContext* vmContext;
     Renderer* renderer;
     FileSystem* fileSystem;
+    AudioSystem* audioSystem;
     Room* currentRoom;
     int32_t currentRoomIndex;
     int32_t currentRoomOrderPosition;

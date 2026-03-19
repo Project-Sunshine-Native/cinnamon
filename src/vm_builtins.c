@@ -13,6 +13,7 @@
 #include "text_utils.h"
 #include "collision.h"
 #include "ini.h"
+#include "audio_system.h"
 #include "file_system.h"
 
 #define MAX_VIEWS 8
@@ -1448,23 +1449,205 @@ STUB_RETURN_UNDEFINED(steam_file_write)
 STUB_RETURN_UNDEFINED(steam_file_read)
 STUB_RETURN_ZERO(steam_get_persona_name)
 
-// Audio stubs
-STUB_RETURN_UNDEFINED(audio_channel_num)
-STUB_RETURN_UNDEFINED(audio_play_sound)
-STUB_RETURN_UNDEFINED(audio_stop_sound)
-STUB_RETURN_UNDEFINED(audio_stop_all)
-STUB_RETURN_ZERO(audio_is_playing)
-STUB_RETURN_UNDEFINED(audio_sound_gain)
-STUB_RETURN_UNDEFINED(audio_sound_pitch)
-STUB_RETURN_ZERO(audio_sound_get_gain)
-STUB_RETURN_ZERO(audio_sound_get_pitch)
-STUB_RETURN_UNDEFINED(audio_master_gain)
-STUB_RETURN_UNDEFINED(audio_group_load)
-STUB_RETURN_ZERO(audio_group_is_loaded)
-STUB_RETURN_UNDEFINED(audio_play_music)
-STUB_RETURN_UNDEFINED(audio_stop_music)
-STUB_RETURN_UNDEFINED(audio_music_gain)
-STUB_RETURN_ZERO(audio_music_is_playing)
+// ===[ Audio Built-in Functions ]===
+
+// Helper to get the AudioSystem from VMContext (returns nullptr if no audio)
+static AudioSystem* getAudioSystem(VMContext* ctx) {
+    Runner* runner = (Runner*) ctx->runner;
+    return runner->audioSystem;
+}
+
+// Track the last music instance for legacy audio_play_music / audio_stop_music
+static int32_t lastMusicInstance = -1;
+
+static RValue builtin_audioChannelNum(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t count = RValue_toInt32(args[0]);
+    audio->vtable->setChannelCount(audio, count);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioPlaySound(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeReal(-1.0);
+    int32_t soundIndex = RValue_toInt32(args[0]);
+    int32_t priority = RValue_toInt32(args[1]);
+    bool loop = RValue_toBool(args[2]);
+    int32_t instanceId = audio->vtable->playSound(audio, soundIndex, priority, loop);
+    return RValue_makeReal((double) instanceId);
+}
+
+static RValue builtin_audioStopSound(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    audio->vtable->stopSound(audio, soundOrInstance);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioStopAll([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    audio->vtable->stopAll(audio);
+    lastMusicInstance = -1;
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioIsPlaying(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeBool(false);
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    bool playing = audio->vtable->isPlaying(audio, soundOrInstance);
+    return RValue_makeBool(playing);
+}
+
+static RValue builtin_audioSoundGain(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float gain = (float) RValue_toReal(args[1]);
+    uint32_t timeMs = (uint32_t) RValue_toInt32(args[2]);
+    audio->vtable->setSoundGain(audio, soundOrInstance, gain, timeMs);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioSoundPitch(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float pitch = (float) RValue_toReal(args[1]);
+    audio->vtable->setSoundPitch(audio, soundOrInstance, pitch);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioSoundGetGain(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeReal(0.0);
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float gain = audio->vtable->getSoundGain(audio, soundOrInstance);
+    return RValue_makeReal((double) gain);
+}
+
+static RValue builtin_audioSoundGetPitch(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeReal(1.0);
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float pitch = audio->vtable->getSoundPitch(audio, soundOrInstance);
+    return RValue_makeReal((double) pitch);
+}
+
+static RValue builtin_audioMasterGain(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    float gain = (float) RValue_toReal(args[0]);
+    audio->vtable->setMasterGain(audio, gain);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioGroupLoad(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t groupIndex = RValue_toInt32(args[0]);
+    audio->vtable->groupLoad(audio, groupIndex);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioGroupIsLoaded(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeBool(false);
+    int32_t groupIndex = RValue_toInt32(args[0]);
+    bool loaded = audio->vtable->groupIsLoaded(audio, groupIndex);
+    return RValue_makeBool(loaded);
+}
+
+static RValue builtin_audioPlayMusic(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeReal(-1.0);
+    int32_t soundIndex = RValue_toInt32(args[0]);
+    int32_t priority = RValue_toInt32(args[1]);
+    bool loop = RValue_toBool(args[2]);
+    int32_t instanceId = audio->vtable->playSound(audio, soundIndex, priority, loop);
+    lastMusicInstance = instanceId;
+    return RValue_makeReal((double) instanceId);
+}
+
+static RValue builtin_audioStopMusic([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    if (lastMusicInstance >= 0) {
+        audio->vtable->stopSound(audio, lastMusicInstance);
+        lastMusicInstance = -1;
+    }
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioMusicGain(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    if (lastMusicInstance >= 0) {
+        float gain = (float) RValue_toReal(args[0]);
+        uint32_t timeMs = (uint32_t) RValue_toInt32(args[1]);
+        audio->vtable->setSoundGain(audio, lastMusicInstance, gain, timeMs);
+    }
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioMusicIsPlaying([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeBool(false);
+    if (lastMusicInstance >= 0) {
+        return RValue_makeBool(audio->vtable->isPlaying(audio, lastMusicInstance));
+    }
+    return RValue_makeBool(false);
+}
+
+static RValue builtin_audioPauseSound(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    audio->vtable->pauseSound(audio, soundOrInstance);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioResumeSound(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    audio->vtable->resumeSound(audio, soundOrInstance);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioPauseAll([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    audio->vtable->pauseAll(audio);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioResumeAll([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    audio->vtable->resumeAll(audio);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_audioSoundGetTrackPosition(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeReal(0.0);
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float pos = audio->vtable->getTrackPosition(audio, soundOrInstance);
+    return RValue_makeReal((double) pos);
+}
+
+static RValue builtin_audioSoundSetTrackPosition(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundOrInstance = RValue_toInt32(args[0]);
+    float pos = (float) RValue_toReal(args[1]);
+    audio->vtable->setTrackPosition(audio, soundOrInstance, pos);
+    return RValue_makeUndefined();
+}
 
 // Application surface stubs
 STUB_RETURN_UNDEFINED(application_surface_enable)
@@ -3496,23 +3679,29 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("steam_file_read", builtin_steam_file_read);
     registerBuiltin("steam_get_persona_name", builtin_steam_get_persona_name);
 
-    // Audio stubs
-    registerBuiltin("audio_channel_num", builtin_audio_channel_num);
-    registerBuiltin("audio_play_sound", builtin_audio_play_sound);
-    registerBuiltin("audio_stop_sound", builtin_audio_stop_sound);
-    registerBuiltin("audio_stop_all", builtin_audio_stop_all);
-    registerBuiltin("audio_is_playing", builtin_audio_is_playing);
-    registerBuiltin("audio_sound_gain", builtin_audio_sound_gain);
-    registerBuiltin("audio_sound_pitch", builtin_audio_sound_pitch);
-    registerBuiltin("audio_sound_get_gain", builtin_audio_sound_get_gain);
-    registerBuiltin("audio_sound_get_pitch", builtin_audio_sound_get_pitch);
-    registerBuiltin("audio_master_gain", builtin_audio_master_gain);
-    registerBuiltin("audio_group_load", builtin_audio_group_load);
-    registerBuiltin("audio_group_is_loaded", builtin_audio_group_is_loaded);
-    registerBuiltin("audio_play_music", builtin_audio_play_music);
-    registerBuiltin("audio_stop_music", builtin_audio_stop_music);
-    registerBuiltin("audio_music_gain", builtin_audio_music_gain);
-    registerBuiltin("audio_music_is_playing", builtin_audio_music_is_playing);
+    // Audio
+    registerBuiltin("audio_channel_num", builtin_audioChannelNum);
+    registerBuiltin("audio_play_sound", builtin_audioPlaySound);
+    registerBuiltin("audio_stop_sound", builtin_audioStopSound);
+    registerBuiltin("audio_stop_all", builtin_audioStopAll);
+    registerBuiltin("audio_is_playing", builtin_audioIsPlaying);
+    registerBuiltin("audio_sound_gain", builtin_audioSoundGain);
+    registerBuiltin("audio_sound_pitch", builtin_audioSoundPitch);
+    registerBuiltin("audio_sound_get_gain", builtin_audioSoundGetGain);
+    registerBuiltin("audio_sound_get_pitch", builtin_audioSoundGetPitch);
+    registerBuiltin("audio_master_gain", builtin_audioMasterGain);
+    registerBuiltin("audio_group_load", builtin_audioGroupLoad);
+    registerBuiltin("audio_group_is_loaded", builtin_audioGroupIsLoaded);
+    registerBuiltin("audio_play_music", builtin_audioPlayMusic);
+    registerBuiltin("audio_stop_music", builtin_audioStopMusic);
+    registerBuiltin("audio_music_gain", builtin_audioMusicGain);
+    registerBuiltin("audio_music_is_playing", builtin_audioMusicIsPlaying);
+    registerBuiltin("audio_pause_sound", builtin_audioPauseSound);
+    registerBuiltin("audio_resume_sound", builtin_audioResumeSound);
+    registerBuiltin("audio_pause_all", builtin_audioPauseAll);
+    registerBuiltin("audio_resume_all", builtin_audioResumeAll);
+    registerBuiltin("audio_sound_get_track_position", builtin_audioSoundGetTrackPosition);
+    registerBuiltin("audio_sound_set_track_position", builtin_audioSoundSetTrackPosition);
 
     // Application surface
     registerBuiltin("application_surface_enable", builtin_application_surface_enable);
