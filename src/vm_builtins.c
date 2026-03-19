@@ -2071,6 +2071,7 @@ static RValue builtinInstanceCreate(VMContext* ctx, RValue* args, int32_t argCou
     }
     Instance* callerInst = (Instance*) ctx->currentInstance;
     Instance* inst = Runner_createInstance(runner, x, y, objectIndex);
+    if (inst == nullptr) return RValue_makeReal(-4.0); // noone
     if (callerInst != nullptr && ctx->creatorVarID >= 0) {
         Instance_setSelfVar(inst, ctx->creatorVarID, RValue_makeReal((double) callerInst->instanceId));
     }

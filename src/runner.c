@@ -423,6 +423,12 @@ void Runner_draw(Runner* runner) {
 
 // ===[ Instance Creation Helper ]===
 
+static bool isObjectDisabled(Runner* runner, int32_t objectIndex) {
+    if (runner->disabledObjects == nullptr) return false;
+    const char* name = runner->dataWin->objt.objects[objectIndex].name;
+    return shgeti(runner->disabledObjects, name) != -1;
+}
+
 static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32_t objectIndex, double x, double y) {
     DataWin* dataWin = runner->dataWin;
     require(objectIndex >= 0 && dataWin->objt.count > (uint32_t) objectIndex);
@@ -568,6 +574,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
             }
         }
         if (alreadyExists) continue;
+        if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
         Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (double) roomObj->x, (double) roomObj->y);
         inst->imageXscale = (double) roomObj->scaleX;
@@ -635,6 +642,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, FileSystem* fileSystem) {
 }
 
 Instance* Runner_createInstance(Runner* runner, double x, double y, int32_t objectIndex) {
+    if (isObjectDisabled(runner, objectIndex)) return nullptr;
     Instance* inst = createAndInitInstance(runner, runner->nextInstanceId++, objectIndex, x, y);
     inst->createEventFired = true;
     Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
@@ -1638,6 +1646,7 @@ void Runner_free(Runner* runner) {
     }
 
     hmfree(runner->tileLayerMap);
+    shfree(runner->disabledObjects);
     RunnerKeyboard_free(runner->keyboard);
     free(runner);
 }
