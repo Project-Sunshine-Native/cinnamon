@@ -101,6 +101,10 @@ static void loadAtlas(GsRenderer* gs) {
         entry->atlasY = BinaryReader_readUint16(&reader);
         entry->width = BinaryReader_readUint16(&reader);
         entry->height = BinaryReader_readUint16(&reader);
+        entry->cropX = BinaryReader_readUint16(&reader);
+        entry->cropY = BinaryReader_readUint16(&reader);
+        entry->cropW = BinaryReader_readUint16(&reader);
+        entry->cropH = BinaryReader_readUint16(&reader);
         entry->clutIndex = BinaryReader_readUint16(&reader);
         entry->bpp = BinaryReader_readUint8(&reader);
     }
@@ -120,6 +124,10 @@ static void loadAtlas(GsRenderer* gs) {
         entry->atlasY = BinaryReader_readUint16(&reader);
         entry->width = BinaryReader_readUint16(&reader);
         entry->height = BinaryReader_readUint16(&reader);
+        entry->cropX = BinaryReader_readUint16(&reader);
+        entry->cropY = BinaryReader_readUint16(&reader);
+        entry->cropW = BinaryReader_readUint16(&reader);
+        entry->cropH = BinaryReader_readUint16(&reader);
         entry->clutIndex = BinaryReader_readUint16(&reader);
         entry->bpp = BinaryReader_readUint8(&reader);
     }
@@ -680,8 +688,20 @@ static void gsDrawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y
     if (0 > tpagIndex || (uint32_t) tpagIndex >= dw->tpag.count) return;
 
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
-    float boundW = (float) tpag->boundingWidth;
-    float boundH = (float) tpag->boundingHeight;
+
+    // Get crop region from atlas entry (falls back to full bounding box if unmapped)
+    float cropX = 0.0f, cropY = 0.0f;
+    float cropW = (float) tpag->boundingWidth;
+    float cropH = (float) tpag->boundingHeight;
+    if (gs->atlasTPAGCount > (uint32_t) tpagIndex) {
+        AtlasTPAGEntry* entry = &gs->atlasTPAGEntries[tpagIndex];
+        if (entry->atlasId != 0xFFFF) {
+            cropX = (float) entry->cropX;
+            cropY = (float) entry->cropY;
+            cropW = (float) entry->cropW;
+            cropH = (float) entry->cropH;
+        }
+    }
 
     // Compute 4 screen-space corners (tristrip Z-pattern: top-left, top-right, bottom-left, bottom-right)
     // sx0/sy0 = top-left, sx1/sy1 = top-right, sx2/sy2 = bottom-left, sx3/sy3 = bottom-right
@@ -690,10 +710,11 @@ static void gsDrawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y
 
     if (hasRotation) {
         // Rotated: compute 4 transformed corners via matrix, same approach as the GLFW renderer
-        float localX0 = -originX;
-        float localY0 = -originY;
-        float localX1 = boundW - originX;
-        float localY1 = boundH - originY;
+        // Position the cropped region within the original bounding box
+        float localX0 = cropX - originX;
+        float localY0 = cropY - originY;
+        float localX1 = cropX + cropW - originX;
+        float localY1 = cropY + cropH - originY;
 
         // Build 2D transform: T(x,y) * R(-angleDeg) * S(xscale, yscale)
         // Negate angle because Y-down coordinate system
@@ -718,10 +739,11 @@ static void gsDrawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y
         sy3 = (gy3 - (float) gs->viewY) * gs->scaleY + gs->offsetY;
     } else {
         // Axis-aligned: simple rect math
-        float gameX1 = x - originX * xscale;
-        float gameY1 = y - originY * yscale;
-        float gameX2 = x + (boundW - originX) * xscale;
-        float gameY2 = y + (boundH - originY) * yscale;
+        // Position the cropped region within the original bounding box
+        float gameX1 = x + (cropX - originX) * xscale;
+        float gameY1 = y + (cropY - originY) * yscale;
+        float gameX2 = x + (cropX + cropW - originX) * xscale;
+        float gameY2 = y + (cropY + cropH - originY) * yscale;
 
         // Apply view offset and scale
         sx0 = (gameX1 - (float) gs->viewX) * gs->scaleX + gs->offsetX;
@@ -762,10 +784,9 @@ static void gsDrawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y
 
     AtlasTPAGEntry* atlasEntry = &gs->atlasTPAGEntries[tpagIndex];
 
-    // The atlas entry has the actual sprite dimensions in the atlas
-    // The TPAG has the original bounding dimensions
-    // If downscaled, the GS hardware rescales because we draw boundW x boundH but
-    // sample from atlasW x atlasH texels
+    // The atlas entry has the actual sprite dimensions in the atlas (post-crop, post-resize).
+    // The screen rect covers cropW x cropH game-space pixels, positioned at (cropX, cropY)
+    // within the original bounding box. The GS hardware stretches the atlas texels to fill.
 
     // UV coords within the 512x512 atlas (in texels for gsKit)
     float u0 = (float) atlasEntry->atlasX;
@@ -836,26 +857,39 @@ static void gsDrawSpritePart(Renderer* renderer, int32_t tpagIndex, int32_t srcO
     }
 
     AtlasTPAGEntry* atlasEntry = &gs->atlasTPAGEntries[tpagIndex];
-    TexturePageItem* tpag = &renderer->dataWin->tpag.items[tpagIndex];
 
-    // Compute the ratio between atlas size and original TPAG size
-    // (in case the preprocessor downscaled)
-    float origW = (float) tpag->sourceWidth;
-    float origH = (float) tpag->sourceHeight;
-    float ratioX = (origW > 0) ? ((float) atlasEntry->width / origW) : 1.0f;
-    float ratioY = (origH > 0) ? ((float) atlasEntry->height / origH) : 1.0f;
+    // Intersect the requested source rect with the crop region
+    float cX = (float) atlasEntry->cropX;
+    float cY = (float) atlasEntry->cropY;
+    float cW = (float) atlasEntry->cropW;
+    float cH = (float) atlasEntry->cropH;
 
-    // Map srcOffX/Y/W/H from original TPAG space to atlas space
-    float atlasOffX = (float) srcOffX * ratioX;
-    float atlasOffY = (float) srcOffY * ratioY;
-    float atlasSrcW = (float) srcW * ratioX;
-    float atlasSrcH = (float) srcH * ratioY;
+    float intX1 = fmaxf((float) srcOffX, cX);
+    float intY1 = fmaxf((float) srcOffY, cY);
+    float intX2 = fminf((float)(srcOffX + srcW), cX + cW);
+    float intY2 = fminf((float)(srcOffY + srcH), cY + cH);
 
-    // UV coords in atlas texels
-    float u1 = (float) atlasEntry->atlasX + atlasOffX;
-    float v1 = (float) atlasEntry->atlasY + atlasOffY;
-    float u2 = u1 + atlasSrcW;
-    float v2 = v1 + atlasSrcH;
+    if (intX1 >= intX2 || intY1 >= intY2) return;
+
+    // Adjust screen position if the crop clipped the start of the requested rect
+    float clipOffX = intX1 - (float) srcOffX;
+    float clipOffY = intY1 - (float) srcOffY;
+    float visW = intX2 - intX1;
+    float visH = intY2 - intY1;
+
+    sx1 = (x + clipOffX * xscale - (float) gs->viewX) * gs->scaleX + gs->offsetX;
+    sy1 = (y + clipOffY * yscale - (float) gs->viewY) * gs->scaleY + gs->offsetY;
+    sx2 = (x + (clipOffX + visW) * xscale - (float) gs->viewX) * gs->scaleX + gs->offsetX;
+    sy2 = (y + (clipOffY + visH) * yscale - (float) gs->viewY) * gs->scaleY + gs->offsetY;
+
+    // Map intersection region to atlas UV space
+    float ratioX = (cW > 0) ? ((float) atlasEntry->width / cW) : 1.0f;
+    float ratioY = (cH > 0) ? ((float) atlasEntry->height / cH) : 1.0f;
+
+    float u1 = (float) atlasEntry->atlasX + (intX1 - cX) * ratioX;
+    float v1 = (float) atlasEntry->atlasY + (intY1 - cY) * ratioY;
+    float u2 = u1 + visW * ratioX;
+    float v2 = v1 + visH * ratioY;
 
     // GS modulate mode: Output = Texture * Vertex / 128
     uint8_t r = BGR_R(color) >> 1;

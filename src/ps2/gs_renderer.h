@@ -8,8 +8,12 @@ typedef struct {
     uint16_t atlasId;   // TEX atlas index (0xFFFF = not mapped)
     uint16_t atlasX;    // X offset within the atlas
     uint16_t atlasY;    // Y offset within the atlas
-    uint16_t width;     // Image width in the atlas
-    uint16_t height;    // Image height in the atlas
+    uint16_t width;     // Image width in the atlas (post-crop, post-resize)
+    uint16_t height;    // Image height in the atlas (post-crop, post-resize)
+    uint16_t cropX;     // X offset of cropped content within original bounding box
+    uint16_t cropY;     // Y offset of cropped content within original bounding box
+    uint16_t cropW;     // Pre-resize width of the cropped content
+    uint16_t cropH;     // Pre-resize height of the cropped content
     uint16_t clutIndex; // CLUT index within the corresponding CLUT file
     uint8_t bpp;        // 4 or 8
 } AtlasTPAGEntry;
@@ -24,8 +28,12 @@ typedef struct {
     uint16_t atlasId;   // TEX atlas index (0xFFFF = not mapped)
     uint16_t atlasX;    // X offset within the atlas
     uint16_t atlasY;    // Y offset within the atlas
-    uint16_t width;     // Tile width in the atlas (may differ from srcW if downscaled)
-    uint16_t height;    // Tile height in the atlas (may differ from srcH if downscaled)
+    uint16_t width;     // Tile width in the atlas (post-crop, post-resize)
+    uint16_t height;    // Tile height in the atlas (post-crop, post-resize)
+    uint16_t cropX;     // X offset of cropped content within original tile
+    uint16_t cropY;     // Y offset of cropped content within original tile
+    uint16_t cropW;     // Pre-resize width of the cropped content
+    uint16_t cropH;     // Pre-resize height of the cropped content
     uint16_t clutIndex; // CLUT index within the corresponding CLUT file
     uint8_t bpp;        // 4 or 8
 } AtlasTileEntry;
