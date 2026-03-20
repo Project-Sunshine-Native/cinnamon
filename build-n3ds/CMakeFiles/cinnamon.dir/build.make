@@ -265,10 +265,24 @@ CMakeFiles/cinnamon.dir/src/n3ds/main.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cinnamon.dir/src/n3ds/main.s"
 	/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/kurplunk/n3ds/cinnamon/src/n3ds/main.c -o CMakeFiles/cinnamon.dir/src/n3ds/main.s
 
+CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o: CMakeFiles/cinnamon.dir/flags.make
+CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o: /home/kurplunk/n3ds/cinnamon/src/n3ds/n3ds_file_system.c
+CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o: CMakeFiles/cinnamon.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building C object CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o"
+	/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o -MF CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o.d -o CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o -c /home/kurplunk/n3ds/cinnamon/src/n3ds/n3ds_file_system.c
+
+CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.i"
+	/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/kurplunk/n3ds/cinnamon/src/n3ds/n3ds_file_system.c > CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.i
+
+CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.s"
+	/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/kurplunk/n3ds/cinnamon/src/n3ds/n3ds_file_system.c -o CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.s
+
 CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o: CMakeFiles/cinnamon.dir/flags.make
 CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o: /home/kurplunk/n3ds/cinnamon/src/n3ds/stb_impl.c
 CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o: CMakeFiles/cinnamon.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building C object CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building C object CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o"
 	/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o -MF CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o.d -o CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o -c /home/kurplunk/n3ds/cinnamon/src/n3ds/stb_impl.c
 
 CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.i: cmake_force
@@ -295,6 +309,7 @@ cinnamon_OBJECTS = \
 "CMakeFiles/cinnamon.dir/src/vm.o" \
 "CMakeFiles/cinnamon.dir/src/vm_builtins.o" \
 "CMakeFiles/cinnamon.dir/src/n3ds/main.o" \
+"CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o" \
 "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o"
 
 # External object files for target cinnamon
@@ -314,10 +329,11 @@ cinnamon.elf: CMakeFiles/cinnamon.dir/src/runner_keyboard.o
 cinnamon.elf: CMakeFiles/cinnamon.dir/src/vm.o
 cinnamon.elf: CMakeFiles/cinnamon.dir/src/vm_builtins.o
 cinnamon.elf: CMakeFiles/cinnamon.dir/src/n3ds/main.o
+cinnamon.elf: CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o
 cinnamon.elf: CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o
 cinnamon.elf: CMakeFiles/cinnamon.dir/build.make
 cinnamon.elf: CMakeFiles/cinnamon.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Linking C executable cinnamon.elf"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Linking C executable cinnamon.elf"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/cinnamon.dir/link.txt --verbose=$(VERBOSE)
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold "Generating cinnamon.smdh"
 	/opt/devkitpro/tools/bin/smdhtool --create Cinnamon A\ GameMaker\ runner\ for\ the\ N3DS Owen-Programming /opt/devkitpro/libctru/default_icon.png /home/kurplunk/n3ds/cinnamon/build-n3ds/cinnamon.smdh
