@@ -135,6 +135,10 @@ elseif(PLATFORM STREQUAL "n3ds")
         ${CTRULIB}/include
         ${PORTLIBS}/include
     )
+
+    # stb_image
+    target_include_directories(cinnamon PUBLIC vendor/stb/image)
+    
     target_link_directories(cinnamon PRIVATE
         ${CTRULIB}/lib
         ${PORTLIBS}/lib
@@ -147,8 +151,8 @@ elseif(PLATFORM STREQUAL "n3ds")
 
         # App metadata (mirrors APP_TITLE / APP_DESCRIPTION / APP_AUTHOR in Makefile)
         set(N3DS_APP_TITLE       "Cinnamon" CACHE STRING "3DS SMDH title")
-        set(N3DS_APP_DESCRIPTION ""         CACHE STRING "3DS SMDH description")
-        set(N3DS_APP_AUTHOR      ""         CACHE STRING "3DS SMDH author")
+        set(N3DS_APP_DESCRIPTION "A GameMaker runner for the N3DS"         CACHE STRING "3DS SMDH description")
+        set(N3DS_APP_AUTHOR      "Owen-Programming"         CACHE STRING "3DS SMDH author")
 
         # Fall back to devkitPro's built-in icon when none is supplied
         if(NOT DEFINED N3DS_APP_ICON OR N3DS_APP_ICON STREQUAL "")

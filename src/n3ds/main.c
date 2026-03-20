@@ -24,8 +24,8 @@
 // #include "gl_renderer.h"
 // TODO: THIS TOO
 // #include "glfw_file_system.h"
-// #include "stb_ds.h"
-// #include "stb_image_write.h"
+#include "stb_ds.h"
+#include "stb_image_write.h"
 
 #include "utils.h"
 
