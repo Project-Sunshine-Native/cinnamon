@@ -9,6 +9,7 @@
 //#include <GLFW/glfw3.h>
 
 #include <citro2d.h>
+#include <3ds.h>
 
 #include <getopt.h>
 #include <stdio.h>
@@ -20,10 +21,11 @@
 #include "runner_keyboard.h"
 #include "runner.h"
 #include "input_recording.h"
+
 // TODO: IMPLIMENT THIS!!!
 // #include "gl_renderer.h"
-// TODO: THIS TOO
-// #include "glfw_file_system.h"
+
+#include "n3ds_file_system.h"
 #include "stb_ds.h"
 #include "stb_image_write.h"
 
@@ -67,193 +69,6 @@ typedef struct {
     const char* recordInputsPath;
     const char* playbackInputsPath;
 } CommandLineArgs;
-
-static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) {
-    memset(args, 0, sizeof(CommandLineArgs));
-
-    static struct option longOptions[] = {
-        {"screenshot",          required_argument, nullptr, 's'},
-        {"screenshot-at-frame", required_argument, nullptr, 'f'},
-        {"headless",            no_argument,       nullptr, 'h'},
-        {"print-rooms", no_argument,               nullptr, 'r'},
-        {"print-declared-functions", no_argument,  nullptr, 'p'},
-        {"trace-variable-reads", required_argument,  nullptr, 'R'},
-        {"trace-variable-writes", required_argument, nullptr, 'W'},
-        {"trace-function-calls", required_argument,         nullptr, 'c'},
-        {"trace-alarms", required_argument,         nullptr, 'a'},
-        {"trace-instance-lifecycles", required_argument,         nullptr, 'l'},
-        {"trace-events", required_argument,         nullptr, 'e'},
-        {"trace-event-inherited", no_argument, nullptr, 'E'},
-        {"trace-tiles", required_argument, nullptr, 'T'},
-        {"trace-opcodes", required_argument,       nullptr, 'o'},
-        {"trace-stack", required_argument,         nullptr, 'S'},
-        {"trace-frames", no_argument, nullptr, 'k'},
-        {"exit-at-frame", required_argument, nullptr, 'x'},
-        {"dump-frame", required_argument, nullptr, 'd'},
-        {"dump-frame-json", required_argument, nullptr, 'j'},
-        {"dump-frame-json-file", required_argument, nullptr, 'J'},
-        {"speed", required_argument, nullptr, 'M'},
-        {"seed", required_argument, nullptr, 'Z'},
-        {"debug", no_argument, nullptr, 'D'},
-        {"disassemble", required_argument, nullptr, 'A'},
-        {"record-inputs", required_argument, nullptr, 'I'},
-        {"playback-inputs", required_argument, nullptr, 'P'},
-        {nullptr,               0,                 nullptr,  0 }
-    };
-
-    args->screenshotFrames = nullptr;
-    args->exitAtFrame = -1;
-    args->speedMultiplier = 1.0;
-
-    int opt;
-    while ((opt = getopt_long(argc, argv, "", longOptions, nullptr)) != -1) {
-        switch (opt) {
-            case 's':
-                args->screenshotPattern = optarg;
-                break;
-            case 'f': {
-                char* endPtr;
-                long frame = strtol(optarg, &endPtr, 10);
-                if (*endPtr != '\0' || 0 > frame) {
-                    fprintf(stderr, "Error: Invalid frame number '%s'\n", optarg);
-                    exit(1);
-                }
-
-                hmput(args->screenshotFrames, (int) frame, true);
-                break;
-            }
-            case 'h':
-                args->headless = true;
-                break;
-            case 'r':
-                args->printRooms = true;
-                break;
-            case 'p':
-                args->printDeclaredFunctions = true;
-                break;
-            case 'R':
-                shput(args->varReadsToBeTraced, optarg, true);
-                break;
-            case 'W':
-                shput(args->varWritesToBeTraced, optarg, true);
-                break;
-            case 'c':
-                shput(args->functionCallsToBeTraced, optarg, true);
-                break;
-            case 'a':
-                shput(args->alarmsToBeTraced, optarg, true);
-                break;
-            case 'l':
-                shput(args->instanceLifecyclesToBeTraced, optarg, true);
-                break;
-            case 'e':
-                shput(args->eventsToBeTraced, optarg, true);
-                break;
-            case 'o':
-                shput(args->opcodesToBeTraced, optarg, true);
-                break;
-            case 'S':
-                shput(args->stackToBeTraced, optarg, true);
-                break;
-            case 'k':
-                args->traceFrames = true;
-                break;
-            case 'x': {
-                char* endPtr;
-                long frame = strtol(optarg, &endPtr, 10);
-                if (*endPtr != '\0' || 0 > frame) {
-                    fprintf(stderr, "Error: Invalid frame number '%s' for --exit-at-frame\n", optarg);
-                    exit(1);
-                }
-                args->exitAtFrame = (int) frame;
-                break;
-            }
-            case 'd': {
-                char* endPtr;
-                long frame = strtol(optarg, &endPtr, 10);
-                if (*endPtr != '\0' || 0 > frame) {
-                    fprintf(stderr, "Error: Invalid frame number '%s' for --dump-frame\n", optarg);
-                    exit(1);
-                }
-                hmput(args->dumpFrames, (int) frame, true);
-                break;
-            }
-            case 'j': {
-                char* endPtr;
-                long frame = strtol(optarg, &endPtr, 10);
-                if (*endPtr != '\0' || 0 > frame) {
-                    fprintf(stderr, "Error: Invalid frame number '%s' for --dump-frame-json\n", optarg);
-                    exit(1);
-                }
-                hmput(args->dumpJsonFrames, (int) frame, true);
-                break;
-            }
-            case 'J':
-                args->dumpJsonFilePattern = optarg;
-                break;
-            case 'M': {
-                char* endPtr;
-                double speed = strtod(optarg, &endPtr);
-                if (*endPtr != '\0' || speed <= 0.0) {
-                    fprintf(stderr, "Error: Invalid speed multiplier '%s' for --speed (must be > 0)\n", optarg);
-                    exit(1);
-                }
-                args->speedMultiplier = speed;
-                break;
-            }
-            case 'D':
-                args->debug = true;
-                break;
-            case 'A':
-                shput(args->disassemble, optarg, true);
-                break;
-            case 'T':
-                shput(args->tilesToBeTraced, optarg, true);
-                break;
-            case 'E':
-                args->traceEventInherited = true;
-                break;
-            case 'Z': {
-                char* endPtr;
-                long seedVal = strtol(optarg, &endPtr, 10);
-                if (*endPtr != '\0') {
-                    fprintf(stderr, "Error: Invalid seed value '%s' for --seed\n", optarg);
-                    exit(1);
-                }
-                args->seed = (int) seedVal;
-                args->hasSeed = true;
-                break;
-            }
-            case 'I':
-                args->recordInputsPath = optarg;
-                break;
-            case 'P':
-                args->playbackInputsPath = optarg;
-                break;
-            default:
-                fprintf(stderr, "Usage: %s [--headless] [--screenshot=PATTERN] [--screenshot-at-frame=N ...] <path to data.win or game.unx>\n", argv[0]);
-                exit(1);
-        }
-    }
-
-    if (optind >= argc) {
-        fprintf(stderr, "Usage: %s [--headless] [--screenshot=PATTERN] [--screenshot-at-frame=N ...] <path to data.win or game.unx>\n", argv[0]);
-        exit(1);
-    }
-
-    args->dataWinPath = argv[optind];
-
-    if (hmlen(args->screenshotFrames) > 0 && args->screenshotPattern == nullptr) {
-        fprintf(stderr, "Error: --screenshot-at-frame requires --screenshot to be set\n");
-        exit(1);
-    }
-
-    if (args->headless && args->speedMultiplier != 1.0) {
-        fprintf(stderr, "You can't set the speed multiplier while running in headless mode! Headless mode always run in real time\n");
-        exit(1);
-    }
-
-}
 
 static void freeCommandLineArgs(CommandLineArgs* args) {
     hmfree(args->screenshotFrames);
@@ -364,15 +179,95 @@ static void keyCallback(C3D_RenderTarget* window, int key, int scancode, int act
 }
 */
 
+static void LogToSD(const char* text) {
+    // Open file in append mode on SD card
+    FILE *f = fopen("sdmc:/log.txt", "a");
+    if (f) {
+        fprintf(f, "%s\n", text);
+        fclose(f);
+    }
+}
+
+void ShowErrorAndExit(const char* msg)
+{
+    // init
+    gfxInitDefault();
+    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
+    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
+    C2D_Prepare();
+
+    C3D_RenderTarget* top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+
+    C2D_TextBuf buf = C2D_TextBufNew(4096);
+    C2D_Text text;
+    C2D_TextParse(&text, buf, msg);
+    C2D_TextOptimize(&text);
+
+    while (aptMainLoop())
+    {
+        hidScanInput();
+        if (hidKeysDown() & KEY_START) break;
+
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        C2D_TargetClear(top, C2D_Color32(0,0,0,255));
+        C2D_SceneBegin(top);
+
+        C2D_DrawText(&text,
+            C2D_WithColor,
+            8.0f, 8.0f,
+            0.0f,
+            0.5f, 0.5f,
+            C2D_Color32(255,255,255,255)
+        );
+
+        C3D_FrameEnd(0);
+    }
+
+    // cleanup
+    C2D_TextBufDelete(buf);
+    C2D_Fini();
+    C3D_Fini();
+    gfxExit();
+
+    exit(0);
+}
+
 // ===[ MAIN ]===
 int main(int argc, char* argv[]) {
-    CommandLineArgs args;
-    parseCommandLineArgs(&args, argc, argv);
+    fsInit();
 
-    printf("Loading %s...\n", args.dataWinPath);
+    // Flush to SD card every new line (\n)
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+    // send printf to sdcard
+    freopen("full_log.txt", "w", stdout);
+
+    LogToSD("Application Started");
+    //args.dataWinPath = "sdmc:/cinnamon/data.win";
+    //parseCommandLineArgs(&args, argc, argv);
+
+    printf("Loading %s...\n", "sdmc:/cinnamon/data.win");
+
+    LogToSD("Loading data.win...");
+
+    FILE* f = fopen("sdmc:/cinnamon/data.win", "rb");
+    if (f) {
+        // exists
+
+        fclose(f);
+    } else {
+        // doesn't exist
+
+        fprintf(stderr, "Error: data.win not found at sdmc:/cinnamon/data.win\n");
+        LogToSD("Error: data.win not found at sdmc:/cinnamon/data.win");
+
+        ShowErrorAndExit("An error has occurred.\nPlease make sure data.win is located at: cinnamon/data.win\non your SD card!\nPress START to exit.");
+
+        return 0;
+    }
 
     DataWin* dataWin = DataWin_parse(
-        args.dataWinPath,
+        "sdmc:/cinnamon/data.win",
         (DataWinParserOptions) {
             .parseGen8 = true,
             .parseOptn = true,
@@ -403,6 +298,7 @@ int main(int argc, char* argv[]) {
 
     Gen8* gen8 = &dataWin->gen8;
 	printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
+    LogToSD("Loaded data.win successfully!");
 
     // TODO: Replace with N3DS compatible print.
 /*
@@ -422,13 +318,19 @@ int main(int argc, char* argv[]) {
     snprintf(windowTitle, sizeof(windowTitle), "cinnamon - %s", gen8->displayName);
     */
 
+    LogToSD("LOADING VM...");
+
     // Initialize VM
     VMContext* vm = VM_create(dataWin);
 
+    LogToSD("VM OK");
+
+    /*
     if (args.hasSeed) {
         srand((unsigned int) args.seed);
         vm->hasFixedSeed = true;
         printf("Using fixed RNG seed: %d\n", args.seed);
+        LogToSD("Using fixed RNG seed");
     }
 
     if (args.printRooms) {
@@ -487,17 +389,20 @@ int main(int argc, char* argv[]) {
         freeCommandLineArgs(&args);
         return 0;
     }
+    */
 
     // Initialize the file system
     // TODO: Replace with sdcard reads and writes
-    // GlfwFileSystem* glfwFileSystem = GlfwFileSystem_create(args.dataWinPath);
+    N3DSFileSystem* n3dsFileSystem = N3DSFileSystem_create("sdmc:/cinnamon/data.win");
 
     // Initialize the runner
-    // TODO: Replace nullptr with actual file system
-    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) nullptr);
-    runner->debugMode = args.debug;
+    LogToSD("LOADING RUNNER");
+    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) n3dsFileSystem);
+    //runner->debugMode = args.debug;
+    LogToSD("RUNNER OK");
 
     // Set up input recording/playback (both can be active: playback then continue recording)
+    /*
     if (args.playbackInputsPath != nullptr) {
         globalInputRecording = InputRecording_createPlayer(args.playbackInputsPath, args.recordInputsPath);
     } else if (args.recordInputsPath != nullptr) {
@@ -513,6 +418,7 @@ int main(int argc, char* argv[]) {
     shcopyFromTo(args.stackToBeTraced, runner->vmContext->stackToBeTraced);
     shcopyFromTo(args.tilesToBeTraced, runner->vmContext->tilesToBeTraced);
     runner->vmContext->traceEventInherited = args.traceEventInherited;
+    */
 
     // Init GLFW
     /*
@@ -544,6 +450,8 @@ int main(int argc, char* argv[]) {
 
     // set the console to display on the bottom screen
 	consoleInit(GFX_BOTTOM, NULL);
+
+    LogToSD("Initalized 3DS Libaries");
 
     // TODO: do something with (int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight
     // To make it fit the screen correctly. REMEMBER TO PUT THIS IN A FUNCTION
@@ -590,8 +498,10 @@ int main(int argc, char* argv[]) {
     glfwSetKeyCallback(window, keyCallback);
     */
 
+    LogToSD("Initalizing first room...");
     // Initialize the first room and fire Game Start / Room Start events
     Runner_initFirstRoom(runner);
+    LogToSD("First room loaded!");
 
     // Main loop
     bool debugPaused = false;
@@ -686,14 +596,17 @@ int main(int argc, char* argv[]) {
         double frameStartTime = 0;
 
         if (shouldStep) {
+            /*
             if (args.traceFrames) {
                 frameStartTime = svcGetSystemTick();
                 fprintf(stderr, "Frame %d (Start)\n", runner->frameCount);
             }
+            */
 
             // Run one game step (Begin Step, Keyboard, Alarms, Step, End Step, room transitions)
             Runner_step(runner);
 
+            /*
             // Dump full runner state if this frame was requested
             if (hmget(args.dumpFrames, runner->frameCount)) {
                 Runner_dumpState(runner);
@@ -719,6 +632,7 @@ int main(int argc, char* argv[]) {
                 }
                 free(json);
             }
+            */
         }
 
         Room* activeRoom = runner->currentRoom;
@@ -822,10 +736,12 @@ int main(int argc, char* argv[]) {
         }
         */
 
+        /*
         if (shouldStep && args.traceFrames) {
             double frameElapsedMs = (svcGetSystemTick() - frameStartTime) * 1000.0;
             fprintf(stderr, "Frame %d (End, %.2f ms)\n", runner->frameCount, frameElapsedMs);
         }
+        */
 
         // TODO: Find a way to swap buffers in citro3d
         // glfwSwapBuffers(window);
@@ -833,8 +749,8 @@ int main(int argc, char* argv[]) {
         C3D_FrameEnd(0); // Maybe it's this?
 
         // Limit frame rate to room speed (skip in headless mode for max speed!!)
-        if (!args.headless && runner->currentRoom->speed > 0) {
-            double targetFrameTime = 1.0 / (runner->currentRoom->speed * args.speedMultiplier);
+        if (runner->currentRoom->speed > 0) {
+            double targetFrameTime = 1.0 / (runner->currentRoom->speed);
             double nextFrameTime = lastFrameTime + targetFrameTime;
             // Sleep for most of the remaining time, then spin-wait for precision
             double remaining = nextFrameTime - svcGetSystemTick();
@@ -882,7 +798,7 @@ int main(int argc, char* argv[]) {
 	gfxExit();
 	romfsExit();
 
-    freeCommandLineArgs(&args);
+    //freeCommandLineArgs(&args);
 
     printf("Bye! :3\n");
     return 0;
