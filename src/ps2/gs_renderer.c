@@ -378,20 +378,258 @@ static int32_t allocateChunks(GsRenderer* gs, int chunksNeeded) {
     return -1;
 }
 
-// Upload atlas pixel data from TEXTURES.BIN to the given VRAM chunk(s).
-static void uploadAtlasToChunk(GsRenderer* gs, uint16_t atlasId, int32_t firstChunk) {
-    uint32_t fileOffset = gs->atlasOffsets[atlasId];
+// ===[ EE RAM Atlas Cache (Bump Allocator with LRU Eviction + Compaction) ]===
+// Caches compressed atlas data in a 4 MiB EE RAM buffer to avoid repeated
+// CDVD reads when atlases are evicted from VRAM and need to be re-uploaded.
 
-    // Seek to the atlas header within TEXTURES.BIN
-    fseek(gs->texturesFile, (long) fileOffset, SEEK_SET);
+#define EE_CACHE_CAPACITY (4 * 1024 * 1024) // 4 MiB
 
-    // Read the 128-byte header
-    uint8_t header[TEX_HEADER_SIZE];
-    size_t headerRead = fread(header, 1, TEX_HEADER_SIZE, gs->texturesFile);
-    if (headerRead != TEX_HEADER_SIZE) {
-        fprintf(stderr, "GsRenderer: Failed to read atlas %u header from TEXTURES.BIN at offset 0x%08X\n", atlasId, fileOffset);
+// Initialize the EE RAM cache. Called from gsInit after opening TEXTURES.BIN.
+static void initEeCache(GsRenderer* gs) {
+    gs->eeCacheCapacity = EE_CACHE_CAPACITY;
+    gs->eeCacheBumpPtr = 0;
+    gs->eeCache = (uint8_t*) memalign(128, EE_CACHE_CAPACITY);
+    if (gs->eeCache == nullptr) {
+        fprintf(stderr, "GsRenderer: Failed to allocate %u bytes for EE cache\n", EE_CACHE_CAPACITY);
         abort();
     }
+
+    gs->eeCacheEntries = safeMalloc(gs->atlasCount * sizeof(EeAtlasCacheEntry));
+    repeat(gs->atlasCount, i) {
+        gs->eeCacheEntries[i].atlasId = -1;
+        gs->eeCacheEntries[i].offset = 0;
+        gs->eeCacheEntries[i].size = 0;
+        gs->eeCacheEntries[i].lastUsed = 0;
+    }
+
+    // Compute on-disk sizes from offset table
+    gs->atlasDataSizes = safeMalloc(gs->atlasCount * sizeof(uint32_t));
+
+    // Get total file size for the last atlas
+    fseek(gs->texturesFile, 0, SEEK_END);
+    uint32_t texturesFileSize = (uint32_t) ftell(gs->texturesFile);
+
+    repeat(gs->atlasCount, i) {
+        if (gs->atlasCount - 1 > i) {
+            gs->atlasDataSizes[i] = gs->atlasOffsets[i + 1] - gs->atlasOffsets[i];
+        } else {
+            gs->atlasDataSizes[i] = texturesFileSize - gs->atlasOffsets[i];
+        }
+    }
+}
+
+// Preload atlases sequentially into the EE cache until the buffer is full.
+static void preloadEeCache(GsRenderer* gs) {
+    uint32_t preloaded = 0;
+
+    repeat(gs->atlasCount, i) {
+        uint32_t dataSize = gs->atlasDataSizes[i];
+        if (gs->eeCacheBumpPtr + dataSize > gs->eeCacheCapacity) {
+            break;
+        }
+
+        fseek(gs->texturesFile, (long) gs->atlasOffsets[i], SEEK_SET);
+        size_t bytesRead = fread(gs->eeCache + gs->eeCacheBumpPtr, 1, dataSize, gs->texturesFile);
+        if (bytesRead != dataSize) {
+            fprintf(stderr, "GsRenderer: EE cache preload short read for atlas %u (expected %u, got %zu)\n", i, dataSize, bytesRead);
+            break;
+        }
+
+        gs->eeCacheEntries[i].atlasId = (int16_t) i;
+        gs->eeCacheEntries[i].offset = gs->eeCacheBumpPtr;
+        gs->eeCacheEntries[i].size = dataSize;
+        gs->eeCacheEntries[i].lastUsed = gs->frameCounter;
+
+        gs->eeCacheBumpPtr += dataSize;
+        preloaded++;
+    }
+
+    fprintf(stderr, "GsRenderer: EE cache initialized - %u MB, %u atlases preloaded (%u KB used)\n", EE_CACHE_CAPACITY / (1024 * 1024), preloaded, gs->eeCacheBumpPtr / 1024);
+}
+
+// Look up an atlas in the EE cache. Returns pointer to cached data or nullptr.
+static uint8_t* eeCacheLookup(GsRenderer* gs, uint16_t atlasId) {
+    if (atlasId >= gs->atlasCount) return nullptr;
+    if (0 > gs->eeCacheEntries[atlasId].atlasId) return nullptr;
+
+    gs->eeCacheEntries[atlasId].lastUsed = gs->frameCounter;
+    return gs->eeCache + gs->eeCacheEntries[atlasId].offset;
+}
+
+// Compact the EE cache by closing gaps from evicted entries.
+static void compactEeCache(GsRenderer* gs) {
+    // Collect live entries sorted by offset using insertion sort
+    // (max 146 atlases, so a stack array + insertion sort is fine)
+    uint16_t liveIds[256]; // More than enough for 146 atlases
+    uint32_t liveCount = 0;
+
+    repeat(gs->atlasCount, i) {
+        if (gs->eeCacheEntries[i].atlasId >= 0) {
+            // Insertion sort by offset
+            uint32_t insertPos = liveCount;
+            while (insertPos > 0 && gs->eeCacheEntries[liveIds[insertPos - 1]].offset > gs->eeCacheEntries[i].offset) {
+                liveIds[insertPos] = liveIds[insertPos - 1];
+                insertPos--;
+            }
+            liveIds[insertPos] = (uint16_t) i;
+            liveCount++;
+        }
+    }
+
+    // Walk and memmove each entry down to close gaps
+    uint32_t writePtr = 0;
+    repeat(liveCount, i) {
+        EeAtlasCacheEntry* entry = &gs->eeCacheEntries[liveIds[i]];
+        if (entry->offset != writePtr) {
+            memmove(gs->eeCache + writePtr, gs->eeCache + entry->offset, entry->size);
+            entry->offset = writePtr;
+        }
+        writePtr += entry->size;
+    }
+
+    gs->eeCacheBumpPtr = writePtr;
+}
+
+// Evict LRU entries until spaceNeeded bytes are available. Returns true on success.
+static bool eeCacheEvictLRU(GsRenderer* gs, uint32_t spaceNeeded) {
+    // Calculate total live bytes to determine how much space we can free
+    uint32_t liveBytes = 0;
+    repeat(gs->atlasCount, i) {
+        if (gs->eeCacheEntries[i].atlasId >= 0) {
+            liveBytes += gs->eeCacheEntries[i].size;
+        }
+    }
+
+    // Evict LRU entries until enough space would be freed after compaction
+    while (gs->eeCacheCapacity - liveBytes < spaceNeeded) {
+        // Find entry with smallest lastUsed
+        uint64_t oldest = UINT64_MAX;
+        int16_t victimId = -1;
+
+        repeat(gs->atlasCount, i) {
+            if (gs->eeCacheEntries[i].atlasId >= 0 && oldest > gs->eeCacheEntries[i].lastUsed) {
+                oldest = gs->eeCacheEntries[i].lastUsed;
+                victimId = (int16_t) i;
+            }
+        }
+
+        if (0 > victimId) {
+            break;
+        }
+
+        liveBytes -= gs->eeCacheEntries[victimId].size;
+        gs->eeCacheEntries[victimId].atlasId = -1;
+    }
+
+    compactEeCache(gs);
+
+    return gs->eeCacheCapacity - gs->eeCacheBumpPtr >= spaceNeeded;
+}
+
+// Insert atlas data into the EE cache. Evicts LRU entries if needed.
+static void eeCacheInsert(GsRenderer* gs, uint16_t atlasId, const uint8_t* data, uint32_t size) {
+    if (size > gs->eeCacheCapacity) {
+        // Atlas too large to ever fit in the cache
+        return;
+    }
+
+    if (gs->eeCacheBumpPtr + size > gs->eeCacheCapacity) {
+        if (!eeCacheEvictLRU(gs, size)) {
+            fprintf(stderr, "GsRenderer: EE cache eviction failed for atlas %u (%u bytes)\n", atlasId, size);
+            return;
+        }
+    }
+
+    memcpy(gs->eeCache + gs->eeCacheBumpPtr, data, size);
+
+    gs->eeCacheEntries[atlasId].atlasId = (int16_t) atlasId;
+    gs->eeCacheEntries[atlasId].offset = gs->eeCacheBumpPtr;
+    gs->eeCacheEntries[atlasId].size = size;
+    gs->eeCacheEntries[atlasId].lastUsed = gs->frameCounter;
+
+    gs->eeCacheBumpPtr += size;
+}
+
+// Upload atlas pixel data from TEXTURES.BIN to the given VRAM chunk(s).
+static void uploadAtlasToChunk(GsRenderer* gs, uint16_t atlasId, int32_t firstChunk) {
+    // Try EE RAM cache first (avoids slow CDVD reads)
+    uint8_t* cached = eeCacheLookup(gs, atlasId);
+    const char* atlasSource = "RAM";
+
+    if (cached == nullptr) {
+        // Cache miss: read from TEXTURES.BIN and insert into EE cache
+        uint32_t dataSize = gs->atlasDataSizes[atlasId];
+        uint8_t* tempBuf = (uint8_t*) memalign(128, dataSize);
+        if (tempBuf == nullptr) {
+            fprintf(stderr, "GsRenderer: Failed to allocate %u bytes for atlas %u temp buffer\n", dataSize, atlasId);
+            abort();
+        }
+
+        fseek(gs->texturesFile, (long) gs->atlasOffsets[atlasId], SEEK_SET);
+        size_t bytesRead = fread(tempBuf, 1, dataSize, gs->texturesFile);
+        if (bytesRead != dataSize) {
+            fprintf(stderr, "GsRenderer: Short read for atlas %u (expected %u, got %zu)\n", atlasId, dataSize, bytesRead);
+            abort();
+        }
+
+        eeCacheInsert(gs, atlasId, tempBuf, dataSize);
+        free(tempBuf);
+
+        atlasSource = "disk";
+        cached = eeCacheLookup(gs, atlasId);
+        if (cached == nullptr) {
+            // EE cache insert failed (atlas too large?), fall back to direct file read
+            fprintf(stderr, "GsRenderer: EE cache insert failed for atlas %u, reading directly from CDVD\n", atlasId);
+            fseek(gs->texturesFile, (long) gs->atlasOffsets[atlasId], SEEK_SET);
+
+            uint8_t header[TEX_HEADER_SIZE];
+            fread(header, 1, TEX_HEADER_SIZE, gs->texturesFile);
+
+            uint16_t width = BinaryUtils_readUint16(header + 1);
+            uint16_t height = BinaryUtils_readUint16(header + 3);
+            uint8_t bpp = BinaryUtils_readUint8(header + 5);
+            uint32_t pixelDataSize = BinaryUtils_readUint32(header + 6);
+            uint8_t compressionType = BinaryUtils_readUint8(header + 10);
+
+            uint8_t* rawData = (uint8_t*) memalign(128, pixelDataSize);
+            fread(rawData, 1, pixelDataSize, gs->texturesFile);
+
+            // Decompress + upload (duplicated for fallback path)
+            uint8_t* pixelData;
+            if (compressionType == 1) {
+                uint32_t uncompressedSize = (bpp == 4) ? (uint32_t)((width * height + 1) / 2) : (uint32_t)(width * height);
+                pixelData = (uint8_t*) memalign(128, uncompressedSize);
+                uint32_t srcPos = 0, dstPos = 0;
+                while (pixelDataSize > srcPos + 1 && uncompressedSize > dstPos) {
+                    uint8_t runLength = rawData[srcPos++];
+                    uint8_t value = rawData[srcPos++];
+                    for (uint8_t j = 0; runLength > j && uncompressedSize > dstPos; j++) {
+                        pixelData[dstPos++] = value;
+                    }
+                }
+                free(rawData);
+            } else {
+                pixelData = rawData;
+            }
+
+            uint8_t psm = (bpp == 4) ? GS_PSM_T4 : GS_PSM_T8;
+            uint32_t tbw = ATLAS_WIDTH / 64;
+            uint32_t vramAddr = gs->textureVramBase + (uint32_t) firstChunk * VRAM_CHUNK_SIZE;
+            gsKit_texture_send((u32*) pixelData, ATLAS_WIDTH, ATLAS_HEIGHT, vramAddr, psm, tbw, GS_CLUT_TEXTURE);
+
+            int chunksUsed = (bpp == 8) ? 2 : 1;
+            repeat(chunksUsed, i) {
+                gs->chunks[firstChunk + i].atlasId = (int16_t) atlasId;
+                gs->chunks[firstChunk + i].lastUsed = gs->frameCounter;
+            }
+            gs->atlasToChunk[atlasId] = (int16_t) firstChunk;
+            free(pixelData);
+            return;
+        }
+    }
+
+    // Parse header from cached data
+    uint8_t* header = cached;
 
     uint8_t version = header[0];
     if (version != 0) {
@@ -415,18 +653,13 @@ static void uploadAtlasToChunk(GsRenderer* gs, uint16_t atlasId, int32_t firstCh
         abort();
     }
 
-    // Read pixel data from file (may be compressed)
+    // Copy compressed pixel data into DMA-aligned buffer
     uint8_t* rawData = (uint8_t*) memalign(128, pixelDataSize);
     if (rawData == nullptr) {
         fprintf(stderr, "GsRenderer: Failed to allocate %u bytes for atlas %u pixel data\n", pixelDataSize, atlasId);
         abort();
     }
-
-    size_t pixelRead = fread(rawData, 1, pixelDataSize, gs->texturesFile);
-    if (pixelRead != pixelDataSize) {
-        fprintf(stderr, "GsRenderer: Short read for atlas %u pixel data (expected %u, got %zu)\n", atlasId, pixelDataSize, pixelRead);
-        abort();
-    }
+    memcpy(rawData, cached + TEX_HEADER_SIZE, pixelDataSize);
 
     // Decompress if needed
     uint8_t* pixelData;
@@ -464,13 +697,13 @@ static void uploadAtlasToChunk(GsRenderer* gs, uint16_t atlasId, int32_t firstCh
 
     // Update chunk state
     int chunksUsed = (bpp == 8) ? 2 : 1;
-    for (int i = 0; chunksUsed > i; i++) {
+    repeat(chunksUsed, i) {
         gs->chunks[firstChunk + i].atlasId = (int16_t) atlasId;
         gs->chunks[firstChunk + i].lastUsed = gs->frameCounter;
     }
     gs->atlasToChunk[atlasId] = (int16_t) firstChunk;
 
-    fprintf(stderr, "GsRenderer: Atlas %u uploaded to chunk %d (VRAM 0x%08X, %ubpp)\n", atlasId, firstChunk, vramAddr, bpp);
+    fprintf(stderr, "GsRenderer: Atlas %u uploaded to chunk %d (VRAM 0x%08X, %ubpp, src: %s)\n", atlasId, firstChunk, vramAddr, bpp, atlasSource);
 
     free(pixelData);
 }
@@ -656,6 +889,10 @@ static void gsInit(Renderer* renderer, DataWin* dataWin) {
     // Initialize the texture cache chunk pool (uses remaining VRAM after CLUTs)
     initTextureCache(gs);
 
+    // Initialize EE RAM cache for compressed atlas data
+    initEeCache(gs);
+    preloadEeCache(gs);
+
     fprintf(stderr, "GsRenderer: Initialized (textured mode)\n");
 }
 
@@ -672,6 +909,9 @@ static void gsDestroy(Renderer* renderer) {
     free(gs->atlasBpp);
     free(gs->clut4VramAddrs);
     free(gs->clut8VramAddrs);
+    free(gs->eeCache);
+    free(gs->eeCacheEntries);
+    free(gs->atlasDataSizes);
     free(gs);
 }
 
