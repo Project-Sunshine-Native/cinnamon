@@ -1,8 +1,15 @@
+#define nullptr ((void*)0)
+
 #include "data_win.h"
 #include "vm.h"
 
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
+// Glad and GLFW is not needed for N3DS
+// These will be replaced with Citro2d
+//#include <glad/glad.h>
+//#include <GLFW/glfw3.h>
+
+#include <citro2d.h>
+
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,10 +20,12 @@
 #include "runner_keyboard.h"
 #include "runner.h"
 #include "input_recording.h"
-#include "gl_renderer.h"
-#include "glfw_file_system.h"
-#include "stb_ds.h"
-#include "stb_image_write.h"
+// TODO: IMPLIMENT THIS!!!
+// #include "gl_renderer.h"
+// TODO: THIS TOO
+// #include "glfw_file_system.h"
+// #include "stb_ds.h"
+// #include "stb_image_write.h"
 
 #include "utils.h"
 
@@ -263,6 +272,7 @@ static void freeCommandLineArgs(CommandLineArgs* args) {
 }
 
 // ===[ SCREENSHOT ]===
+/*
 static void captureScreenshot(const char* filenamePattern, int frameNumber, int width, int height) {
     char filename[512];
     snprintf(filename, sizeof(filename), filenamePattern, frameNumber);
@@ -284,10 +294,14 @@ static void captureScreenshot(const char* filenamePattern, int frameNumber, int 
     free(pixels);
     printf("Screenshot saved: %s\n", filename);
 }
+*/
 
 // ===[ KEYBOARD INPUT ]===
 
 static int32_t glfwKeyToGml(int glfwKey) {
+    // TODO: Replace with Citro2d input handling
+
+    /*
     // Letters: GLFW_KEY_A (65) -> 65 (same as GML)
     if (glfwKey >= GLFW_KEY_A && glfwKey <= GLFW_KEY_Z) return glfwKey;
     // Numbers: GLFW_KEY_0 (48) -> 48
@@ -329,11 +343,15 @@ static int32_t glfwKeyToGml(int glfwKey) {
         case GLFW_KEY_PAGE_DOWN:     return VK_PAGEDOWN;
         default:                     return -1; // Unknown
     }
+    */
+
+    return -1;
 }
 
 static InputRecording* globalInputRecording = nullptr;
 
-static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+/*
+static void keyCallback(C3D_RenderTarget* window, int key, int scancode, int action, int mods) {
     (void) scancode; (void) mods;
     Runner* runner = (Runner*) glfwGetWindowUserPointer(window);
     // During playback, suppress real keyboard input (window events like close still work)
@@ -344,6 +362,7 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
     else if (action == GLFW_RELEASE) RunnerKeyboard_onKeyUp(runner->keyboard, gmlKey);
     // GLFW_REPEAT is ignored (GML doesn't use key repeat)
 }
+*/
 
 // ===[ MAIN ]===
 int main(int argc, char* argv[]) {
@@ -385,16 +404,23 @@ int main(int argc, char* argv[]) {
     Gen8* gen8 = &dataWin->gen8;
 	printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
 
+    // TODO: Replace with N3DS compatible print.
+/*
 #ifdef __linux__
 	{
 		struct mallinfo2 mi = mallinfo2();
 		printf("Memory after data.win parsing: used=%zu bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f);
 	}
 #endif
+*/
 
+    // TODO: Find a use for the display name? It might not actually be useful since there is no "window"
+    // in the traditional sense on the 3DS, but maybe it could be used for something cool, streetpass?
+    /*
     // Build window title
     char windowTitle[256];
     snprintf(windowTitle, sizeof(windowTitle), "cinnamon - %s", gen8->displayName);
+    */
 
     // Initialize VM
     VMContext* vm = VM_create(dataWin);
@@ -463,10 +489,12 @@ int main(int argc, char* argv[]) {
     }
 
     // Initialize the file system
-    GlfwFileSystem* glfwFileSystem = GlfwFileSystem_create(args.dataWinPath);
+    // TODO: Replace with sdcard reads and writes
+    // GlfwFileSystem* glfwFileSystem = GlfwFileSystem_create(args.dataWinPath);
 
     // Initialize the runner
-    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) glfwFileSystem);
+    // TODO: Replace nullptr with actual file system
+    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) nullptr);
     runner->debugMode = args.debug;
 
     // Set up input recording/playback (both can be active: playback then continue recording)
@@ -487,18 +515,43 @@ int main(int argc, char* argv[]) {
     runner->vmContext->traceEventInherited = args.traceEventInherited;
 
     // Init GLFW
+    /*
     if (!glfwInit()) {
         fprintf(stderr, "Failed to initialize GLFW\n");
         DataWin_free(dataWin);
         freeCommandLineArgs(&args);
         return 1;
     }
+    */
 
+    // We will not be headless on the 3DS.
+    /*
     if (args.headless) {
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        C3D_RenderTargetHint(GLFW_VISIBLE, GLFW_FALSE);
     }
+    */
 
-    GLFWwindow* window = glfwCreateWindow((int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight, windowTitle, nullptr, nullptr);
+    // Initalize romfs access
+    romfsInit();
+
+    // initalize gfx
+	gfxInitDefault();
+
+    // initalize some Citro2d stuff
+	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
+	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
+	C2D_Prepare();
+
+    // set the console to display on the bottom screen
+	consoleInit(GFX_BOTTOM, NULL);
+
+    // TODO: do something with (int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight
+    // To make it fit the screen correctly. REMEMBER TO PUT THIS IN A FUNCTION
+    // FOR CALLING AFTER INITALIZATION
+    C3D_RenderTarget* window = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+
+    /*
+    C3D_RenderTarget* window = glfwCreateWindow((int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight, windowTitle, nullptr, nullptr);
     if (window == nullptr) {
         fprintf(stderr, "Failed to create GLFW window\n");
         glfwTerminate();
@@ -510,6 +563,13 @@ int main(int argc, char* argv[]) {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(0); // Disable v-sync, we control timing ourselves
 
+    */
+
+    // This is all just unneeded for now
+    // TODO: Look this over and see if we are
+    // doing this in the N3DS code too!
+
+    /*
     // Load OpenGL function pointers via GLAD
     if (!gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) {
         fprintf(stderr, "Failed to initialize GLAD\n");
@@ -528,22 +588,28 @@ int main(int argc, char* argv[]) {
     // Set up keyboard input
     glfwSetWindowUserPointer(window, runner);
     glfwSetKeyCallback(window, keyCallback);
+    */
 
     // Initialize the first room and fire Game Start / Room Start events
     Runner_initFirstRoom(runner);
 
     // Main loop
     bool debugPaused = false;
-    double lastFrameTime = glfwGetTime();
-    while (!glfwWindowShouldClose(window) && !runner->shouldExit) {
+    double lastFrameTime = svcGetSystemTick();
+    while (aptMainLoop()) {
         // Clear last frame's pressed/released state, then poll new input events
         RunnerKeyboard_beginFrame(runner->keyboard);
-        glfwPollEvents();
+        hidScanInput(); // glfwPollEvents();
+
+        u32 kDown = hidKeysDown(); // Keys that are newly pressed
+        u32 kHeld = hidKeysHeld(); // Keys that are currently held down
 
         // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)
         InputRecording_processFrame(globalInputRecording, runner->keyboard, runner->frameCount);
 
         // Debug key bindings
+        // TODO: Add these to buttons
+        /*
         if (runner->debugMode) {
             // Pause
             if (RunnerKeyboard_checkPressed(runner->keyboard, 'P')) {
@@ -608,6 +674,7 @@ int main(int argc, char* argv[]) {
                 printf("Changed global.interact [%d] value!\n", interactVarId);
             }
         }
+        */
 
         // Run the game step if the game is paused
         bool shouldStep = true;
@@ -620,7 +687,7 @@ int main(int argc, char* argv[]) {
 
         if (shouldStep) {
             if (args.traceFrames) {
-                frameStartTime = glfwGetTime();
+                frameStartTime = svcGetSystemTick();
                 fprintf(stderr, "Frame %d (Start)\n", runner->frameCount);
             }
 
@@ -658,33 +725,45 @@ int main(int argc, char* argv[]) {
 
         // Query actual framebuffer size (differs from window size on Wayland with fractional scaling)
         int fbWidth, fbHeight;
-        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        // glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        fbWidth = (int) gen8->defaultWindowWidth;
+        fbHeight = (int) gen8->defaultWindowHeight;
 
         // Clear the default framebuffer (window background) to black
+        // TODO: Make sure this is correct (it should be)
+        /*        
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        */
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+		C2D_TargetClear(window, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+        C2D_SceneBegin(window);
 
         int32_t gameW = (int32_t) gen8->defaultWindowWidth;
         int32_t gameH = (int32_t) gen8->defaultWindowHeight;
 
-        renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
+        // IMPORTANT TODO: Create the citro_renderer.c and citro_renderer.h
+        // based on the gl_renderer.c and the gl_renderer.h
+        // renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
 
         // Clear FBO with room background color
         if (runner->drawBackgroundColor) {
             int rInt = BGR_R(runner->backgroundColor);
             int gInt = BGR_G(runner->backgroundColor);
             int bInt = BGR_B(runner->backgroundColor);
-            glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
+            // glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
+            C2D_TargetClear(window, C2D_Color32f(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f));
         } else {
-            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            // glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         }
-        glClear(GL_COLOR_BUFFER_BIT);
+        // glClear(GL_COLOR_BUFFER_BIT);
 
         // Render each enabled view (or a default full-screen view if views are disabled)
         bool viewsEnabled = (activeRoom->flags & 1) != 0;
         bool anyViewRendered = false;
 
+        // TODO: Render one of the views to the bottom screen!
         if (viewsEnabled) {
             repeat(8, vi) {
                 if (!activeRoom->views[vi].enabled) continue;
@@ -700,11 +779,12 @@ int main(int argc, char* argv[]) {
                 float viewAngle = runner->viewAngles[vi];
 
                 runner->viewCurrent = vi;
-                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
+                // TODO: Add renderer, see first comment about  renderer
+                // renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
 
                 Runner_draw(runner);
 
-                renderer->vtable->endView(renderer);
+                // renderer->vtable->endView(renderer);
                 anyViewRendered = true;
             }
         }
@@ -712,17 +792,20 @@ int main(int argc, char* argv[]) {
         if (!anyViewRendered) {
             // No views enabled or views disabled: render with default full-screen view
             runner->viewCurrent = 0;
-            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+            // TODO: Add renderer, see first comment about  renderer
+            // renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
             Runner_draw(runner);
-            renderer->vtable->endView(renderer);
+            // renderer->vtable->endView(renderer);
         }
 
         // Reset view_current to 0 so non-Draw events (Step, Alarm, Create) see view_current = 0
         runner->viewCurrent = 0;
 
-        renderer->vtable->endFrame(renderer);
+        // TODO: Add renderer, see first comment about renderer
+        // renderer->vtable->endFrame(renderer);
 
         // Capture screenshot if this frame matches a requested frame
+        /*
         bool shouldScreenshot = hmget(args.screenshotFrames, runner->frameCount);
 
         if (shouldScreenshot) {
@@ -737,20 +820,24 @@ int main(int argc, char* argv[]) {
             printf("Exiting at frame %d (--exit-at-frame)\n", runner->frameCount);
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
+        */
 
         if (shouldStep && args.traceFrames) {
-            double frameElapsedMs = (glfwGetTime() - frameStartTime) * 1000.0;
+            double frameElapsedMs = (svcGetSystemTick() - frameStartTime) * 1000.0;
             fprintf(stderr, "Frame %d (End, %.2f ms)\n", runner->frameCount, frameElapsedMs);
         }
 
-        glfwSwapBuffers(window);
+        // TODO: Find a way to swap buffers in citro3d
+        // glfwSwapBuffers(window);
+
+        C3D_FrameEnd(0); // Maybe it's this?
 
         // Limit frame rate to room speed (skip in headless mode for max speed!!)
         if (!args.headless && runner->currentRoom->speed > 0) {
             double targetFrameTime = 1.0 / (runner->currentRoom->speed * args.speedMultiplier);
             double nextFrameTime = lastFrameTime + targetFrameTime;
             // Sleep for most of the remaining time, then spin-wait for precision
-            double remaining = nextFrameTime - glfwGetTime();
+            double remaining = nextFrameTime - svcGetSystemTick();
             if (remaining > 0.002) {
                 struct timespec ts = {
                     .tv_sec = 0,
@@ -758,12 +845,12 @@ int main(int argc, char* argv[]) {
                 };
                 nanosleep(&ts, nullptr);
             }
-            while (glfwGetTime() < nextFrameTime) {
+            while (svcGetSystemTick() < nextFrameTime) {
                 // Spin-wait for the remaining sub-millisecond
             }
             lastFrameTime = nextFrameTime;
         } else {
-            lastFrameTime = glfwGetTime();
+            lastFrameTime = svcGetSystemTick();
         }
     }
 
@@ -777,15 +864,23 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
+    /*
     renderer->vtable->destroy(renderer);
 
     glfwDestroyWindow(window);
     glfwTerminate();
+    */
 
     Runner_free(runner);
-    GlfwFileSystem_destroy(glfwFileSystem);
+    // GlfwFileSystem_destroy(glfwFileSystem);
     VM_free(vm);
     DataWin_free(dataWin);
+
+    // Deinit libs
+	C2D_Fini();
+	C3D_Fini();
+	gfxExit();
+	romfsExit();
 
     freeCommandLineArgs(&args);
 
