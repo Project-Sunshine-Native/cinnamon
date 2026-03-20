@@ -15,6 +15,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/cinnamon.dir/src/json_reader.o.d"
   "CMakeFiles/cinnamon.dir/src/json_writer.o"
   "CMakeFiles/cinnamon.dir/src/json_writer.o.d"
+  "CMakeFiles/cinnamon.dir/src/n3ds/main.o"
+  "CMakeFiles/cinnamon.dir/src/n3ds/main.o.d"
   "CMakeFiles/cinnamon.dir/src/noop_file_system.o"
   "CMakeFiles/cinnamon.dir/src/noop_file_system.o.d"
   "CMakeFiles/cinnamon.dir/src/runner.o"

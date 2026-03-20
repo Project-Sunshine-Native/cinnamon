@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/kurplunk/cinnamon/build-n3ds/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

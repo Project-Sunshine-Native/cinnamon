@@ -31,6 +31,10 @@
 *.out
 *.app
 
+# Build directories
+build/
+build-n3ds/
+
 CMakeLists.txt.user
 CMakeCache.txt
 CMakeFiles
