@@ -4,7 +4,7 @@
 # compile C with /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc
 C_DEFINES = -D__3DS__ -Dcinnamon_COMMIT_DATE=\"unknown\" -Dcinnamon_COMMIT_HASH=\"unknown\"
 
-C_INCLUDES = -I/home/kurplunk/n3ds/cinnamon/src -I/home/kurplunk/n3ds/cinnamon/vendor/stb/ds -I/opt/devkitpro/portlibs/3ds/include -isystem /opt/devkitpro/libctru/include
+C_INCLUDES = -I/home/kurplunk/n3ds/cinnamon/src -I/home/kurplunk/n3ds/cinnamon/vendor/stb/ds -I/opt/devkitpro/portlibs/3ds/include -I/home/kurplunk/n3ds/cinnamon/vendor/stb/image -isystem /opt/devkitpro/libctru/include
 
 C_FLAGS = -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__ -g -O2 -DNDEBUG -std=gnu2x -Wall -Wextra -g -O2 -mword-relocations -ffunction-sections -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 

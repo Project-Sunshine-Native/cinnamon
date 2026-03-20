@@ -238,10 +238,10 @@ DKP_OBJCOPY:FILEPATH=/opt/devkitpro/devkitARM/bin/arm-none-eabi-objcopy
 N3DS:UNINITIALIZED=1
 
 //3DS SMDH author
-N3DS_APP_AUTHOR:STRING=
+N3DS_APP_AUTHOR:STRING=Owen-Programming
 
 //3DS SMDH description
-N3DS_APP_DESCRIPTION:STRING=
+N3DS_APP_DESCRIPTION:STRING=A GameMaker runner for the N3DS
 
 //3DS SMDH title
 N3DS_APP_TITLE:STRING=Cinnamon

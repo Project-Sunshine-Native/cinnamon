@@ -265,6 +265,21 @@ src/n3ds/main.s:
 .PHONY : src/n3ds/main.s
 
 # target to build an object file
+src/n3ds/stb_impl.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o
+.PHONY : src/n3ds/stb_impl.o
+
+# target to preprocess a source file
+src/n3ds/stb_impl.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.i
+.PHONY : src/n3ds/stb_impl.i
+
+# target to generate assembly for a file
+src/n3ds/stb_impl.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.s
+.PHONY : src/n3ds/stb_impl.s
+
+# target to build an object file
 src/noop_file_system.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/noop_file_system.o
 .PHONY : src/noop_file_system.o
@@ -375,6 +390,9 @@ help:
 	@echo "... src/n3ds/main.o"
 	@echo "... src/n3ds/main.i"
 	@echo "... src/n3ds/main.s"
+	@echo "... src/n3ds/stb_impl.o"
+	@echo "... src/n3ds/stb_impl.i"
+	@echo "... src/n3ds/stb_impl.s"
 	@echo "... src/noop_file_system.o"
 	@echo "... src/noop_file_system.i"
 	@echo "... src/noop_file_system.s"
