@@ -280,6 +280,21 @@ src/n3ds/n3ds_file_system.s:
 .PHONY : src/n3ds/n3ds_file_system.s
 
 # target to build an object file
+src/n3ds/n3ds_renderer.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.o
+.PHONY : src/n3ds/n3ds_renderer.o
+
+# target to preprocess a source file
+src/n3ds/n3ds_renderer.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.i
+.PHONY : src/n3ds/n3ds_renderer.i
+
+# target to generate assembly for a file
+src/n3ds/n3ds_renderer.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.s
+.PHONY : src/n3ds/n3ds_renderer.s
+
+# target to build an object file
 src/n3ds/stb_impl.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/cinnamon.dir/build.make CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o
 .PHONY : src/n3ds/stb_impl.o
@@ -408,6 +423,9 @@ help:
 	@echo "... src/n3ds/n3ds_file_system.o"
 	@echo "... src/n3ds/n3ds_file_system.i"
 	@echo "... src/n3ds/n3ds_file_system.s"
+	@echo "... src/n3ds/n3ds_renderer.o"
+	@echo "... src/n3ds/n3ds_renderer.i"
+	@echo "... src/n3ds/n3ds_renderer.s"
 	@echo "... src/n3ds/stb_impl.o"
 	@echo "... src/n3ds/stb_impl.i"
 	@echo "... src/n3ds/stb_impl.s"

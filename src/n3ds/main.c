@@ -3,11 +3,6 @@
 #include "data_win.h"
 #include "vm.h"
 
-// Glad and GLFW is not needed for N3DS
-// These will be replaced with Citro2d
-//#include <glad/glad.h>
-//#include <GLFW/glfw3.h>
-
 #include <citro2d.h>
 #include <3ds.h>
 
@@ -23,7 +18,7 @@
 #include "input_recording.h"
 
 // TODO: IMPLIMENT THIS!!!
-// #include "gl_renderer.h"
+#include "n3ds_renderer.h"
 
 #include "n3ds_file_system.h"
 #include "stb_ds.h"
@@ -456,7 +451,7 @@ int main(int argc, char* argv[]) {
     // TODO: do something with (int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight
     // To make it fit the screen correctly. REMEMBER TO PUT THIS IN A FUNCTION
     // FOR CALLING AFTER INITALIZATION
-    C3D_RenderTarget* window = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    // C3D_RenderTarget* window = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 
     /*
     C3D_RenderTarget* window = glfwCreateWindow((int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight, windowTitle, nullptr, nullptr);
@@ -497,6 +492,11 @@ int main(int argc, char* argv[]) {
     glfwSetWindowUserPointer(window, runner);
     glfwSetKeyCallback(window, keyCallback);
     */
+
+    // Initialize the renderer
+    Renderer* renderer = CRenderer3DS_create();
+    renderer->vtable->init(renderer, dataWin);
+    runner->renderer = renderer;
 
     LogToSD("Initalizing first room...");
     // Initialize the first room and fire Game Start / Room Start events
@@ -650,9 +650,9 @@ int main(int argc, char* argv[]) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         */
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-		C2D_TargetClear(window, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
-        C2D_SceneBegin(window);
+        //C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+		//C2D_TargetClear(window, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+        //C2D_SceneBegin(window);
 
         int32_t gameW = (int32_t) gen8->defaultWindowWidth;
         int32_t gameH = (int32_t) gen8->defaultWindowHeight;
@@ -667,7 +667,7 @@ int main(int argc, char* argv[]) {
             int gInt = BGR_G(runner->backgroundColor);
             int bInt = BGR_B(runner->backgroundColor);
             // glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
-            C2D_TargetClear(window, C2D_Color32f(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f));
+            //C2D_TargetClear(window, C2D_Color32f(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f));
         } else {
             // glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         }

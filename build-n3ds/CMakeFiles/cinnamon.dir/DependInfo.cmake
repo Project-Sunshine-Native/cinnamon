@@ -18,6 +18,7 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/kurplunk/n3ds/cinnamon/src/json_writer.c" "CMakeFiles/cinnamon.dir/src/json_writer.o" "gcc" "CMakeFiles/cinnamon.dir/src/json_writer.o.d"
   "/home/kurplunk/n3ds/cinnamon/src/n3ds/main.c" "CMakeFiles/cinnamon.dir/src/n3ds/main.o" "gcc" "CMakeFiles/cinnamon.dir/src/n3ds/main.o.d"
   "/home/kurplunk/n3ds/cinnamon/src/n3ds/n3ds_file_system.c" "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o" "gcc" "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o.d"
+  "/home/kurplunk/n3ds/cinnamon/src/n3ds/n3ds_renderer.c" "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.o" "gcc" "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.o.d"
   "/home/kurplunk/n3ds/cinnamon/src/n3ds/stb_impl.c" "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o" "gcc" "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o.d"
   "/home/kurplunk/n3ds/cinnamon/src/noop_file_system.c" "CMakeFiles/cinnamon.dir/src/noop_file_system.o" "gcc" "CMakeFiles/cinnamon.dir/src/noop_file_system.o.d"
   "/home/kurplunk/n3ds/cinnamon/src/runner.c" "CMakeFiles/cinnamon.dir/src/runner.o" "gcc" "CMakeFiles/cinnamon.dir/src/runner.o.d"

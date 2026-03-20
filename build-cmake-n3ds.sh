@@ -1,3 +1,6 @@
+export DEVKITPRO=/opt/devkitpro
+export DEVKITARM=$DEVKITPRO/devkitARM
+
 cmake -S . -B ./build-n3ds \
   -G "Unix Makefiles" \
   -DPLATFORM=n3ds -DN3DS=1 \

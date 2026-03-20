@@ -19,6 +19,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/cinnamon.dir/src/n3ds/main.o.d"
   "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o"
   "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.o.d"
+  "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.o"
+  "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.o.d"
   "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o"
   "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.o.d"
   "CMakeFiles/cinnamon.dir/src/noop_file_system.o"
