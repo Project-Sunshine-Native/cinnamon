@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stdint.h>
+#include <stdbool.h>
+
 // ===[ FileSystem Vtable ]===
 // Platform-agnostic file system interface
 
@@ -10,7 +13,7 @@ typedef struct {
     char* (*resolvePath)(FileSystem* fs, const char* relativePath);
     // Check if a file exists
     bool (*fileExists)(FileSystem* fs, const char* relativePath);
-    // Read entire file contents into a string (caller frees result), returns nullptr if not found
+    // Read entire file contents into a string (caller frees result), returns NULL if not found
     char* (*readFileText)(FileSystem* fs, const char* relativePath);
     // Write string contents to a file (creates/overwrites), returns true on success
     bool (*writeFileText)(FileSystem* fs, const char* relativePath, const char* contents);

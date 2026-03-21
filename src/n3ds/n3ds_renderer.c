@@ -132,7 +132,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     u32 col = colorForTpagIndex(tpagIndex, alpha);
 
     C2D_DrawRectSolid(sx, sy, C->zCounter, sw, sh, col);
-    C->zCounter += 0.0001f;
+    C->zCounter += 0.001f;
 }
 
 static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,

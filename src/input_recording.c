@@ -20,7 +20,7 @@ InputRecording* InputRecording_createRecorder(const char* filePath) {
 InputRecording* InputRecording_createPlayer(const char* playbackFilePath, const char* recordFilePath) {
     // Read the file contents
     FILE* f = fopen(playbackFilePath, "r");
-    if (f == nullptr) {
+    if (f == NULL) {
         fprintf(stderr, "Error: Could not open input recording file '%s'\n", playbackFilePath);
         exit(1);
     }
@@ -38,7 +38,7 @@ InputRecording* InputRecording_createPlayer(const char* playbackFilePath, const 
     JsonValue* root = JsonReader_parse(contents);
     free(contents);
 
-    if (root == nullptr || !JsonReader_isObject(root)) {
+    if (root == NULL || !JsonReader_isObject(root)) {
         fprintf(stderr, "Error: Invalid JSON in input recording file '%s'\n", playbackFilePath);
         exit(1);
     }
@@ -48,7 +48,7 @@ InputRecording* InputRecording_createPlayer(const char* playbackFilePath, const 
     int32_t maxFrame = -1;
     repeat(objectLen, i) {
         const char* key = JsonReader_getObjectKey(root, i);
-        int32_t frameNum = (int32_t) strtol(key, nullptr, 10);
+        int32_t frameNum = (int32_t) strtol(key, NULL, 10);
         if (frameNum > maxFrame) maxFrame = frameNum;
     }
 
@@ -57,7 +57,7 @@ InputRecording* InputRecording_createPlayer(const char* playbackFilePath, const 
     rec->playbackFrameCount = maxFrame + 1;
 
     // If a record path was provided, also enable recording
-    if (recordFilePath != nullptr) {
+    if (recordFilePath != NULL) {
         rec->isRecording = true;
         rec->recordFilePath = recordFilePath;
     }
@@ -68,11 +68,11 @@ InputRecording* InputRecording_createPlayer(const char* playbackFilePath, const 
     repeat(objectLen, i) {
         const char* key = JsonReader_getObjectKey(root, i);
         JsonValue* val = JsonReader_getObjectValue(root, i);
-        int32_t frameNum = (int32_t) strtol(key, nullptr, 10);
+        int32_t frameNum = (int32_t) strtol(key, NULL, 10);
 
         if (JsonReader_isArray(val)) {
             int keyCount = JsonReader_arrayLength(val);
-            int32_t* keys = nullptr;
+            int32_t* keys = NULL;
             repeat(keyCount, k) {
                 JsonValue* keyVal = JsonReader_getArrayElement(val, k);
                 arrput(keys, (int32_t) JsonReader_getInt(keyVal));
@@ -87,9 +87,9 @@ InputRecording* InputRecording_createPlayer(const char* playbackFilePath, const 
 }
 
 void InputRecording_free(InputRecording* recording) {
-    if (recording == nullptr) return;
+    if (recording == NULL) return;
 
-    if (recording->recordedFrames != nullptr) {
+    if (recording->recordedFrames != NULL) {
         int32_t count = (int32_t) arrlen(recording->recordedFrames);
         repeat(count, i) {
             arrfree(recording->recordedFrames[i]);
@@ -97,7 +97,7 @@ void InputRecording_free(InputRecording* recording) {
         arrfree(recording->recordedFrames);
     }
 
-    if (recording->playbackFrames != nullptr) {
+    if (recording->playbackFrames != NULL) {
         repeat(recording->playbackFrameCount, i) {
             arrfree(recording->playbackFrames[i]);
         }
@@ -108,7 +108,7 @@ void InputRecording_free(InputRecording* recording) {
 }
 
 void InputRecording_processFrame(InputRecording* recording, RunnerKeyboardState* kb, int frameNumber) {
-    if (recording == nullptr) return;
+    if (recording == NULL) return;
 
     // Playback: overwrite keyboard state from recorded data (while frames remain)
     if (recording->isPlayback) {
@@ -156,7 +156,7 @@ void InputRecording_processFrame(InputRecording* recording, RunnerKeyboardState*
 
     // Recording: snapshot whatever the current keyboard state is (from real input or playback)
     if (recording->isRecording) {
-        int32_t* heldKeys = nullptr;
+        int32_t* heldKeys = NULL;
         repeat(GML_KEY_COUNT, key) {
             if (kb->keyDown[key]) {
                 arrput(heldKeys, (int32_t) key);
@@ -167,7 +167,7 @@ void InputRecording_processFrame(InputRecording* recording, RunnerKeyboardState*
 }
 
 bool InputRecording_save(InputRecording* recording) {
-    if (recording == nullptr || !recording->isRecording) return false;
+    if (recording == NULL || !recording->isRecording) return false;
 
     int32_t frameCount = (int32_t) arrlen(recording->recordedFrames);
 
@@ -192,7 +192,7 @@ bool InputRecording_save(InputRecording* recording) {
     JsonWriter_endObject(&w);
 
     FILE* f = fopen(recording->recordFilePath, "w");
-    if (f == nullptr) {
+    if (f == NULL) {
         fprintf(stderr, "Error: Could not write input recording to '%s'\n", recording->recordFilePath);
         JsonWriter_free(&w);
         return false;
@@ -209,5 +209,5 @@ bool InputRecording_save(InputRecording* recording) {
 }
 
 bool InputRecording_isPlaybackActive(InputRecording* recording) {
-    return recording != nullptr && recording->isPlayback && !recording->playbackEnded;
+    return recording != NULL && recording->isPlayback && !recording->playbackEnded;
 }
