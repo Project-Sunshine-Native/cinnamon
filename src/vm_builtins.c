@@ -731,6 +731,22 @@ static RValue builtinStringCopy([[maybe_unused]] VMContext* ctx, RValue* args, i
     return RValue_makeOwnedString(result);
 }
 
+static RValue builtinStringRepeat([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    if (2 > argCount || args[0].type != RVALUE_STRING) return RValue_makeOwnedString(strdup(""));
+    const char* str = args[0].string != nullptr ? args[0].string : "";
+    int32_t count = RValue_toInt32(args[1]);
+    if (0 >= count || str[0] == '\0') return RValue_makeOwnedString(strdup(""));
+
+    size_t strLen = strlen(str);
+    size_t totalLen = strLen * (size_t) count;
+    char* result = safeMalloc(totalLen + 1);
+    repeat(count, i) {
+        memcpy(result + i * strLen, str, strLen);
+    }
+    result[totalLen] = '\0';
+    return RValue_makeOwnedString(result);
+}
+
 static RValue builtinOrd([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
     if (1 > argCount || args[0].type != RVALUE_STRING || args[0].string == nullptr || args[0].string[0] == '\0') {
         return RValue_makeReal(0.0);
@@ -3591,6 +3607,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("string_delete", builtinStringDelete);
     registerBuiltin("string_insert", builtinStringInsert);
     registerBuiltin("string_replace_all", builtinStringReplaceAll);
+    registerBuiltin("string_repeat", builtinStringRepeat);
     registerBuiltin("ord", builtinOrd);
     registerBuiltin("chr", builtinChr);
 
