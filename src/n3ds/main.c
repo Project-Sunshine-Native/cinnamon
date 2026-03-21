@@ -1,7 +1,7 @@
-#define nullptr ((void*)0)
+#define NULL ((void*)0)
 
-#include "data_win.h"
-#include "vm.h"
+#include "../data_win.h"
+#include "../vm.h"
 
 #include <citro2d.h>
 #include <3ds.h>
@@ -25,6 +25,11 @@
 #include "stb_image_write.h"
 
 #include "utils.h"
+
+#include <dirent.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <stdio.h>
 
 // ===[ COMMAND LINE ARGUMENTS ]===
 typedef struct {
@@ -89,7 +94,7 @@ static void captureScreenshot(const char* filenamePattern, int frameNumber, int 
 
     int stride = width * 4;
     unsigned char* pixels = safeMalloc(stride * height);
-    if (pixels == nullptr) {
+    if (pixels == NULL) {
         fprintf(stderr, "Error: Failed to allocate memory for screenshot (%dx%d)\n", width, height);
         return;
     }
@@ -158,7 +163,7 @@ static int32_t glfwKeyToGml(int glfwKey) {
     return -1;
 }
 
-static InputRecording* globalInputRecording = nullptr;
+static InputRecording* globalInputRecording = NULL;
 
 /*
 static void keyCallback(C3D_RenderTarget* window, int key, int scancode, int action, int mods) {
@@ -227,27 +232,65 @@ void ShowErrorAndExit(const char* msg)
     exit(0);
 }
 
+void list(const char* path, int depth)
+{
+    DIR* dir = opendir(path);
+    if (!dir) return;
+
+    struct dirent* entry;
+
+    while ((entry = readdir(dir)))
+    {
+        // skip . and ..
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+
+        // indentation
+        for (int i = 0; i < depth; i++)
+            printf("  ");
+
+        printf("%s\n", entry->d_name);
+
+        // build full path
+        char full[512];
+        snprintf(full, sizeof(full), "%s/%s", path, entry->d_name);
+
+        // check if directory
+        struct stat st;
+        if (stat(full, &st) == 0 && S_ISDIR(st.st_mode))
+        {
+            list(full, depth + 1);
+        }
+    }
+
+    closedir(dir);
+}
+
 // ===[ MAIN ]===
 int main(int argc, char* argv[]) {
     fsInit();
 
+    // send printf to sdcard
+    freopen("sdmc:/cinnamon/full_log.txt", "w", stdout);
+
     // Flush to SD card every new line (\n) so we can see logs in real-time without needing to close the app
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    // send printf to sdcard
-    freopen("sdmc:/cinnamon/full_log.txt", "w", stdout);
+    list("sdmc:/cinnamon", 0);
 
     LogToSD("Application Started");
     //args.dataWinPath = "sdmc:/cinnamon/data.win";
     //parseCommandLineArgs(&args, argc, argv);
 
-    printf("Loading %s...\n", "sdmc:/cinnamon/data.win");
+    printf("Checking if %s exists...\n", "sdmc:/cinnamon/data.win");
 
     LogToSD("Loading data.win...");
 
     FILE* f = fopen("sdmc:/cinnamon/data.win", "rb");
     if (f) {
         // exists
+
+        printf("File %s found.\n", "sdmc:/cinnamon/data.win");
 
         fclose(f);
     } else {
@@ -260,6 +303,8 @@ int main(int argc, char* argv[]) {
 
         return 0;
     }
+
+    printf("Loading %s...\n", "sdmc:/cinnamon/data.win");
 
     DataWin* dataWin = DataWin_parse(
         "sdmc:/cinnamon/data.win",
@@ -395,12 +440,12 @@ int main(int argc, char* argv[]) {
     Runner* runner = Runner_create(dataWin, vm, (FileSystem*) n3dsFileSystem);
     //runner->debugMode = args.debug;
     LogToSD("RUNNER OK");
-
+    
     // Set up input recording/playback (both can be active: playback then continue recording)
     /*
-    if (args.playbackInputsPath != nullptr) {
+    if (args.playbackInputsPath != NULL) {
         globalInputRecording = InputRecording_createPlayer(args.playbackInputsPath, args.recordInputsPath);
-    } else if (args.recordInputsPath != nullptr) {
+    } else if (args.recordInputsPath != NULL) {
         globalInputRecording = InputRecording_createRecorder(args.recordInputsPath);
     }
     shcopyFromTo(args.varReadsToBeTraced, runner->vmContext->varReadsToBeTraced);
@@ -454,8 +499,8 @@ int main(int argc, char* argv[]) {
     // C3D_RenderTarget* window = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 
     /*
-    C3D_RenderTarget* window = glfwCreateWindow((int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight, windowTitle, nullptr, nullptr);
-    if (window == nullptr) {
+    C3D_RenderTarget* window = glfwCreateWindow((int) gen8->defaultWindowWidth, (int) gen8->defaultWindowHeight, windowTitle, NULL, NULL);
+    if (window == NULL) {
         fprintf(stderr, "Failed to create GLFW window\n");
         glfwTerminate();
         DataWin_free(dataWin);
@@ -557,11 +602,11 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "Debug: Dumping runner state at frame %d\n", runner->frameCount);
                 char* json = Runner_dumpStateJson(runner);
 
-                if (args.dumpJsonFilePattern != nullptr) {
+                if (args.dumpJsonFilePattern != NULL) {
                     char filename[512];
                     snprintf(filename, sizeof(filename), args.dumpJsonFilePattern, runner->frameCount);
                     FILE* f = fopen(filename, "w");
-                    if (f != nullptr) {
+                    if (f != NULL) {
                         fwrite(json, 1, strlen(json), f);
                         fputc('\n', f);
                         fclose(f);
@@ -615,11 +660,11 @@ int main(int argc, char* argv[]) {
             // Dump runner state as JSON if this frame was requested
             if (hmget(args.dumpJsonFrames, runner->frameCount)) {
                 char* json = Runner_dumpStateJson(runner);
-                if (args.dumpJsonFilePattern != nullptr) {
+                if (args.dumpJsonFilePattern != NULL) {
                     char filename[512];
                     snprintf(filename, sizeof(filename), args.dumpJsonFilePattern, runner->frameCount);
                     FILE* f = fopen(filename, "w");
-                    if (f != nullptr) {
+                    if (f != NULL) {
                         fwrite(json, 1, strlen(json), f);
                         fputc('\n', f);
                         fclose(f);
@@ -658,7 +703,7 @@ int main(int argc, char* argv[]) {
         int32_t gameH = (int32_t) gen8->defaultWindowHeight;
 
         // Begin the frame via renderer vtable (if provided). This pairs with endFrame below
-        if (runner->renderer != nullptr && runner->renderer->vtable != nullptr && runner->renderer->vtable->beginFrame != nullptr) {
+        if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->beginFrame != NULL) {
             runner->renderer->vtable->beginFrame(runner->renderer, gameW, gameH, fbWidth, fbHeight);
         }
 
@@ -752,7 +797,7 @@ int main(int argc, char* argv[]) {
         // glfwSwapBuffers(window);
 
         // End the frame via renderer vtable when possible to avoid unmatched C3D_FrameEnd
-        if (runner->renderer != nullptr && runner->renderer->vtable != nullptr && runner->renderer->vtable->endFrame != nullptr) {
+        if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->endFrame != NULL) {
             runner->renderer->vtable->endFrame(runner->renderer);
         } else {
             C3D_FrameEnd(0);
@@ -769,7 +814,7 @@ int main(int argc, char* argv[]) {
                     .tv_sec = 0,
                     .tv_nsec = (long) ((remaining - 0.001) * 1e9)
                 };
-                nanosleep(&ts, nullptr);
+                nanosleep(&ts, NULL);
             }
             while (svcGetSystemTick() < nextFrameTime) {
                 // Spin-wait for the remaining sub-millisecond
@@ -781,12 +826,12 @@ int main(int argc, char* argv[]) {
     }
 
     // Save input recording if active, then free
-    if (globalInputRecording != nullptr) {
+    if (globalInputRecording != NULL) {
         if (globalInputRecording->isRecording) {
             InputRecording_save(globalInputRecording);
         }
         InputRecording_free(globalInputRecording);
-        globalInputRecording = nullptr;
+        globalInputRecording = NULL;
     }
 
     // Cleanup

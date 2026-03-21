@@ -41,9 +41,9 @@ Instance* Instance_create(uint32_t instanceId, int32_t objectIndex, double x, do
     inst->gravityDirection = 270.0;
     inst->pathIndex = -1;
     inst->pathScale = 1.0;
-    inst->selfVars = nullptr;
-    inst->selfArrayMap = nullptr;
-    inst->selfArrayVarTracker = nullptr;
+    inst->selfVars = NULL;
+    inst->selfArrayMap = NULL;
+    inst->selfArrayVarTracker = NULL;
 
     // Initialize alarms to -1 (inactive)
     repeat(GML_ALARM_COUNT, i) {
@@ -54,7 +54,7 @@ Instance* Instance_create(uint32_t instanceId, int32_t objectIndex, double x, do
 }
 
 void Instance_free(Instance* instance) {
-    if (instance == nullptr) return;
+    if (instance == NULL) return;
 
     // Free owned strings in selfVars hashmap
     repeat(hmlen(instance->selfVars), i) {

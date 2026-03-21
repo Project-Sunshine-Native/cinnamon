@@ -1,7 +1,7 @@
 BasicInfo:
-  Title                   : Cinnamon
-  ProductCode             : 000400000DC07F00
-  Logo                    : Homebrew # Nintendo / Licensed / Distributed / iQue / iQueForSystem
+  Title                   : $(APP_TITLE)
+  ProductCode             : $(APP_PRODUCT_CODE)
+  Logo                    : Nintendo # Nintendo / Licensed / Distributed / iQue / iQueForSystem
 
 #RomFs:
   # Specifies the root path of the read only file system to include in the ROM.
@@ -9,13 +9,13 @@ BasicInfo:
 
 TitleInfo:
   Category                : Application
-  UniqueId                : 000400000DC07F00
+  UniqueId                : $(APP_UNIQUE_ID)
 
 Option:
   UseOnSD                 : true # true if App is to be installed to SD
   FreeProductCode         : true # Removes limitations on ProductCode
   MediaFootPadding        : false # If true CCI files are created with padding
-  EnableCrypt             : false # Enables encryption for NCCH and CIA
+  EnableCrypt             : $(APP_ENCRYPTED) # Enables encryption for NCCH and CIA
   EnableCompress          : true # Compresses where applicable (currently only exefs:/.code)
   
 AccessControlInfo:
@@ -50,7 +50,7 @@ AccessControlInfo:
    #- CategorySystemSettings
    #- CardBoard
    #- ExportImportIvs
-   #- DirectSdmcWrite
+   - DirectSdmcWrite
    #- SwitchCleanup
    #- SaveDataMove
    #- Shop
@@ -59,7 +59,7 @@ AccessControlInfo:
 
   # Process Settings
   MemoryType                    : Application # Application/System/Base
-  SystemMode                    : 96MB # 64MB(Default)/96MB/80MB/72MB/32MB
+  SystemMode                    : $(APP_SYSTEM_MODE) # 64MB(Default)/96MB/80MB/72MB/32MB
   IdealProcessor                : 0
   AffinityMask                  : 1
   Priority                      : 16
@@ -76,7 +76,7 @@ AccessControlInfo:
   SpecialMemoryArrange          : true
 
   # New3DS Exclusive Process Settings
-  SystemModeExt                 : 178MB # Legacy(Default)/124MB/178MB  Legacy:Use Old3DS SystemMode
+  SystemModeExt                 : $(APP_SYSTEM_MODE_EXT) # Legacy(Default)/124MB/178MB  Legacy:Use Old3DS SystemMode
   CpuSpeed                      : 804MHz # 256MHz(Default)/804MHz
   EnableL2Cache                 : true # false(default)/true
   CanAccessCore2                : true 

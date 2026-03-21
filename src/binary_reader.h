@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 typedef struct {
     FILE* file;

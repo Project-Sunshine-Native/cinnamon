@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 // Forward declaration for progress callback
 typedef struct DataWin DataWin;

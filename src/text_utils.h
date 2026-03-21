@@ -15,7 +15,7 @@ static inline FontGlyph* TextUtils_findGlyph(Font* font, uint16_t ch) {
     repeat(font->glyphCount, i) {
         if (font->glyphs[i].character == ch) return &font->glyphs[i];
     }
-    return nullptr;
+    return NULL;
 }
 
 static inline float TextUtils_getKerningOffset(FontGlyph* glyph, uint16_t nextCh) {
@@ -67,7 +67,7 @@ static inline float TextUtils_measureLineWidth(Font* font, const char* line, int
     while (len > pos) {
         uint16_t ch = TextUtils_decodeUtf8(line, len, &pos);
         FontGlyph* glyph = TextUtils_findGlyph(font, ch);
-        if (glyph == nullptr) continue;
+        if (glyph == NULL) continue;
 
         width += glyph->shift;
 

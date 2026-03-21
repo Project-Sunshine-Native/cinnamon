@@ -1,3 +1,0 @@
-/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/cinnamon.dir
-/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/edit_cache.dir
-/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/rebuild_cache.dir
