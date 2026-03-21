@@ -79,6 +79,15 @@ _val; \
     _ptr; \
 })
 
+#define safeMemalign(alignment, size) ({ \
+    void* _ptr = memalign(alignment, size); \
+    if (_ptr == nullptr) { \
+        fprintf(stderr, "FATAL: memalign(%zu, %zu) failed at %s:%d\n", (size_t)(alignment), (size_t)(size), __FILE__, __LINE__); \
+        abort(); \
+    } \
+    _ptr; \
+})
+
 // Truncates to 6 decimal places, matching the HTML5 runner's ClampFloat
 static inline double clampFloat(double f) {
     return ((double) ((int64_t) (f * 1000000.0))) / 1000000.0;
