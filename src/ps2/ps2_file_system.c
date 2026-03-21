@@ -45,7 +45,7 @@ static char* expandBootPrefix(const char* path) {
         return PS2Utils_createDevicePath(relativePart);
     }
 
-    return strdup(path);
+    return safeStrdup(path);
 }
 
 // ===[ icon.sys Generation ]===
@@ -232,7 +232,7 @@ static void ensureParentDirectory(Ps2FileSystem* pfs, const char* path) {
     if (strncmp(path, "mc0:", 4) != 0 && strncmp(path, "mc1:", 4) != 0)
         return;
 
-    char* pathCopy = strdup(path);
+    char* pathCopy = safeStrdup(path);
     char* lastSlash = strrchr(pathCopy, '/');
     if (lastSlash != nullptr && lastSlash != pathCopy) {
         *lastSlash = '\0';
@@ -253,7 +253,7 @@ static char* resolvePath(FileSystem* fs, const char* relativePath) {
 
     // Return the first mapped path
     if (arrlen(pfs->mappings[idx].value) > 0)
-        return strdup(pfs->mappings[idx].value[0]);
+        return safeStrdup(pfs->mappings[idx].value[0]);
 
     return nullptr;
 }
@@ -414,7 +414,7 @@ FileSystem* Ps2FileSystem_create(JsonValue* configRoot, const char* gameTitle) {
 
     Ps2FileSystem* pfs = safeCalloc(1, sizeof(Ps2FileSystem));
     pfs->base.vtable = &ps2FileSystemVtable;
-    pfs->gameTitle = strdup(gameTitle);
+    pfs->gameTitle = safeStrdup(gameTitle);
     pfs->saveIconConfig = parseSaveIconConfig(configRoot);
     pfs->mappings = nullptr;
     sh_new_strdup(pfs->mappings);

@@ -180,6 +180,11 @@ static void gsDrawLine(Renderer* renderer, float x1, float y1, float x2, float y
     gs->zCounter++;
 }
 
+// PS2 gsKit doesn't support per-vertex colors on lines, so we just use color1
+static void gsDrawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color1, [[maybe_unused]] uint32_t color2, float alpha) {
+    renderer->vtable->drawLine(renderer, x1, y1, x2, y2, width, color1, alpha);
+}
+
 static void gsDrawText(Renderer* renderer, const char* text, float x, float y, float xscale, float yscale, [[maybe_unused]] float angleDeg) {
     GsRendererFlat* gs = (GsRendererFlat*) renderer;
     DataWin* dw = renderer->dataWin;
@@ -301,6 +306,7 @@ static RendererVtable gsVtable = {
     .drawSpritePart = gsDrawSpritePart,
     .drawRectangle = gsDrawRectangle,
     .drawLine = gsDrawLine,
+    .drawLineColor = gsDrawLineColor,
     .drawText = gsDrawText,
     .flush = gsFlush,
     .createSpriteFromSurface = gsCreateSpriteFromSurface,

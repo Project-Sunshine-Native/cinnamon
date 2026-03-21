@@ -8,8 +8,12 @@ typedef struct {
     uint16_t atlasId;   // TEX atlas index (0xFFFF = not mapped)
     uint16_t atlasX;    // X offset within the atlas
     uint16_t atlasY;    // Y offset within the atlas
-    uint16_t width;     // Image width in the atlas
-    uint16_t height;    // Image height in the atlas
+    uint16_t width;     // Image width in the atlas (post-crop, post-resize)
+    uint16_t height;    // Image height in the atlas (post-crop, post-resize)
+    uint16_t cropX;     // X offset of cropped content within original bounding box
+    uint16_t cropY;     // Y offset of cropped content within original bounding box
+    uint16_t cropW;     // Pre-resize width of the cropped content
+    uint16_t cropH;     // Pre-resize height of the cropped content
     uint16_t clutIndex; // CLUT index within the corresponding CLUT file
     uint8_t bpp;        // 4 or 8
 } AtlasTPAGEntry;
@@ -24,8 +28,12 @@ typedef struct {
     uint16_t atlasId;   // TEX atlas index (0xFFFF = not mapped)
     uint16_t atlasX;    // X offset within the atlas
     uint16_t atlasY;    // Y offset within the atlas
-    uint16_t width;     // Tile width in the atlas (may differ from srcW if downscaled)
-    uint16_t height;    // Tile height in the atlas (may differ from srcH if downscaled)
+    uint16_t width;     // Tile width in the atlas (post-crop, post-resize)
+    uint16_t height;    // Tile height in the atlas (post-crop, post-resize)
+    uint16_t cropX;     // X offset of cropped content within original tile
+    uint16_t cropY;     // Y offset of cropped content within original tile
+    uint16_t cropW;     // Pre-resize width of the cropped content
+    uint16_t cropH;     // Pre-resize height of the cropped content
     uint16_t clutIndex; // CLUT index within the corresponding CLUT file
     uint8_t bpp;        // 4 or 8
 } AtlasTileEntry;
@@ -39,6 +47,15 @@ typedef struct {
     int16_t atlasId;    // Which atlas occupies this chunk (-1 = free)
     uint64_t lastUsed;  // Frame number when last accessed
 } VRAMChunk;
+
+// ===[ EE RAM Atlas Cache Entry ]===
+// Caches compressed atlas data (header + pixel data) in EE RAM to avoid repeated CDVD reads.
+typedef struct {
+    int16_t atlasId;    // Which atlas (-1 = free)
+    uint32_t offset;    // Byte offset within eeCache buffer
+    uint32_t size;      // Total bytes stored (128-byte header + compressed pixel data)
+    uint64_t lastUsed;  // Frame counter for LRU
+} EeAtlasCacheEntry;
 
 // ===[ GsRenderer Struct ]===
 typedef struct {
@@ -82,6 +99,13 @@ typedef struct {
     uint16_t atlasCount;       // Number of atlas IDs from ATLAS.BIN header
     uint8_t* atlasBpp;         // Bits per pixel per atlas (4 or 8), from ATLAS.BIN [atlasCount]
     uint64_t frameCounter;     // Incremented each frame for LRU tracking
+
+    // EE RAM atlas cache (stores compressed atlas data to avoid repeated CDVD reads)
+    uint8_t* eeCache;                  // 4 MiB contiguous buffer
+    uint32_t eeCacheCapacity;          // Total size (4 * 1024 * 1024)
+    uint32_t eeCacheBumpPtr;           // End of live data
+    EeAtlasCacheEntry* eeCacheEntries; // Per-atlas cache state [atlasCount]
+    uint32_t* atlasDataSizes;          // On-disk size per atlas (header + compressed data) [atlasCount]
 } GsRenderer;
 
 Renderer* GsRenderer_create(GSGLOBAL* gsGlobal);

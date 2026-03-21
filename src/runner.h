@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio_system.h"
 #include "data_win.h"
 #include "file_system.h"
 #include "instance.h"
@@ -83,6 +84,7 @@ typedef struct Runner {
     VMContext* vmContext;
     Renderer* renderer;
     FileSystem* fileSystem;
+    AudioSystem* audioSystem;
     Room* currentRoom;
     int32_t currentRoomIndex;
     int32_t currentRoomOrderPosition;
@@ -101,6 +103,7 @@ typedef struct Runner {
     SavedRoomState* savedRoomStates; // array of size dataWin->room.count, for persistent room support
     float viewAngles[8]; // runtime-only view_angle per view (not stored in data.win)
     int32_t viewCurrent; // index of the view currently being drawn (for view_current)
+    struct { char* key; int value; }* disabledObjects; // stb_ds string hashmap, nullptr = no filtering
 } Runner;
 
 const char* Runner_getEventName(int32_t eventType, int32_t eventSubtype);
