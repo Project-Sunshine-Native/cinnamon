@@ -1117,6 +1117,12 @@ static RValue builtinRoomGoto(VMContext* ctx, RValue* args, int32_t argCount) {
     return RValue_makeUndefined();
 }
 
+static RValue builtinRoomRestart(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = requireNotNullMessage(ctx->runner, "VM: room_restart called but no runner!");
+    runner->pendingRoom = runner->currentRoomIndex;
+    return RValue_makeUndefined();
+}
+
 static RValue builtinRoomNext(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = requireNotNullMessage(ctx->runner, "VM: room_next called but no runner!");
     int32_t roomId = RValue_toInt32(args[0]);
@@ -3657,6 +3663,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("room_goto_next", builtinRoomGotoNext);
     registerBuiltin("room_goto_previous", builtinRoomGotoPrevious);
     registerBuiltin("room_goto", builtinRoomGoto);
+    registerBuiltin("room_restart", builtinRoomRestart);
     registerBuiltin("room_next", builtinRoomNext);
     registerBuiltin("room_previous", builtinRoomPrevious);
     registerBuiltin("room_set_persistent", builtinRoomSetPersistent);
