@@ -2426,7 +2426,7 @@ static RValue builtinActionMove(VMContext* ctx, [[maybe_unused]] RValue* args, [
     // action_move(direction_string, speed)
     // Direction string is 9 chars of '0'/'1' encoding a 3x3 direction grid:
     //   Pos: 0=UL(225) 1=U(270) 2=UR(315) 3=L(180) 4=STOP 5=R(0) 6=DL(135) 7=D(90) 8=DR(45)
-    const char* dirs = RValue_toString(args[0]);
+    char* dirs = RValue_toString(args[0]);
     double spd = RValue_toReal(args[1]);
 
     static const double angles[] = {225, 270, 315, 180, -1, 0, 135, 90, 45};
@@ -2440,7 +2440,10 @@ static RValue builtinActionMove(VMContext* ctx, [[maybe_unused]] RValue* args, [
         }
     }
 
-    if (0 == count) return RValue_makeUndefined();
+    if (count == 0) {
+        free(dirs);
+        return RValue_makeUndefined();
+    }
 
     // Pick one at random
     int pick = candidates[0 == count - 1 ? 0 : rand() % count];
@@ -2466,6 +2469,7 @@ static RValue builtinActionMove(VMContext* ctx, [[maybe_unused]] RValue* args, [
         }
         Instance_computeComponentsFromSpeed(inst);
     }
+    free(dirs);
     return RValue_makeUndefined();
 }
 
@@ -3041,9 +3045,10 @@ static RValue builtin_stringWidth(VMContext* ctx, RValue* args, int32_t argCount
     if (0 > fontIndex || renderer->dataWin->font.count <= (uint32_t) fontIndex) return RValue_makeReal(0.0);
 
     Font* font = &renderer->dataWin->font.fonts[fontIndex];
-    const char* str = RValue_toString(args[0]);
+    char* str = RValue_toString(args[0]);
 
     char* processed = TextUtils_preprocessGmlText(str);
+    free(str);
     int32_t textLen = (int32_t) strlen(processed);
 
     // Find the widest line
@@ -3080,9 +3085,10 @@ static RValue builtin_stringHeight(VMContext* ctx, RValue* args, int32_t argCoun
     if (0 > fontIndex || renderer->dataWin->font.count <= (uint32_t) fontIndex) return RValue_makeReal(0.0);
 
     Font* font = &renderer->dataWin->font.fonts[fontIndex];
-    const char* str = RValue_toString(args[0]);
+    char* str = RValue_toString(args[0]);
 
     char* processed = TextUtils_preprocessGmlText(str);
+    free(str);
     int32_t textLen = (int32_t) strlen(processed);
     int32_t lineCount = TextUtils_countLines(processed, textLen);
     free(processed);
