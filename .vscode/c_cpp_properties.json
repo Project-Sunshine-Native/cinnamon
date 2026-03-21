@@ -4,11 +4,11 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/opt/devkitpro/devkitARM/include/**",
-                "/opt/devkitpro/libctru/include/**"
+                "C:/devkitpro/devkitARM/include/**",
+                "C:/devkitpro/libctru/include/**"
             ],
             "defines": [],
-            "compilerPath": "/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc",
+            "compilerPath": "C:/devkitpro/devkitARM/bin/arm-none-eabi-gcc",
             "cStandard": "c17",
             "cppStandard": "gnu++17",
             "intelliSenseMode": "linux-gcc-arm"

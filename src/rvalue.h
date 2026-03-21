@@ -228,7 +228,10 @@ static RValue jsonToRValue(JsonValue* node) {
             hmput(map, key, val);
         }
 
-        return RValue_makeDsMap((intptr_t) map);
+        RValue r = RValue_makeUndefined();
+        r.type = RVALUE_DS_MAP;
+        r.int64 = (intptr_t) map;
+        return r;
     }
 
     if (JsonReader_isArray(node)) {
@@ -241,7 +244,10 @@ static RValue jsonToRValue(JsonValue* node) {
             arrput(list, val);
         }
 
-        return RValue_makeDsList((intptr_t) list);
+        RValue r = RValue_makeUndefined();
+        r.type = RVALUE_DS_LIST;
+        r.int64 = (intptr_t) list;
+        return r;
     }
 
     if (JsonReader_isString(node)) return RValue_makeOwnedString(strdup(JsonReader_getString(node)));

@@ -1,5 +1,7 @@
 #define NULL ((void*)0)
 
+// src/n3ds/main.c
+
 #include "../data_win.h"
 #include "../vm.h"
 
@@ -707,9 +709,7 @@ int main(int argc, char* argv[]) {
             runner->renderer->vtable->beginFrame(runner->renderer, gameW, gameH, fbWidth, fbHeight);
         }
 
-        // IMPORTANT TODO: Create the citro_renderer.c and citro_renderer.h
-        // based on the gl_renderer.c and the gl_renderer.h
-        // renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
+        renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
 
         // Clear FBO with room background color
         if (runner->drawBackgroundColor) {
@@ -757,9 +757,9 @@ int main(int argc, char* argv[]) {
             // No views enabled or views disabled: render with default full-screen view
             runner->viewCurrent = 0;
             // TODO: Add renderer, see first comment about  renderer
-            // renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
             Runner_draw(runner);
-            // renderer->vtable->endView(renderer);
+            renderer->vtable->endView(renderer);
         }
 
         // Reset view_current to 0 so non-Draw events (Step, Alarm, Create) see view_current = 0
@@ -833,6 +833,8 @@ int main(int argc, char* argv[]) {
         InputRecording_free(globalInputRecording);
         globalInputRecording = NULL;
     }
+
+    renderer->vtable->destroy(renderer);
 
     // Cleanup
     /*
