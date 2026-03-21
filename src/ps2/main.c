@@ -448,6 +448,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Parse deferDrawToAfterAllSteps from CONFIG.JSN
+    // When true, Runner_draw runs once after all catch-up Runner_step calls (old behavior) instead of running immediately after each Runner_step (new behavior)
+    bool deferDrawToAfterAllSteps = false;
+    JsonValue* deferDrawVal = JsonReader_getObject(configRoot, "deferDrawToAfterAllSteps");
+    if (deferDrawVal != nullptr) {
+        deferDrawToAfterAllSteps = JsonReader_getBool(deferDrawVal);
+        if (deferDrawToAfterAllSteps) {
+            printf("CONFIG.JSN: deferDrawToAfterAllSteps = true (draw once after all steps)\n");
+        }
+    }
+
     {
         void* heapTop = sbrk(0);
         int32_t usedBytes = (int32_t) (uintptr_t) heapTop;
@@ -587,6 +598,75 @@ int main(int argc, char* argv[]) {
 
             Runner_step(runner);
 
+            if (!deferDrawToAfterAllSteps) {
+                gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
+
+                renderer->vtable->beginFrame(renderer, gameW, gameH, 640, 448);
+
+                // Clear with room background color
+                if (runner->drawBackgroundColor) {
+                    uint8_t bgR = BGR_R(runner->backgroundColor);
+                    uint8_t bgG = BGR_G(runner->backgroundColor);
+                    uint8_t bgB = BGR_B(runner->backgroundColor);
+                    u64 bgColor = GS_SETREG_RGBAQ(bgR, bgG, bgB, 0x80, 0x00);
+                    gsKit_prim_sprite(gsGlobal, 0, 0, 640, 448, 0, bgColor);
+                }
+
+                // Render views
+                Room* activeRoom = runner->currentRoom;
+                bool anyViewRendered = false;
+
+                bool viewsEnabled = (activeRoom->flags & 1) != 0;
+
+                if (viewsEnabled) {
+                    repeat(8, vi) {
+                        if (!activeRoom->views[vi].enabled) continue;
+
+                        int32_t viewX = activeRoom->views[vi].viewX;
+                        int32_t viewY = activeRoom->views[vi].viewY;
+                        int32_t viewW = activeRoom->views[vi].viewWidth;
+                        int32_t viewH = activeRoom->views[vi].viewHeight;
+                        int32_t portX = activeRoom->views[vi].portX;
+                        int32_t portY = activeRoom->views[vi].portY;
+                        int32_t portW = activeRoom->views[vi].portWidth;
+                        int32_t portH = activeRoom->views[vi].portHeight;
+                        float viewAngle = runner->viewAngles[vi];
+
+                        runner->viewCurrent = (int32_t) vi;
+                        renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
+
+                        Runner_draw(runner);
+
+                        renderer->vtable->endView(renderer);
+                        anyViewRendered = true;
+                    }
+                }
+
+                if (!anyViewRendered) {
+                    // No views enabled: render with default full-screen view
+                    runner->viewCurrent = 0;
+                    renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+                    Runner_draw(runner);
+                    renderer->vtable->endView(renderer);
+                }
+
+                runner->viewCurrent = 0;
+
+                renderer->vtable->endFrame(renderer);
+            }
+
+            accumulator -= targetFrameTime;
+            gameFramesRan++;
+
+            // For intermediate catch-up frames, flush the GS queue so it doesn't accumulate
+            // (the back buffer will be overwritten by the next iteration's rendering anyway)
+            if (!deferDrawToAfterAllSteps && accumulator >= targetFrameTime) {
+                gsKit_queue_exec(gsGlobal);
+            }
+        }
+
+        // When deferDrawToAfterAllSteps is enabled, render once after all catch-up steps
+        if (deferDrawToAfterAllSteps && gameFramesRan > 0) {
             gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
 
             renderer->vtable->beginFrame(renderer, gameW, gameH, 640, 448);
@@ -641,15 +721,6 @@ int main(int argc, char* argv[]) {
             runner->viewCurrent = 0;
 
             renderer->vtable->endFrame(renderer);
-
-            accumulator -= targetFrameTime;
-            gameFramesRan++;
-
-            // For intermediate catch-up frames, flush the GS queue so it doesn't accumulate
-            // (the back buffer will be overwritten by the next iteration's rendering anyway)
-            if (accumulator >= targetFrameTime) {
-                gsKit_queue_exec(gsGlobal);
-            }
         }
 
         // Update audio system (gain fading, stream to audsrv)
