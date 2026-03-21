@@ -576,6 +576,57 @@ static void glDrawLine(Renderer* renderer, float x1, float y1, float x2, float y
     gl->quadCount++;
 }
 
+static void glDrawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color1, uint32_t color2, float alpha) {
+    GLRenderer* gl = (GLRenderer*) renderer;
+
+    float r1 = (float) BGR_R(color1) / 255.0f;
+    float g1 = (float) BGR_G(color1) / 255.0f;
+    float b1 = (float) BGR_B(color1) / 255.0f;
+
+    float r2 = (float) BGR_R(color2) / 255.0f;
+    float g2 = (float) BGR_G(color2) / 255.0f;
+    float b2 = (float) BGR_B(color2) / 255.0f;
+
+    // Compute perpendicular offset for line thickness
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (0.0001f > len) return;
+
+    float halfW = width * 0.5f;
+    float px = (-dy / len) * halfW;
+    float py = (dx / len) * halfW;
+
+    // Emit quad with per-vertex colors (color1 at start, color2 at end)
+    if (gl->quadCount > 0 && gl->currentTextureId != gl->whiteTexture) {
+        flushBatch(gl);
+    }
+    if (gl->quadCount >= MAX_QUADS) {
+        flushBatch(gl);
+    }
+    gl->currentTextureId = gl->whiteTexture;
+
+    float* verts = gl->vertexData + gl->quadCount * VERTICES_PER_QUAD * FLOATS_PER_VERTEX;
+
+    // Vertex 0: start + perpendicular (color1)
+    verts[0] = x1 + px; verts[1] = y1 + py; verts[2] = 0.5f; verts[3] = 0.5f;
+    verts[4] = r1; verts[5] = g1; verts[6] = b1; verts[7] = alpha;
+
+    // Vertex 1: start - perpendicular (color1)
+    verts[8] = x1 - px; verts[9] = y1 - py; verts[10] = 0.5f; verts[11] = 0.5f;
+    verts[12] = r1; verts[13] = g1; verts[14] = b1; verts[15] = alpha;
+
+    // Vertex 2: end - perpendicular (color2)
+    verts[16] = x2 - px; verts[17] = y2 - py; verts[18] = 0.5f; verts[19] = 0.5f;
+    verts[20] = r2; verts[21] = g2; verts[22] = b2; verts[23] = alpha;
+
+    // Vertex 3: end + perpendicular (color2)
+    verts[24] = x2 + px; verts[25] = y2 + py; verts[26] = 0.5f; verts[27] = 0.5f;
+    verts[28] = r2; verts[29] = g2; verts[30] = b2; verts[31] = alpha;
+
+    gl->quadCount++;
+}
+
 // ===[ Text Drawing ]===
 
 static void glDrawText(Renderer* renderer, const char* text, float x, float y, float xscale, float yscale, float angleDeg) {
@@ -905,6 +956,7 @@ static RendererVtable glVtable = {
     .drawSpritePart = glDrawSpritePart,
     .drawRectangle = glDrawRectangle,
     .drawLine = glDrawLine,
+    .drawLineColor = glDrawLineColor,
     .drawText = glDrawText,
     .flush = glRendererFlush,
     .createSpriteFromSurface = glCreateSpriteFromSurface,

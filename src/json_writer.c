@@ -17,7 +17,7 @@ static void ensureCapacity(JsonWriter* writer, size_t additional) {
     }
 
     writer->buffer = safeRealloc(writer->buffer, newCapacity);
-    if (writer->buffer == NULL) {
+    if (writer->buffer == nullptr) {
         fprintf(stderr, "JsonWriter: realloc failed\n");
         abort();
     }
@@ -78,7 +78,7 @@ static void writeEscapedString(JsonWriter* writer, const char* str) {
 JsonWriter JsonWriter_create(void) {
     size_t initialCapacity = 256;
     char* buffer = safeMalloc(initialCapacity);
-    if (buffer == NULL) {
+    if (buffer == nullptr) {
         fprintf(stderr, "JsonWriter: malloc failed\n");
         abort();
     }
@@ -93,7 +93,7 @@ JsonWriter JsonWriter_create(void) {
 
 void JsonWriter_free(JsonWriter* writer) {
     free(writer->buffer);
-    writer->buffer = NULL;
+    writer->buffer = nullptr;
     writer->length = 0;
     writer->capacity = 0;
 }
@@ -135,7 +135,7 @@ void JsonWriter_key(JsonWriter* writer, const char* key) {
 
 void JsonWriter_string(JsonWriter* writer, const char* value) {
     writeCommaIfNeeded(writer);
-    if (value == NULL) {
+    if (value == nullptr) {
         appendStr(writer, "null");
     } else {
         writeEscapedString(writer, value);
@@ -205,7 +205,7 @@ const char* JsonWriter_getOutput(const JsonWriter* writer) {
 }
 
 char* JsonWriter_copyOutput(const JsonWriter* writer) {
-    return strdup(writer->buffer);
+    return safeStrdup(writer->buffer);
 }
 
 size_t JsonWriter_getLength(const JsonWriter* writer) {

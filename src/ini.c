@@ -15,7 +15,7 @@ static IniSection* findSection(const IniFile* ini, const char* name) {
             return &ini->sections[i];
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static int findKeyIndex(const IniSection* section, const char* key) {
@@ -33,9 +33,9 @@ static IniSection* addSection(IniFile* ini, const char* name) {
         ini->sections = safeRealloc(ini->sections, (size_t) ini->capacity * sizeof(IniSection));
     }
     IniSection* section = &ini->sections[ini->count++];
-    section->name = strdup(name);
-    section->keys = NULL;
-    section->values = NULL;
+    section->name = safeStrdup(name);
+    section->keys = nullptr;
+    section->values = nullptr;
     section->count = 0;
     section->capacity = 0;
     return section;
@@ -47,8 +47,8 @@ static void addKeyValue(IniSection* section, const char* key, const char* value)
         section->keys = safeRealloc(section->keys, (size_t) section->capacity * sizeof(char*));
         section->values = safeRealloc(section->values, (size_t) section->capacity * sizeof(char*));
     }
-    section->keys[section->count] = strdup(key);
-    section->values[section->count] = strdup(value);
+    section->keys[section->count] = safeStrdup(key);
+    section->values[section->count] = safeStrdup(value);
     section->count++;
 }
 
@@ -64,19 +64,19 @@ static const char* skipWhitespace(const char* p) {
 IniFile* Ini_parse(const char* text) {
     IniFile* ini = safeCalloc(1, sizeof(IniFile));
 
-    if (text == NULL || *text == '\0') {
+    if (text == nullptr || *text == '\0') {
         return ini;
     }
 
     // Make a mutable copy to tokenize
-    char* data = strdup(text);
-    IniSection* currentSection = NULL;
+    char* data = safeStrdup(text);
+    IniSection* currentSection = nullptr;
 
     char* line = data;
-    while (line != NULL) {
+    while (line != nullptr) {
         // Find end of line
         char* eol = strchr(line, '\n');
-        if (eol != NULL) {
+        if (eol != nullptr) {
             *eol = '\0';
         }
 
@@ -85,7 +85,7 @@ IniFile* Ini_parse(const char* text) {
 
         // Skip empty lines and comments
         if (*trimmed == '\0' || *trimmed == ';' || *trimmed == '#') {
-            line = eol != NULL ? eol + 1 : NULL;
+            line = eol != nullptr ? eol + 1 : nullptr;
             continue;
         }
 
@@ -97,10 +97,10 @@ IniFile* Ini_parse(const char* text) {
             // Section header
             const char* nameStart = trimmed + 1;
             char* closeBracket = strchr(mutableTrimmed, ']');
-            if (closeBracket != NULL) {
+            if (closeBracket != nullptr) {
                 *closeBracket = '\0';
                 currentSection = findSection(ini, nameStart);
-                if (currentSection == NULL) {
+                if (currentSection == nullptr) {
                     currentSection = addSection(ini, nameStart);
                 }
             } else {
@@ -109,7 +109,7 @@ IniFile* Ini_parse(const char* text) {
         } else {
             // Key=value pair
             char* equals = strchr(mutableTrimmed, '=');
-            if (equals != NULL && currentSection != NULL) {
+            if (equals != nullptr && currentSection != nullptr) {
                 *equals = '\0';
                 char* key = mutableTrimmed;
                 char* value = equals + 1;
@@ -120,7 +120,7 @@ IniFile* Ini_parse(const char* text) {
                 int existingIndex = findKeyIndex(currentSection, key);
                 if (existingIndex >= 0) {
                     free(currentSection->values[existingIndex]);
-                    currentSection->values[existingIndex] = strdup(value);
+                    currentSection->values[existingIndex] = safeStrdup(value);
                 } else {
                     addKeyValue(currentSection, key, value);
                 }
@@ -128,7 +128,7 @@ IniFile* Ini_parse(const char* text) {
             // Silently skip key=value lines outside any section (matching GML behavior)
         }
 
-        line = eol != NULL ? eol + 1 : NULL;
+        line = eol != nullptr ? eol + 1 : nullptr;
     }
 
     free(data);
@@ -136,7 +136,7 @@ IniFile* Ini_parse(const char* text) {
 }
 
 void Ini_free(IniFile* ini) {
-    if (ini == NULL)
+    if (ini == nullptr)
         return;
 
     repeat(ini->count, i) {
@@ -157,24 +157,24 @@ void Ini_free(IniFile* ini) {
 
 const char* Ini_getString(const IniFile* ini, const char* section, const char* key) {
     IniSection* sec = findSection(ini, section);
-    if (sec == NULL)
-        return NULL;
+    if (sec == nullptr)
+        return nullptr;
 
     int idx = findKeyIndex(sec, key);
     if (0 > idx)
-        return NULL;
+        return nullptr;
 
     return sec->values[idx];
 }
 
 bool Ini_hasSection(const IniFile* ini, const char* section) {
-    return findSection(ini, section) != NULL;
+    return findSection(ini, section) != nullptr;
 }
 
 bool Ini_hasKey(const IniFile* ini, const char* section, const char* key) {
     IniSection* sec = findSection(ini, section);
 
-    if (sec == NULL)
+    if (sec == nullptr)
         return false;
 
     return findKeyIndex(sec, key) >= 0;
@@ -184,20 +184,20 @@ bool Ini_hasKey(const IniFile* ini, const char* section, const char* key) {
 
 void Ini_setString(IniFile* ini, const char* section, const char* key, const char* value) {
     // If we are passing a null value, let's remove it!
-    if (value == NULL) {
+    if (value == nullptr) {
         Ini_deleteKey(ini, section, key);
         return;
     }
 
     IniSection* sec = findSection(ini, section);
-    if (sec == NULL) {
+    if (sec == nullptr) {
         sec = addSection(ini, section);
     }
 
     int idx = findKeyIndex(sec, key);
     if (idx >= 0) {
         free(sec->values[idx]);
-        sec->values[idx] = strdup(value);
+        sec->values[idx] = safeStrdup(value);
     } else {
         addKeyValue(sec, key, value);
     }
@@ -205,7 +205,7 @@ void Ini_setString(IniFile* ini, const char* section, const char* key, const cha
 
 void Ini_deleteKey(IniFile* ini, const char* section, const char* key) {
     IniSection* sec = findSection(ini, section);
-    if (sec == NULL)
+    if (sec == nullptr)
         return;
 
     int idx = findKeyIndex(sec, key);

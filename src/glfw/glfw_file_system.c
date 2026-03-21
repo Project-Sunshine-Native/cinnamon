@@ -95,7 +95,7 @@ GlfwFileSystem* GlfwFileSystem_create(const char* dataWinPath) {
         fs->basePath[dirLen] = '\0';
     } else {
         // data.win is in current directory
-        fs->basePath = strdup("./");
+        fs->basePath = safeStrdup("./");
     }
 
     return fs;

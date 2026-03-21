@@ -100,7 +100,7 @@ typedef struct CallFrame {
 typedef struct EnvFrame {
     struct Instance* savedInstance;
     struct Instance* savedOtherInstance; // Saved otherInstance to restore on PopEnv
-    struct Instance** instanceList; // stb_ds array of matching instances (NULL for single-instance)
+    struct Instance** instanceList; // stb_ds array of matching instances (nullptr for single-instance)
     int32_t currentIndex;           // Current position in instanceList
     struct EnvFrame* parent;
 } EnvFrame;
@@ -141,7 +141,7 @@ typedef struct VMContext {
     ArrayMapEntry* localArrayMap;
     // Tracks which global varIDs have array data (for array aliasing)
     struct { int32_t key; int32_t value; }* globalArrayVarTracker;
-    RValue* scriptArgs;       // Arguments passed to current script (NULL for non-script code)
+    RValue* scriptArgs;       // Arguments passed to current script (nullptr for non-script code)
     int32_t scriptArgCount;   // Number of arguments passed
     // funcName -> codeIndex hash map (stb_ds)
     struct { char* key; int32_t value; }* funcMap;
@@ -184,7 +184,7 @@ void VM_buildCrossReferences(VMContext* ctx);
 void VM_disassemble(VMContext* ctx, int32_t codeIndex);
 
 static const char* VM_getCallerName(VMContext* ctx) {
-    return ctx->currentCodeName != NULL ? ctx->currentCodeName : "<unknown>";
+    return ctx->currentCodeName != nullptr ? ctx->currentCodeName : "<unknown>";
 }
 
 static char* VM_createDedupKey(const char* callerName, const char* funcName) {

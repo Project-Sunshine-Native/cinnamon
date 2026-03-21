@@ -15,6 +15,7 @@
 #include "input_recording.h"
 #include "gl_renderer.h"
 #include "glfw_file_system.h"
+#include "ma_audio_system.h"
 #include "stb_ds.h"
 #include "stb_image_write.h"
 
@@ -383,18 +384,16 @@ int main(int argc, char* argv[]) {
     );
 
     Gen8* gen8 = &dataWin->gen8;
-	printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
+    printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
 
-#ifdef __linux__
-	{
-		struct mallinfo2 mi = mallinfo2();
-		printf("Memory after data.win parsing: used=%zu bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f);
-	}
-#endif
+    {
+        struct mallinfo2 mi = mallinfo2();
+        printf("Memory after data.win parsing: used=%zu bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f);
+    }
 
     // Build window title
     char windowTitle[256];
-    snprintf(windowTitle, sizeof(windowTitle), "cinnamon - %s", gen8->displayName);
+    snprintf(windowTitle, sizeof(windowTitle), "Butterscotch - %s", gen8->displayName);
 
     // Initialize VM
     VMContext* vm = VM_create(dataWin);
@@ -525,6 +524,15 @@ int main(int argc, char* argv[]) {
     renderer->vtable->init(renderer, dataWin);
     runner->renderer = renderer;
 
+    // Initialize the audio system
+    MaAudioSystem* maAudio = nullptr;
+    if (!args.headless) {
+        maAudio = MaAudioSystem_create();
+        AudioSystem* audioSystem = (AudioSystem*) maAudio;
+        audioSystem->vtable->init(audioSystem, dataWin, (FileSystem*) glfwFileSystem);
+        runner->audioSystem = audioSystem;
+    }
+
     // Set up keyboard input
     glfwSetWindowUserPointer(window, runner);
     glfwSetKeyCallback(window, keyCallback);
@@ -626,6 +634,14 @@ int main(int argc, char* argv[]) {
 
             // Run one game step (Begin Step, Keyboard, Alarms, Step, End Step, room transitions)
             Runner_step(runner);
+
+            // Update audio system (gain fading, cleanup ended sounds)
+            if (runner->audioSystem != nullptr) {
+                float dt = (float) (glfwGetTime() - lastFrameTime);
+                if (0.0f > dt) dt = 0.0f;
+                if (dt > 0.1f) dt = 0.1f; // cap delta to avoid huge fades on lag spikes
+                runner->audioSystem->vtable->update(runner->audioSystem, dt);
+            }
 
             // Dump full runner state if this frame was requested
             if (hmget(args.dumpFrames, runner->frameCount)) {
@@ -777,6 +793,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
+    if (runner->audioSystem != nullptr) {
+        runner->audioSystem->vtable->destroy(runner->audioSystem);
+        runner->audioSystem = nullptr;
+    }
     renderer->vtable->destroy(renderer);
 
     glfwDestroyWindow(window);
