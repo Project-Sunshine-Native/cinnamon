@@ -373,7 +373,7 @@ static int32_t allocateChunks(GsRenderer* gs, int chunksNeeded) {
 // Caches compressed atlas data in a 4 MiB EE RAM buffer to avoid repeated
 // CDVD reads when atlases are evicted from VRAM and need to be re-uploaded.
 
-#define EE_CACHE_CAPACITY (4 * 1024 * 1024) // 4 MiB
+#define EE_CACHE_CAPACITY (2 * 1024 * 1024) // 2 MiB
 
 // Initialize the EE RAM cache. Called from gsInit after opening TEXTURES.BIN.
 static void initEeCache(GsRenderer* gs) {
