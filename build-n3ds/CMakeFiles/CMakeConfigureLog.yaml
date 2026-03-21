@@ -41,8 +41,8 @@ events:
     checks:
       - "Detecting C compiler ABI info"
     directories:
-      source: "/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz"
-      binary: "/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz"
+      source: "/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2"
+      binary: "/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2"
     cmakeVariables:
       CMAKE_C_FLAGS: "-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__"
       CMAKE_C_FLAGS_DEBUG: "-g -Og -DDEBUG"
@@ -53,13 +53,13 @@ events:
       variable: "CMAKE_C_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz'
+        Change Dir: '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2'
         
-        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_bfd89/fast
-        /usr/bin/gmake  -f CMakeFiles/cmTC_bfd89.dir/build.make CMakeFiles/cmTC_bfd89.dir/build
-        gmake[1]: Entering directory '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz'
-        Building C object CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o
-        /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc  -isystem /opt/devkitpro/libctru/include -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG   -v -o CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_3bcdf/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_3bcdf.dir/build.make CMakeFiles/cmTC_3bcdf.dir/build
+        gmake[1]: Entering directory '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2'
+        Building C object CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o
+        /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc  -isystem /opt/devkitpro/libctru/include -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG   -v -o CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c
         Using built-in specs.
         COLLECT_GCC=/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc
         Target: arm-none-eabi
@@ -67,8 +67,8 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 15.2.0 (devkitARM) 
-        COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_bfd89.dir/'
-         /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/cc1 -quiet -v -imultilib armv6k/fpu -D__USES_INITFINI__ -D __3DS__ -D NDEBUG -isystem /opt/devkitpro/libctru/include /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_bfd89.dir/ -dumpbase CMakeCCompilerABI.c -dumpbase-ext .c -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -marm -mlibarch=armv6k -march=armv6k -g -O2 -version -ffunction-sections -o /tmp/ccHuG5nY.s
+        COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_3bcdf.dir/'
+         /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/cc1 -quiet -v -imultilib armv6k/fpu -D__USES_INITFINI__ -D __3DS__ -D NDEBUG -isystem /opt/devkitpro/libctru/include /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_3bcdf.dir/ -dumpbase CMakeCCompilerABI.c -dumpbase-ext .c -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -marm -mlibarch=armv6k -march=armv6k -g -O2 -version -ffunction-sections -o /tmp/cclY179f.s
         GNU C23 (devkitARM) version 15.2.0 (arm-none-eabi)
         	compiled by GNU C version 12.2.0, GMP version 6.2.1, MPFR version 4.1.0, MPC version 1.2.1, isl version isl-0.26-GMP
         
@@ -83,14 +83,14 @@ events:
          /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/include
         End of search list.
         Compiler executable checksum: 2c7ff403ab3e8d5bfa636492a584d9f7
-        COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_bfd89.dir/'
-         /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/as -march=armv6k -mfloat-abi=hard -meabi=5 -o CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o /tmp/ccHuG5nY.s
+        COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_3bcdf.dir/'
+         /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/as -march=armv6k -mfloat-abi=hard -meabi=5 -o CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o /tmp/cclY179f.s
         COMPILER_PATH=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/
         LIBRARY_PATH=/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/
-        COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.'
-        Linking C executable cmTC_bfd89.elf
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_bfd89.dir/link.txt --verbose=1
-        /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -specs=3dsx.specs -v CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o -o cmTC_bfd89.elf  -lctru -lm 
+        COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.'
+        Linking C executable cmTC_3bcdf.elf
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3bcdf.dir/link.txt --verbose=1
+        /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -specs=3dsx.specs -v CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o -o cmTC_3bcdf.elf  -lctru -lm 
         Using built-in specs.
         Reading specs from /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/3dsx.specs
         Reading specs from /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/sync-dmb.specs
@@ -104,10 +104,10 @@ events:
         gcc version 15.2.0 (devkitARM) 
         COMPILER_PATH=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/
         LIBRARY_PATH=/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/
-        COLLECT_GCC_OPTIONS= '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-L/opt/devkitpro/libctru/lib' '-L/opt/devkitpro/portlibs/3ds/lib' '-specs=3dsx.specs' '-v' '-o' 'cmTC_bfd89.elf' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'cmTC_bfd89.elf.'
-         /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/collect2 -plugin /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/liblto_plugin.so -plugin-opt=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cciOVmeV.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lg -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lsysbase --defsym=__sync_synchronize=__sync_synchronize_dmb --sysroot=/opt/devkitpro/devkitARM/arm-none-eabi -X -T /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/3dsx.ld -d --emit-relocs --use-blx --gc-sections -o cmTC_bfd89.elf /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/3dsx_crt0.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crti.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtbegin.o -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0 -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib -L/opt/devkitpro/devkitARM/arm-none-eabi/lib CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o -lctru -lm --start-group -lgcc -lg -lc -lsysbase --end-group /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtend.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtn.o
-        COLLECT_GCC_OPTIONS= '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-L/opt/devkitpro/libctru/lib' '-L/opt/devkitpro/portlibs/3ds/lib' '-specs=3dsx.specs' '-v' '-o' 'cmTC_bfd89.elf' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'cmTC_bfd89.elf.'
-        gmake[1]: Leaving directory '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz'
+        COLLECT_GCC_OPTIONS= '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-L/opt/devkitpro/libctru/lib' '-L/opt/devkitpro/portlibs/3ds/lib' '-specs=3dsx.specs' '-v' '-o' 'cmTC_3bcdf.elf' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'cmTC_3bcdf.elf.'
+         /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/collect2 -plugin /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/liblto_plugin.so -plugin-opt=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccIBva2n.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lg -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lsysbase --defsym=__sync_synchronize=__sync_synchronize_dmb --sysroot=/opt/devkitpro/devkitARM/arm-none-eabi -X -T /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/3dsx.ld -d --emit-relocs --use-blx --gc-sections -o cmTC_3bcdf.elf /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/3dsx_crt0.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crti.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtbegin.o -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0 -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib -L/opt/devkitpro/devkitARM/arm-none-eabi/lib CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o -lctru -lm --start-group -lgcc -lg -lc -lsysbase --end-group /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtend.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtn.o
+        COLLECT_GCC_OPTIONS= '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-L/opt/devkitpro/libctru/lib' '-L/opt/devkitpro/portlibs/3ds/lib' '-specs=3dsx.specs' '-v' '-o' 'cmTC_3bcdf.elf' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'cmTC_3bcdf.elf.'
+        gmake[1]: Leaving directory '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2'
         
       exitCode: 0
   -
@@ -141,13 +141,13 @@ events:
     message: |
       Parsed C implicit link information:
         link line regex: [^( *|.*[/\\])(arm-none-eabi-ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
-        ignore line: [Change Dir: '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz']
+        ignore line: [Change Dir: '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2']
         ignore line: []
-        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_bfd89/fast]
-        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_bfd89.dir/build.make CMakeFiles/cmTC_bfd89.dir/build]
-        ignore line: [gmake[1]: Entering directory '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Toggyz']
-        ignore line: [Building C object CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o]
-        ignore line: [/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc  -isystem /opt/devkitpro/libctru/include -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG   -v -o CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c]
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_3bcdf/fast]
+        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_3bcdf.dir/build.make CMakeFiles/cmTC_3bcdf.dir/build]
+        ignore line: [gmake[1]: Entering directory '/home/kurplunk/n3ds/cinnamon/build-n3ds/CMakeFiles/CMakeScratch/TryCompile-Asz0M2']
+        ignore line: [Building C object CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o]
+        ignore line: [/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc  -isystem /opt/devkitpro/libctru/include -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG   -v -o CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c]
         ignore line: [Using built-in specs.]
         ignore line: [COLLECT_GCC=/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc]
         ignore line: [Target: arm-none-eabi]
@@ -155,8 +155,8 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 15.2.0 (devkitARM) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_bfd89.dir/']
-        ignore line: [ /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/cc1 -quiet -v -imultilib armv6k/fpu -D__USES_INITFINI__ -D __3DS__ -D NDEBUG -isystem /opt/devkitpro/libctru/include /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_bfd89.dir/ -dumpbase CMakeCCompilerABI.c -dumpbase-ext .c -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -marm -mlibarch=armv6k -march=armv6k -g -O2 -version -ffunction-sections -o /tmp/ccHuG5nY.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_3bcdf.dir/']
+        ignore line: [ /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/cc1 -quiet -v -imultilib armv6k/fpu -D__USES_INITFINI__ -D __3DS__ -D NDEBUG -isystem /opt/devkitpro/libctru/include /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_3bcdf.dir/ -dumpbase CMakeCCompilerABI.c -dumpbase-ext .c -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -marm -mlibarch=armv6k -march=armv6k -g -O2 -version -ffunction-sections -o /tmp/cclY179f.s]
         ignore line: [GNU C23 (devkitARM) version 15.2.0 (arm-none-eabi)]
         ignore line: [	compiled by GNU C version 12.2.0  GMP version 6.2.1  MPFR version 4.1.0  MPC version 1.2.1  isl version isl-0.26-GMP]
         ignore line: []
@@ -171,14 +171,14 @@ events:
         ignore line: [ /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/include]
         ignore line: [End of search list.]
         ignore line: [Compiler executable checksum: 2c7ff403ab3e8d5bfa636492a584d9f7]
-        ignore line: [COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_bfd89.dir/']
-        ignore line: [ /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/as -march=armv6k -mfloat-abi=hard -meabi=5 -o CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o /tmp/ccHuG5nY.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_3bcdf.dir/']
+        ignore line: [ /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/as -march=armv6k -mfloat-abi=hard -meabi=5 -o CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o /tmp/cclY179f.s]
         ignore line: [COMPILER_PATH=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/]
         ignore line: [LIBRARY_PATH=/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.']
-        ignore line: [Linking C executable cmTC_bfd89.elf]
-        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_bfd89.dir/link.txt --verbose=1]
-        ignore line: [/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -specs=3dsx.specs -v CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o -o cmTC_bfd89.elf  -lctru -lm ]
+        ignore line: [COLLECT_GCC_OPTIONS='-isystem' '/opt/devkitpro/libctru/include'  '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-v' '-o' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o' '-c' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.']
+        ignore line: [Linking C executable cmTC_3bcdf.elf]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3bcdf.dir/link.txt --verbose=1]
+        ignore line: [/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections -D__3DS__  -g -O2 -DNDEBUG -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -specs=3dsx.specs -v CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o -o cmTC_3bcdf.elf  -lctru -lm ]
         ignore line: [Using built-in specs.]
         ignore line: [Reading specs from /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/3dsx.specs]
         ignore line: [Reading specs from /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/sync-dmb.specs]
@@ -192,13 +192,13 @@ events:
         ignore line: [gcc version 15.2.0 (devkitARM) ]
         ignore line: [COMPILER_PATH=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/bin/]
         ignore line: [LIBRARY_PATH=/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/:/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/:/opt/devkitpro/devkitARM/arm-none-eabi/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS= '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-L/opt/devkitpro/libctru/lib' '-L/opt/devkitpro/portlibs/3ds/lib' '-specs=3dsx.specs' '-v' '-o' 'cmTC_bfd89.elf' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'cmTC_bfd89.elf.']
-        link line: [ /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/collect2 -plugin /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/liblto_plugin.so -plugin-opt=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cciOVmeV.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lg -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lsysbase --defsym=__sync_synchronize=__sync_synchronize_dmb --sysroot=/opt/devkitpro/devkitARM/arm-none-eabi -X -T /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/3dsx.ld -d --emit-relocs --use-blx --gc-sections -o cmTC_bfd89.elf /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/3dsx_crt0.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crti.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtbegin.o -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0 -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib -L/opt/devkitpro/devkitARM/arm-none-eabi/lib CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o -lctru -lm --start-group -lgcc -lg -lc -lsysbase --end-group /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtend.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtn.o]
+        ignore line: [COLLECT_GCC_OPTIONS= '-mtune=mpcore' '-mfloat-abi=hard' '-mtp=soft' '-mword-relocations' '-ffunction-sections' '-D' '__3DS__' '-g' '-O2' '-D' 'NDEBUG' '-L/opt/devkitpro/libctru/lib' '-L/opt/devkitpro/portlibs/3ds/lib' '-specs=3dsx.specs' '-v' '-o' 'cmTC_3bcdf.elf' '-marm' '-mlibarch=armv6k' '-march=armv6k' '-dumpdir' 'cmTC_3bcdf.elf.']
+        link line: [ /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/collect2 -plugin /opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/liblto_plugin.so -plugin-opt=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccIBva2n.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lg -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lsysbase --defsym=__sync_synchronize=__sync_synchronize_dmb --sysroot=/opt/devkitpro/devkitARM/arm-none-eabi -X -T /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/3dsx.ld -d --emit-relocs --use-blx --gc-sections -o cmTC_3bcdf.elf /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/3dsx_crt0.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crti.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtbegin.o -L/opt/devkitpro/libctru/lib -L/opt/devkitpro/portlibs/3ds/lib -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/arm-none-eabi/lib/armv6k/fpu -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0 -L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib -L/opt/devkitpro/devkitARM/arm-none-eabi/lib CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o -lctru -lm --start-group -lgcc -lg -lc -lsysbase --end-group /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtend.o /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtn.o]
           arg [/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/collect2] ==> ignore
           arg [-plugin] ==> ignore
           arg [/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/liblto_plugin.so] ==> ignore
           arg [-plugin-opt=/opt/devkitpro/devkitARM/libexec/gcc/arm-none-eabi/15.2.0/lto-wrapper] ==> ignore
-          arg [-plugin-opt=-fresolution=/tmp/cciOVmeV.res] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/ccIBva2n.res] ==> ignore
           arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
           arg [-plugin-opt=-pass-through=-lg] ==> ignore
           arg [-plugin-opt=-pass-through=-lc] ==> ignore
@@ -213,7 +213,7 @@ events:
           arg [--use-blx] ==> ignore
           arg [--gc-sections] ==> ignore
           arg [-o] ==> ignore
-          arg [cmTC_bfd89.elf] ==> ignore
+          arg [cmTC_3bcdf.elf] ==> ignore
           arg [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/3dsx_crt0.o] ==> obj [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib/armv6k/fpu/3dsx_crt0.o]
           arg [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crti.o] ==> obj [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crti.o]
           arg [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtbegin.o] ==> obj [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/armv6k/fpu/crtbegin.o]
@@ -225,7 +225,7 @@ events:
           arg [-L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0] ==> dir [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0]
           arg [-L/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib] ==> dir [/opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/15.2.0/../../../../arm-none-eabi/lib]
           arg [-L/opt/devkitpro/devkitARM/arm-none-eabi/lib] ==> dir [/opt/devkitpro/devkitARM/arm-none-eabi/lib]
-          arg [CMakeFiles/cmTC_bfd89.dir/CMakeCCompilerABI.o] ==> ignore
+          arg [CMakeFiles/cmTC_3bcdf.dir/CMakeCCompilerABI.o] ==> ignore
           arg [-lctru] ==> lib [ctru]
           arg [-lm] ==> lib [m]
           arg [--start-group] ==> ignore

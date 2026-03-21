@@ -162,6 +162,7 @@ elseif(PLATFORM STREQUAL "n3ds")
         set(SMDH_OUTPUT "${CMAKE_BINARY_DIR}/cinnamon.smdh")
         set(TDSX_OUTPUT "${CMAKE_BINARY_DIR}/cinnamon.3dsx")
 
+        # Generate your SMDH (icon / metadata)
         add_custom_command(
             TARGET cinnamon POST_BUILD
             COMMAND ${DEVKITPRO}/tools/bin/smdhtool
@@ -174,14 +175,39 @@ elseif(PLATFORM STREQUAL "n3ds")
             COMMENT "Generating cinnamon.smdh"
         )
 
+        # Make .3dsx from ELF + SMDH
         add_custom_command(
             TARGET cinnamon POST_BUILD
             COMMAND ${DEVKITPRO}/tools/bin/3dsxtool
                 $<TARGET_FILE:cinnamon>
                 "${TDSX_OUTPUT}"
-                "--smdh=${SMDH_OUTPUT}"
+                --smdh="${SMDH_OUTPUT}"
             COMMENT "Generating cinnamon.3dsx"
         )
+        # Optionally convert .3dsx -> .cxi -> .cia using devkitPro tools
+        option(GENERATE_CIA "Generate .cxi and .cia post-build using cxitool+makerom" OFF)
+        if(GENERATE_CIA)
+            set(CXI_OUTPUT "${CMAKE_BINARY_DIR}/cinnamon.cxi")
+            add_custom_command(
+                TARGET cinnamon POST_BUILD
+                COMMAND ${DEVKITPRO}/tools/bin/cxitool
+                    "${TDSX_OUTPUT}"
+                    "${CXI_OUTPUT}"
+                COMMENT "Generating cinnamon.cxi"
+            )
+
+            set(CIA_OUTPUT "${CMAKE_BINARY_DIR}/cinnamon.cia")
+            add_custom_command(
+                TARGET cinnamon POST_BUILD
+                COMMAND ${DEVKITPRO}/tools/bin/makerom
+                    -f cia
+                    -o "${CIA_OUTPUT}"
+                    -target t
+                    -i "${CXI_OUTPUT}:0:0"
+                    -icon "${SMDH_OUTPUT}"
+                COMMENT "Generating cinnamon.cia"
+            )
+        endif()
     else()
         # ── CLion / host development (no devkitARM toolchain active) ───────────
         # Glob all devkitPro include trees so the IDE can resolve 3DS headers.

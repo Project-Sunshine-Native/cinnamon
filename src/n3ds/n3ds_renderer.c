@@ -40,11 +40,8 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     renderer->drawHalign = 0;
     renderer->drawValign = 0;
 
-    gfxInitDefault();
-    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
-    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
-    C2D_Prepare();
-
+    // Assume Citro2D/C3D have been initialized by the platform (main.c).
+    // This avoids double-init issues on real hardware.
     C->top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 
     printf("CRenderer3DS: initialized (flat mode)\n");
@@ -53,10 +50,7 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
 static void CDestroy(Renderer* renderer) {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
 
-    C2D_Fini();
-    C3D_Fini();
-    gfxExit();
-
+    // Do not call global Citro2D/C3D shutdown here; main.c owns global init/fini.
     free(C);
 }
 

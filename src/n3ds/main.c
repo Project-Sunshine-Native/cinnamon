@@ -176,7 +176,7 @@ static void keyCallback(C3D_RenderTarget* window, int key, int scancode, int act
 
 static void LogToSD(const char* text) {
     // Open file in append mode on SD card
-    FILE *f = fopen("sdmc:/log.txt", "a");
+    FILE *f = fopen("sdmc:/cinnamon/log.txt", "a");
     if (f) {
         fprintf(f, "%s\n", text);
         fclose(f);
@@ -231,11 +231,11 @@ void ShowErrorAndExit(const char* msg)
 int main(int argc, char* argv[]) {
     fsInit();
 
-    // Flush to SD card every new line (\n)
+    // Flush to SD card every new line (\n) so we can see logs in real-time without needing to close the app
     setvbuf(stdout, NULL, _IOLBF, 0);
 
     // send printf to sdcard
-    freopen("full_log.txt", "w", stdout);
+    freopen("sdmc:/cinnamon/full_log.txt", "w", stdout);
 
     LogToSD("Application Started");
     //args.dataWinPath = "sdmc:/cinnamon/data.win";
@@ -657,6 +657,11 @@ int main(int argc, char* argv[]) {
         int32_t gameW = (int32_t) gen8->defaultWindowWidth;
         int32_t gameH = (int32_t) gen8->defaultWindowHeight;
 
+        // Begin the frame via renderer vtable (if provided). This pairs with endFrame below
+        if (runner->renderer != nullptr && runner->renderer->vtable != nullptr && runner->renderer->vtable->beginFrame != nullptr) {
+            runner->renderer->vtable->beginFrame(runner->renderer, gameW, gameH, fbWidth, fbHeight);
+        }
+
         // IMPORTANT TODO: Create the citro_renderer.c and citro_renderer.h
         // based on the gl_renderer.c and the gl_renderer.h
         // renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
@@ -746,7 +751,12 @@ int main(int argc, char* argv[]) {
         // TODO: Find a way to swap buffers in citro3d
         // glfwSwapBuffers(window);
 
-        C3D_FrameEnd(0); // Maybe it's this?
+        // End the frame via renderer vtable when possible to avoid unmatched C3D_FrameEnd
+        if (runner->renderer != nullptr && runner->renderer->vtable != nullptr && runner->renderer->vtable->endFrame != nullptr) {
+            runner->renderer->vtable->endFrame(runner->renderer);
+        } else {
+            C3D_FrameEnd(0);
+        }
 
         // Limit frame rate to room speed (skip in headless mode for max speed!!)
         if (runner->currentRoom->speed > 0) {
