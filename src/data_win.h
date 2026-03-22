@@ -9,6 +9,17 @@
 // Write errors to both stderr (on-screen console) and stdout (file log).
 #define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); printf(__VA_ARGS__); } while(0)
 
+// Define DATAWIN_DEBUG_LOGGING to re-enable per-load verbose traces.
+// Leave undefined in production — DataWin_loadTexture is called multiple
+// times per frame and each printf flushes to the SD card via line-buffered
+// stdout, adding many milliseconds per call.
+// #define DATAWIN_DEBUG_LOGGING
+#ifdef DATAWIN_DEBUG_LOGGING
+#  define DW_DBG(...) printf(__VA_ARGS__)
+#else
+#  define DW_DBG(...) ((void)0)
+#endif
+
 // Forward declaration for progress callback
 typedef struct DataWin DataWin;
 
@@ -696,111 +707,100 @@ void GamePath_computeInternal(GamePath* path);
 PathPositionResult GamePath_getPosition(GamePath* path, double t);
 
 static uint8_t* DataWin_loadTexture(DataWin* dw, uint32_t index) {
-    printf("DataWin_loadTexture: Requested texture[%u] (count=%u)\n", index, dw->txtr.count);
-    
+    DW_DBG("DataWin_loadTexture: Requested texture[%u] (count=%u)\n", index, dw->txtr.count);
+
     if (index >= dw->txtr.count) {
-        printf("DataWin_loadTexture: ERROR - Invalid texture index %u (max count %u)\n", index, dw->txtr.count);
+        LOG_ERR("DataWin_loadTexture: ERROR - Invalid texture index %u (max %u)\n",
+                index, dw->txtr.count);
         return NULL;
     }
 
-    printf("DataWin_loadTexture: Index %u valid (count=%u)\n", index, dw->txtr.count);
-    
-    printf("DataWin_loadTexture: State - textures[%u] = {data=%p, size=%u, offset=%llu, loaded=%s}\n", 
+    DW_DBG("DataWin_loadTexture: State - textures[%u] = {data=%p, size=%u, offset=%llu, loaded=%s}\n",
            index,
            dw->txtr.textures[index].blobData,
            dw->txtr.textures[index].blobSize,
            (unsigned long long)dw->txtr.textures[index].blobOffset,
            dw->txtr.textures[index].loaded ? "yes" : "NO");
 
-    // If texture was already loaded in RAM AND has valid data, return that data.
-    // Otherwise we need to load it from the file.
-    if (dw->txtr.textures[index].loaded && 
-        dw->txtr.textures[index].blobData != NULL && 
-        dw->txtr.textures[index].blobSize > 0 && 
+    // Fast path: blob already in RAM and valid.
+    if (dw->txtr.textures[index].loaded &&
+        dw->txtr.textures[index].blobData != NULL &&
+        dw->txtr.textures[index].blobSize > 0 &&
         dw->txtr.textures[index].blobOffset > 0) {
-        
-        printf("DataWin_loadTexture: Texture[%u] already loaded in memory and validated\n", index);
+        DW_DBG("DataWin_loadTexture: Texture[%u] already in cache\n", index);
         dw->txtrLastUsed[index] = dw->frameCounter++;
         return dw->txtr.textures[index].blobData;
     }
 
-    // If we reach here, the texture is NOT properly loaded (missing data despite loaded=true,
-    // or truly not loaded yet), so we need to load it.
-    printf("DataWin_loadTexture: Texture[%u] needs loading, size=%u offset=%llu\n", 
-           index, dw->txtr.textures[index].blobSize, 
+    DW_DBG("DataWin_loadTexture: Texture[%u] needs loading, size=%u offset=%llu\n",
+           index, dw->txtr.textures[index].blobSize,
            (unsigned long long)dw->txtr.textures[index].blobOffset);
 
-    // Validate the texture entry before loading
+    // Validate before loading.
     if (dw->txtr.textures[index].blobSize == 0) {
-        printf("DataWin_loadTexture: ERROR - Texture[%u] has zero blobSize\n", index);
+        LOG_ERR("DataWin_loadTexture: ERROR - Texture[%u] has zero blobSize\n", index);
         return NULL;
     }
-    
     if (dw->txtr.textures[index].blobOffset == 0) {
-        printf("DataWin_loadTexture: ERROR - Texture[%u] has zero blobOffset\n", index);
+        LOG_ERR("DataWin_loadTexture: ERROR - Texture[%u] has zero blobOffset\n", index);
         return NULL;
     }
 
-    // Apply cache size limits
+    // LRU eviction if cache is full.
     uint32_t loadedCount = 0;
     for (uint32_t i = 0; i < dw->txtr.count; i++)
         if (dw->txtr.textures[i].loaded && dw->txtr.textures[i].blobData != NULL) loadedCount++;
 
     if (loadedCount >= dw->txtrCacheSize) {
-        // Evict LRU
         uint32_t lruIndex = 0xFFFFFFFF;
         uint32_t minFrame = UINT32_MAX;
         for (uint32_t i = 0; i < dw->txtr.count; i++) {
-            if (dw->txtr.textures[i].loaded && 
-                dw->txtr.textures[i].blobData != NULL && 
+            if (dw->txtr.textures[i].loaded &&
+                dw->txtr.textures[i].blobData != NULL &&
                 dw->txtrLastUsed[i] < minFrame) {
                 minFrame = dw->txtrLastUsed[i];
                 lruIndex = i;
             }
         }
         if (lruIndex != 0xFFFFFFFF) {
-            printf("DataWin_loadTexture: Evicting texture[%u]\n", lruIndex);
+            DW_DBG("DataWin_loadTexture: Evicting texture[%u]\n", lruIndex);
             free(dw->txtr.textures[lruIndex].blobData);
             dw->txtr.textures[lruIndex].blobData = NULL;
-            dw->txtr.textures[lruIndex].loaded = false;
+            dw->txtr.textures[lruIndex].loaded    = false;
         }
     }
 
-    // Seek to the correct position in the file
     if (fseek(dw->file, (long)dw->txtr.textures[index].blobOffset, SEEK_SET) != 0) {
-        printf("DataWin_loadTexture: Failed to seek to offset %llu for texture[%u]\n", 
-               (unsigned long long)dw->txtr.textures[index].blobOffset, index);
+        LOG_ERR("DataWin_loadTexture: ERROR - fseek failed for texture[%u]\n", index);
         return NULL;
     }
 
-    // Validate the blob size to prevent huge allocations
-    if (dw->txtr.textures[index].blobSize > 50 * 1024 * 1024) { // 50MB max
-        printf("DataWin_loadTexture: Texture[%u] too large: %u bytes\n", 
-               index, dw->txtr.textures[index].blobSize);
+    if (dw->txtr.textures[index].blobSize > 50 * 1024 * 1024) {
+        LOG_ERR("DataWin_loadTexture: ERROR - Texture[%u] too large: %u bytes\n",
+                index, dw->txtr.textures[index].blobSize);
         return NULL;
     }
 
     dw->txtr.textures[index].blobData = malloc(dw->txtr.textures[index].blobSize);
     if (!dw->txtr.textures[index].blobData) {
-        printf("DataWin_loadTexture: Failed to allocate %u bytes for texture[%u]\n", 
-               dw->txtr.textures[index].blobSize, index);
+        LOG_ERR("DataWin_loadTexture: ERROR - malloc failed for texture[%u] (%u bytes)\n",
+                index, dw->txtr.textures[index].blobSize);
         return NULL;
     }
 
-    size_t bytesRead = fread(dw->txtr.textures[index].blobData, 1, dw->txtr.textures[index].blobSize, dw->file);
+    size_t bytesRead = fread(dw->txtr.textures[index].blobData, 1,
+                             dw->txtr.textures[index].blobSize, dw->file);
     if (bytesRead != dw->txtr.textures[index].blobSize) {
-        printf("DataWin_loadTexture: Failed to read full texture data for [%u]: got %zu/%u bytes\n", 
-               index, bytesRead, dw->txtr.textures[index].blobSize);
+        LOG_ERR("DataWin_loadTexture: ERROR - short read for texture[%u]: got %zu/%u bytes\n",
+                index, bytesRead, dw->txtr.textures[index].blobSize);
         free(dw->txtr.textures[index].blobData);
         dw->txtr.textures[index].blobData = NULL;
         return NULL;
     }
 
     dw->txtr.textures[index].loaded = true;
-    printf("DataWin_loadTexture: Successfully loaded texture[%u] - %u bytes at offset %llu\n", 
-           index, dw->txtr.textures[index].blobSize, 
-           (unsigned long long)dw->txtr.textures[index].blobOffset);
-
+    DW_DBG("DataWin_loadTexture: Loaded texture[%u] (%u bytes)\n",
+           index, dw->txtr.textures[index].blobSize);
     dw->txtrLastUsed[index] = dw->frameCounter++;
     return dw->txtr.textures[index].blobData;
 }

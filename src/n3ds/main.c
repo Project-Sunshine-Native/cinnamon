@@ -197,7 +197,13 @@ static void LogToSD(const char* text) {
 
 void ShowErrorAndExit(const char* msg)
 {
-    // init
+    // Flush log to SD card before touching the display — if gfx is already
+    // initialised this is a no-op at the driver level but keeps our log intact.
+    fflush(stdout);
+
+    // init display (safe to call even if already initialized in some contexts,
+    // but note: if this is called before gfxInitDefault in the early boot path
+    // the first gfxInitDefault wins; calling it twice is a no-op in libctru)
     gfxInitDefault();
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
@@ -273,6 +279,56 @@ void list(const char* path, int depth)
     closedir(dir);
 }
 
+// ===[ LOADING BAR ]===
+// Must be at file scope — GCC nested functions use stack trampolines to capture
+// locals, but trampolines require an executable stack.  ARM/3DS marks the stack
+// non-executable, so a nested function callback would fault immediately on real
+// hardware.  Using a file-scope static + void* userData avoids the trampoline.
+
+typedef struct {
+    C3D_RenderTarget* top;
+    C2D_TextBuf       textBuf;
+    C2D_Text*         text;
+    int               lastChunkIndex;
+} LoadingBarState;
+
+static void progressCb(const char* chunkName, int chunkIndex, int totalChunks,
+                        DataWin* dw, void* userData) {
+    (void)dw;
+    LoadingBarState* s = (LoadingBarState*)userData;
+
+    // Skip duplicate index — DataWin_parse calls once per chunk
+    if (chunkIndex == s->lastChunkIndex) return;
+    s->lastChunkIndex = chunkIndex;
+
+    char label[64];
+    snprintf(label, sizeof(label), "Loading... %.4s (%d/%d)",
+             chunkName, chunkIndex + 1, totalChunks > 0 ? totalChunks : 1);
+
+    C2D_TextBufClear(s->textBuf);
+    C2D_TextParse(s->text, s->textBuf, label);
+    C2D_TextOptimize(s->text);
+
+    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    C2D_TargetClear(s->top, C2D_Color32(20, 20, 40, 255));
+    C2D_SceneBegin(s->top);
+
+    float barX = 20.0f, barY = 110.0f;
+    float barW = 360.0f, barH = 20.0f;
+    // Background track
+    C2D_DrawRectSolid(barX, barY, 0.5f, barW, barH, C2D_Color32(60, 60, 80, 255));
+    // Fill
+    float progress = (totalChunks > 0)
+        ? (float)(chunkIndex + 1) / (float)totalChunks : 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
+    C2D_DrawRectSolid(barX, barY, 0.6f, barW * progress, barH, C2D_Color32(80, 160, 255, 255));
+    // Label above bar
+    C2D_DrawText(s->text, C2D_WithColor, barX, barY - 18.0f, 0.7f,
+                 0.5f, 0.5f, C2D_Color32(255, 255, 255, 255));
+
+    C3D_FrameEnd(0);
+}
+
 // ===[ MAIN ]===
 int main(int argc, char* argv[]) {
     fsInit();
@@ -295,21 +351,35 @@ int main(int argc, char* argv[]) {
 
     FILE* f = fopen("sdmc:/cinnamon/data.win", "rb");
     if (f) {
-        // exists
-
         printf("File %s found.\n", "sdmc:/cinnamon/data.win");
-
         fclose(f);
     } else {
-        // doesn't exist
-
         fprintf(stderr, "Error: data.win not found at sdmc:/cinnamon/data.win\n");
         LogToSD("Error: data.win not found at sdmc:/cinnamon/data.win");
-
         ShowErrorAndExit("An error has occurred.\nPlease make sure data.win is located at: cinnamon/data.win\non your SD card!\nPress START to exit.");
-
         return 0;
     }
+
+    // ===[ Graphics init — done BEFORE DataWin_parse so we can show a loading bar ]===
+    romfsInit();
+    gfxInitDefault();
+    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
+    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
+    C2D_Prepare();
+    consoleInit(GFX_BOTTOM, NULL);
+
+    LogToSD("Initialized 3DS libraries (pre-parse)");
+
+    C3D_RenderTarget* loadingTop  = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    C2D_TextBuf       loadingTextBuf = C2D_TextBufNew(256);
+    C2D_Text          loadingText;
+
+    LoadingBarState lbState = {
+        .top            = loadingTop,
+        .textBuf        = loadingTextBuf,
+        .text           = &loadingText,
+        .lastChunkIndex = -1,
+    };
 
     printf("Loading %s...\n", "sdmc:/cinnamon/data.win");
 
@@ -339,9 +409,14 @@ int main(int argc, char* argv[]) {
             .parseStrg = true,
             .parseTxtr = true,
             .parseAudo = true,
-            .skipLoadingPreciseMasksForNonPreciseSprites = true
+            .skipLoadingPreciseMasksForNonPreciseSprites = true,
+            .progressCallback     = progressCb,
+            .progressCallbackUserData = &lbState,
         }
     );
+
+    // Loading bar resources are no longer needed
+    C2D_TextBufDelete(loadingTextBuf);
 
     Gen8* gen8 = &dataWin->gen8;
 	printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
@@ -485,18 +560,11 @@ int main(int argc, char* argv[]) {
     */
 
     // Initalize romfs access
-    romfsInit();
+    // (romfsInit was already called before DataWin_parse for the loading bar)
 
-    // initalize gfx
-	gfxInitDefault();
-
-    // initalize some Citro2d stuff
-	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
-	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
-	C2D_Prepare();
-
-    // set the console to display on the bottom screen
-	consoleInit(GFX_BOTTOM, NULL);
+    // gfxInitDefault / C3D_Init / C2D_Init / C2D_Prepare / consoleInit were
+    // already called before DataWin_parse so the loading bar could be shown.
+    // They must NOT be called again here.
 
     LogToSD("Initalized 3DS Libaries");
 
@@ -551,6 +619,8 @@ int main(int argc, char* argv[]) {
     runner->renderer = renderer;
 
     LogToSD("Initalizing first room...");
+    // Ensure SD cache directory exists before the renderer begins decoding textures
+    mkdir("sdmc:/cinnamon/cache", 0777);
     // Initialize the first room and fire Game Start / Room Start events
     Runner_initFirstRoom(runner);
     LogToSD("First room loaded!");
@@ -737,7 +807,9 @@ int main(int argc, char* argv[]) {
             runner->renderer->vtable->beginFrame(runner->renderer, gameW, gameH, fbWidth, fbHeight);
         }
 
-        renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
+        // NOTE: do NOT call beginFrame a second time here — CBeginFrame calls C3D_FrameBegin
+        // internally, and calling it twice per loop causes GPU command-buffer corruption on
+        // real hardware (the duplicate C3D_FrameBegin was the source of the hardware crash).
 
         // Clear FBO with room background color
         if (runner->drawBackgroundColor) {

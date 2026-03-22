@@ -1223,12 +1223,19 @@ static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t fileSize) {
 
     if (count == 0) { free(ptrs); t->textures = NULL; return; }
 
-    t->textures = safeMalloc(count * sizeof(Texture));
+    // safeCalloc (not safeMalloc) so every Texture's `loaded` bool and `blobData`
+    // pointer start as zero/NULL.  safeMalloc leaves them as uninitialised garbage,
+    // which means `loaded` can be truthy from leftover stack bytes, causing
+    // DataWin_loadTexture to believe the blob is already in RAM and return NULL —
+    // the renderer then gets a NULL blob, ensurePageDecoded fails, and lodepng
+    // error 83 (OOM) is triggered even when memory is actually available.
+    t->textures = safeCalloc(count, sizeof(Texture));
     repeat(count, i) {
         BinaryReader_seek(reader, ptrs[i]);
-        t->textures[i].scaled = BinaryReader_readUint32(reader);
+        t->textures[i].scaled     = BinaryReader_readUint32(reader);
         t->textures[i].blobOffset = BinaryReader_readUint32(reader);
-        t->textures[i].blobData = NULL;
+        t->textures[i].blobData   = NULL;
+        t->textures[i].loaded     = false;
     }
     free(ptrs);
 
@@ -1434,6 +1441,20 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
     // we keep file open for streaming.
     dw->file = file;
 
+    // ===[ Streaming cache metadata ]===
+    // MUST be initialised here, after all chunks are parsed, so the counts are known.
+    // txtrLastUsed / audoLastUsed remain NULL from safeCalloc until this point.
+    // Writing through a NULL pointer on real ARM hardware causes an immediate data abort,
+    // which can corrupt the SD card FAT if the file is still open.  Fix: allocate now.
+    dw->txtrCacheSize = 6;   // keep up to 6 PNG blobs in main RAM simultaneously
+    dw->audoCacheSize = 3;
+    if (dw->txtr.count > 0) {
+        dw->txtrLastUsed = safeCalloc(dw->txtr.count, sizeof(uint32_t));
+    }
+    if (dw->audo.count > 0) {
+        dw->audoLastUsed = safeCalloc(dw->audo.count, sizeof(uint32_t));
+    }
+
     return dw;
 }
 
@@ -1619,6 +1640,13 @@ void DataWin_free(DataWin* dw) {
     // Owned buffers
     free(dw->strgBuffer);
     free(dw->bytecodeBuffer);
+
+    // Streaming cache metadata (allocated after parse, must be freed here)
+    free(dw->txtrLastUsed);
+    free(dw->audoLastUsed);
+
+    // stb_ds hashmap (built during TPAG parsing)
+    hmfree(dw->tpagOffsetMap);
 
     if (dw->file) {
         fclose(dw->file);
