@@ -9,53 +9,64 @@
 
 #include "renderer.h"
 
-// ===[ Tiled Texture Cache ]===
+// ===[ Region Texture Cache ]===
 //
-// The PICA200 GPU hard-caps textures at 1024x1024 and requires POT dimensions.
-// Each atlas page is split into a grid of <=1024 tiles.
+// Instead of splitting each page into a fixed grid of <=1024 tiles and
+// uploading entire slabs, we cache only the exact source rectangles that are
+// actually drawn.  A 48x48 sprite from a 1024x2048 page costs 64x64x4 = 16 KB
+// of linear RAM instead of a 4 MB slab, so many more regions coexist at once.
 //
-// Memory strategy — three levels, fully lazy:
-//   1. registerPage()  : reads PNG IHDR only (cheap), stores blob pointer.
-//                        No heap alloc beyond the tile metadata array.
-//   2. uploadTileNow() : called on first draw of a tile.
-//                        Decodes PNG → RGBA8 (if not already in ram),
-//                        swizzles + uploads one tile to GPU,
-//                        frees pixels once all tiles of the page are loaded.
-//   3. CDestroy()      : frees any remaining pixels + all GPU tex handles.
-//
-// This means at peak only ONE page's decoded pixels + ONE tile's linearAlloc
-// buffer are in RAM simultaneously during upload.
+// Memory strategy — fully lazy, three levels:
+//   1. registerPage()      : reads PNG IHDR only (~33 bytes).  No decode, no GPU work.
+//   2. drawRegion()        : on a cache miss, decodes the page PNG once (stored in
+//                            page->pixels for the rest of the frame), swizzles + uploads
+//                            only the needed rectangle, caches it in a RegionCacheEntry.
+//                            Subsequent hits on the same region skip the decode entirely.
+//   3. CEndFrame()         : frees all page->pixels.  Per-region GPU textures persist
+//                            across frames and are evicted lazily (LRU) when the slot
+//                            array is full.
+//   4. CDestroy()          : deletes all resident GPU textures and frees page memory.
 
 #define RENDERER_MAX_TEX_DIM 1024u
 
+// Maximum number of cached source rectangles per page.
+// Each loaded slot holds one C3D_Tex (GPU linear RAM = texW * texH * 4 bytes).
+// 256 slots * worst-case 1024x1024x4 = 1 GB theoretical max, but in practice
+// slots are small sprite frames so the total stays well within linear RAM.
+#define REGION_CACHE_MAX 256u
+
 typedef struct {
+    uint16_t srcX, srcY;   // top-left of the source rect in atlas pixel space (cache key)
+    uint16_t srcW, srcH;   // dimensions of the source rect (cache key)
+    uint32_t texW, texH;   // actual POT GPU texture dimensions (>= srcW/srcH)
     C3D_Tex  tex;
-    uint32_t regionX, regionY;  // top-left in atlas pixel space
-    uint32_t regionW, regionH;  // atlas pixels this tile covers
-    uint32_t texW,    texH;     // POT GPU dimensions (set at upload time)
     bool     loaded;
-} TexCacheTile;
+    uint32_t lastUsed;     // frameCounter when this entry was last drawn (LRU)
+} RegionCacheEntry;
 
 typedef struct {
-    TexCacheTile* tiles;        // [tilesX * tilesY], row-major
-    uint32_t      tilesX;
-    uint32_t      tilesY;
-    uint32_t      atlasW;       // from PNG IHDR
-    uint32_t      atlasH;
-
     // Raw PNG blob — pointer into DataWin-owned memory, never freed here.
     const uint8_t* blobData;
     size_t         blobSize;
 
-    // Decoded RGBA8 pixels — allocated by lodepng, freed after all tiles
-    // of this page are uploaded (or in CDestroy if upload never completed).
+    uint32_t atlasW;        // from PNG IHDR
+    uint32_t atlasH;
+
+    // Decoded RGBA8 pixels — allocated by lodepng on first cache miss each frame,
+    // freed in CEndFrame.  NULL between frames.
     uint8_t* pixels;
+
+    bool     loadFailed;    // permanent decode failure (OOM etc.); never retry
+    uint32_t lastUsedFrame; // frameCounter of the last frame that drew from this page
+
+    RegionCacheEntry regions[REGION_CACHE_MAX];
+    uint32_t         regionCount; // number of slots currently in use (<= REGION_CACHE_MAX)
 } TexCachePage;
 
 // ===[ CRenderer3DS ]===
 
 typedef struct {
-    Renderer base;              // must remain first member
+    Renderer base;          // must remain first member
 
     C3D_RenderTarget* top;
 
@@ -63,6 +74,7 @@ typedef struct {
     float   scaleX, scaleY;
     float   offsetX, offsetY;
     float   zCounter;
+    uint32_t frameCounter;  // incremented at end of each frame; used for LRU timestamps
 
     TexCachePage* pageCache;
     uint32_t      pageCacheCount;

@@ -36,14 +36,14 @@ void* lodepng_malloc(size_t size) {
     LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
     if (!hdr) return NULL;
     hdr->size = size;
-    return hdr + 1;  // pointer lodepng sees
+    return hdr + 1;
 }
 
 void lodepng_free(void* ptr);
 
 void* lodepng_realloc(void* ptr, size_t new_size) {
-    if (!ptr)       return lodepng_malloc(new_size);
-    if (!new_size)  { lodepng_free(ptr); return NULL; }
+    if (!ptr)      return lodepng_malloc(new_size);
+    if (!new_size) { lodepng_free(ptr); return NULL; }
     LodePNGAllocHeader* old_hdr = (LodePNGAllocHeader*)ptr - 1;
     size_t old_size = old_hdr->size;
     void* new_ptr = lodepng_malloc(new_size);
@@ -58,34 +58,25 @@ void lodepng_free(void* ptr) {
     linearFree((LodePNGAllocHeader*)ptr - 1);
 }
 
-// Include lodepng AFTER defining the allocator functions above.
-// IMPORTANT: -DLODEPNG_NO_COMPILE_ALLOCATORS must be in CFLAGS for all TUs,
-// including lodepng.c itself. If lodepng.c has its own build rule, add it there too.
-// regardless of per-TU compiler flags.
 #include "lodepng.h"
 
 static void verifyLodepngAllocator(void) {
     u32 before = linearSpaceFree();
-    void* p = lodepng_malloc(1024 * 1024); // 1MB probe
-    u32 after  = linearSpaceFree();
-    if (p && before != after) {
-        printf("[lodepng] custom allocator OK (linear -%ld KB)\n",
-               (long)(before - after) / 1024);
-    } else {
+    void* p = lodepng_malloc(1024 * 1024);
+    u32 after = linearSpaceFree();
+    if (p && before != after)
+        printf("[lodepng] custom allocator OK (linear -%ld KB)\n", (long)(before - after) / 1024);
+    else {
         LOG_ERR("[lodepng] WARNING: custom allocator NOT using linear heap!\n");
         LOG_ERR("[lodepng] Add -DLODEPNG_NO_COMPILE_ALLOCATORS to the build rule for lodepng.c\n");
     }
     if (p) lodepng_free(p);
 }
+
 // ===[ Memory logging ]===
 
 static void logMemory(const char* tag) {
-    u32 appBytes    = osGetMemRegionFree(MEMREGION_APPLICATION);
-    u32 linearBytes = linearSpaceFree();
-    printf("[MEM] %-40s app heap: %lu KB   linear: %lu KB\n",
-           tag,
-           (unsigned long)(appBytes    / 1024),
-           (unsigned long)(linearBytes / 1024));
+    printf("[MEM] %-40s linear: %lu KB\n", tag, (unsigned long)(linearSpaceFree() / 1024));
 }
 
 // ===[ POT helpers ]===
@@ -103,6 +94,11 @@ static uint32_t gpuTexDim(uint32_t pixels) {
 }
 
 // ===[ Morton (Z-order) swizzle ]===
+//
+// Converts a rectangle from a linear RGBA8 source image into the Morton-order
+// tiled layout the 3DS GPU expects.  The source image is stored top-row-first
+// (standard PNG order); the GPU tile format is Y-flipped, so we read
+// flippedLy = (texH-1)-ly from the source when filling each Morton slot.
 
 static void linearToTile(uint8_t*       dst,
                           const uint8_t* src,
@@ -134,121 +130,213 @@ static void linearToTile(uint8_t*       dst,
                         dst[dstOff + 2] = src[srcOff + 0]; // R
                         dst[dstOff + 3] = src[srcOff + 3]; // A
                     }
+                    // else: out-of-bounds texels stay zero (transparent)
                 }
             }
         }
     }
 }
 
-// ===[ Lazy tile upload ]===
+// ===[ Region cache ]===
 //
-// Decodes the page's PNG into linear RAM on first tile draw, uploads that
-// tile to the GPU, then frees the decoded pixels once every tile is loaded.
-// At peak only one page's pixels + one linearAlloc swizzle buffer coexist.
+// Instead of uploading entire page slabs (up to 2048x2048 = 16 MB of linear
+// RAM), we upload only the exact (srcX, srcY, srcW, srcH) rectangle needed by
+// each draw call.  A 64x64 sprite uses 16 KB instead of a 4-16 MB slab, so
+// many more regions coexist in linear RAM at once.
+//
+// Each TexCachePage holds a flat array of REGION_CACHE_MAX RegionCacheEntry
+// slots; the LRU entry is evicted (C3D_TexDelete) when the array is full.
+//
+// page->pixels holds the decoded PNG pixels for the duration of one frame.
+// Multiple region misses on the same page share one decode.  CEndFrame frees
+// all page->pixels so only the small per-region GPU textures persist.
+//
+// ===[ Required header changes (n3ds_renderer.h) ]===
+//
+// Replace the TexCacheTile / tile-grid fields with:
+//
+//   #define REGION_CACHE_MAX 256
+//
+//   typedef struct {
+//       uint16_t srcX, srcY, srcW, srcH; // cache key (source atlas texels)
+//       uint32_t texW, texH;             // actual POT GPU texture dimensions
+//       C3D_Tex  tex;
+//       bool     loaded;
+//       uint32_t lastUsed;               // frameCounter when last drawn (LRU)
+//   } RegionCacheEntry;
+//
+//   typedef struct {
+//       const uint8_t*   blobData;       // points into DataWin; never owned
+//       size_t           blobSize;
+//       uint32_t         atlasW, atlasH;
+//       bool             loadFailed;     // permanent decode failure; never retry
+//       uint8_t*         pixels;         // non-null during frames with cache misses
+//       uint32_t         lastUsedFrame;
+//       RegionCacheEntry regions[REGION_CACHE_MAX];
+//       uint32_t         regionCount;
+//   } TexCachePage;
+//
+//   typedef struct {
+//       Renderer          base;
+//       TexCachePage*     pageCache;
+//       uint32_t          pageCacheCount;
+//       C3D_RenderTarget* top;
+//       float  scaleX, scaleY, offsetX, offsetY;
+//       int32_t viewX, viewY;
+//       float    zCounter;
+//       uint32_t frameCounter;
+//   } CRenderer3DS;
 
-// Upload one already-decoded tile to the GPU.  pixels must be valid.
-// Does NOT free pixels or check allLoaded — caller handles that.
-static bool uploadOneTile(TexCachePage* page, TexCacheTile* tile, uint32_t pageIdx) {
-    tile->texW = gpuTexDim(tile->regionW);
-    tile->texH = gpuTexDim(tile->regionH);
+// ===[ Region cache: lookup ]===
 
-    if (!C3D_TexInit(&tile->tex, (uint16_t)tile->texW, (uint16_t)tile->texH,
-                     GPU_RGBA8)) {
-        LOG_ERR("CRenderer3DS: C3D_TexInit failed for page %lu tile (%lux%lu)\n",
-                (unsigned long)pageIdx,
-                (unsigned long)tile->texW, (unsigned long)tile->texH);
-        logMemory("after C3D_TexInit failure");
-        return false;
+static RegionCacheEntry* regionLookup(TexCachePage* page,
+                                       uint16_t srcX, uint16_t srcY,
+                                       uint16_t srcW, uint16_t srcH,
+                                       uint32_t frameCounter)
+{
+    for (uint32_t i = 0; i < page->regionCount; i++) {
+        RegionCacheEntry* e = &page->regions[i];
+        if (e->loaded &&
+            e->srcX == srcX && e->srcY == srcY &&
+            e->srcW == srcW && e->srcH == srcH)
+        {
+            e->lastUsed = frameCounter;
+            return e;
+        }
     }
-
-    size_t bufSize = tile->texW * tile->texH * 4;
-    uint8_t* tileBuf = (uint8_t*) linearAlloc(bufSize);
-    if (!tileBuf) {
-        LOG_ERR("CRenderer3DS: linearAlloc(%lu KB) failed for swizzle buffer\n",
-                (unsigned long)(bufSize / 1024));
-        C3D_TexDelete(&tile->tex);
-        logMemory("after swizzle linearAlloc failure");
-        return false;
-    }
-    memset(tileBuf, 0, bufSize);
-
-    linearToTile(tileBuf,
-                 page->pixels,
-                 tile->regionX, tile->regionY,
-                 tile->regionW, tile->regionH,
-                 page->atlasW,
-                 tile->texW, tile->texH);
-
-    memcpy(tile->tex.data, tileBuf, bufSize);
-    GSPGPU_FlushDataCache(tile->tex.data, bufSize);
-    linearFree(tileBuf);
-
-    C3D_TexSetFilter(&tile->tex, GPU_LINEAR, GPU_NEAREST);
-    C3D_TexSetWrap(&tile->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
-    tile->loaded = true;
-    return true;
+    return NULL;
 }
 
-// Decode a page's PNG and upload ALL its tiles in one shot, then free pixels.
-// This ensures decoded pixels are never held across draw calls, keeping peak
-// memory usage to: (one page decoded) + (one tile swizzle buffer) at a time.
-static bool uploadPageAllTiles(TexCachePage* page, uint32_t pageIdx) {
-    if (!page->blobData || page->blobSize == 0) {
-        LOG_ERR("CRenderer3DS: page %lu has no blob\n", (unsigned long)pageIdx);
-        return false;
+// ===[ Region cache: alloc / LRU eviction ]===
+
+static RegionCacheEntry* regionAlloc(TexCachePage* page,
+                                      uint16_t srcX, uint16_t srcY,
+                                      uint16_t srcW, uint16_t srcH,
+                                      uint32_t frameCounter)
+{
+    // Prefer an empty slot
+    if (page->regionCount < REGION_CACHE_MAX) {
+        RegionCacheEntry* e = &page->regions[page->regionCount++];
+        memset(e, 0, sizeof(*e));
+        e->srcX = srcX; e->srcY = srcY;
+        e->srcW = srcW; e->srcH = srcH;
+        e->lastUsed = frameCounter;
+        return e;
     }
+
+    // All slots occupied: evict the least-recently-used entry
+    uint32_t oldestIdx = 0;
+    uint32_t oldest    = page->regions[0].lastUsed;
+    for (uint32_t i = 1; i < REGION_CACHE_MAX; i++) {
+        if (page->regions[i].lastUsed < oldest) {
+            oldest    = page->regions[i].lastUsed;
+            oldestIdx = i;
+        }
+    }
+
+    RegionCacheEntry* e = &page->regions[oldestIdx];
+    if (e->loaded) {
+        C3D_TexDelete(&e->tex);
+    }
+    memset(e, 0, sizeof(*e));
+    e->srcX = srcX; e->srcY = srcY;
+    e->srcW = srcW; e->srcH = srcH;
+    e->lastUsed = frameCounter;
+    return e;
+}
+
+// ===[ Page decode ]===
+//
+// Decode the page PNG into linear RAM exactly once per frame, storing the
+// result in page->pixels.  Subsequent region misses on the same page reuse
+// the already-decoded pixels without re-decoding.  CEndFrame frees them.
+
+static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
+    if (page->pixels)     return true;  // already decoded this frame
+    if (page->loadFailed) return false; // permanent failure; never retry
 
     logMemory("before PNG decode");
     unsigned w = 0, h = 0;
     unsigned err = lodepng_decode32(&page->pixels, &w, &h,
                                     page->blobData, page->blobSize);
     if (err) {
-        LOG_ERR("CRenderer3DS: lodepng error %u on page %lu: %s\n",
+        LOG_ERR("CRenderer3DS: lodepng error %u on page %lu: %s (marked failed)\n",
                 err, (unsigned long)pageIdx, lodepng_error_text(err));
-        page->pixels = NULL;
+        page->pixels     = NULL;
+        page->loadFailed = true;
         logMemory("after failed PNG decode");
         return false;
     }
+
     logMemory("after PNG decode");
-
-    // Upload every tile while pixels are in RAM, then free immediately.
-    uint32_t total = page->tilesX * page->tilesY;
-    bool anyFailed = false;
-    for (uint32_t t = 0; t < total; t++) {
-        TexCacheTile* tile = &page->tiles[t];
-        if (tile->loaded) continue;
-        logMemory("before tile upload");
-        if (!uploadOneTile(page, tile, pageIdx)) {
-            LOG_ERR("CRenderer3DS: tile %lu of page %lu failed\n",
-                    (unsigned long)t, (unsigned long)pageIdx);
-            anyFailed = true;
-            // Continue uploading other tiles even if one fails.
-        }
-        logMemory("after tile upload");
-    }
-
-    lodepng_free(page->pixels);
-    page->pixels = NULL;
-    logMemory("freed pixels after all tiles attempted");
-    return !anyFailed;
+    return true;
 }
 
+// ===[ Region upload ]===
+//
+// Extract entry's source rectangle from page->pixels, Morton-swizzle it into
+// a temporary linear buffer, DMA-copy to the GPU texture, then free the
+// swizzle buffer.  page->pixels stays alive until CEndFrame.
+
+static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t pageIdx) {
+    entry->texW = gpuTexDim(entry->srcW);
+    entry->texH = gpuTexDim(entry->srcH);
+
+    if (!C3D_TexInit(&entry->tex,
+                     (uint16_t)entry->texW, (uint16_t)entry->texH,
+                     GPU_RGBA8))
+    {
+        LOG_ERR("CRenderer3DS: C3D_TexInit failed page %lu region %ux%u @ (%u,%u)\n",
+                (unsigned long)pageIdx,
+                (unsigned)entry->srcW, (unsigned)entry->srcH,
+                (unsigned)entry->srcX, (unsigned)entry->srcY);
+        return false;
+    }
+
+    size_t bufSize = (size_t)entry->texW * entry->texH * 4;
+    uint8_t* swizzle = (uint8_t*) linearAlloc(bufSize);
+    if (!swizzle) {
+        LOG_ERR("CRenderer3DS: linearAlloc(%lu KB) failed for swizzle buffer\n",
+                (unsigned long)(bufSize / 1024));
+        C3D_TexDelete(&entry->tex);
+        return false;
+    }
+    memset(swizzle, 0, bufSize);
+
+    linearToTile(swizzle,
+                 page->pixels,
+                 entry->srcX, entry->srcY,
+                 entry->srcW, entry->srcH,
+                 page->atlasW,
+                 entry->texW, entry->texH);
+
+    memcpy(entry->tex.data, swizzle, bufSize);
+    GSPGPU_FlushDataCache(entry->tex.data, bufSize);
+    linearFree(swizzle);
+
+    C3D_TexSetFilter(&entry->tex, GPU_LINEAR, GPU_NEAREST);
+    C3D_TexSetWrap(&entry->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    entry->loaded = true;
+    return true;
+}
 
 // ===[ Page registration ]===
 //
-// Reads only the PNG IHDR (cheap: ~33 bytes) to get dimensions for the tile
-// grid.  No decoding, no GPU work.
+// Read only the PNG IHDR (~33 bytes) to record dimensions.  No decode, no GPU
+// work — everything is demand-driven from drawRegion on first use.
 
-static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx)
-{
+static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
     if (!tx->blobData || tx->blobSize == 0) {
         LOG_ERR("CRenderer3DS: txtr[%lu] has no blob\n", (unsigned long)pageIdx);
         return false;
     }
 
-    page->blobData = tx->blobData;
-    page->blobSize = tx->blobSize;
-    page->pixels   = NULL;
+    page->blobData      = tx->blobData;
+    page->blobSize      = tx->blobSize;
+    page->pixels        = NULL;
+    page->loadFailed    = false;
+    page->lastUsedFrame = 0;
+    page->regionCount   = 0;
 
     unsigned w = 0, h = 0;
     if (lodepng_inspect(&w, &h, NULL, tx->blobData, tx->blobSize) != 0) {
@@ -259,115 +347,116 @@ static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx)
 
     page->atlasW = (uint32_t)w;
     page->atlasH = (uint32_t)h;
-    page->tilesX = (w + RENDERER_MAX_TEX_DIM - 1) / RENDERER_MAX_TEX_DIM;
-    page->tilesY = (h + RENDERER_MAX_TEX_DIM - 1) / RENDERER_MAX_TEX_DIM;
 
-    uint32_t totalTiles = page->tilesX * page->tilesY;
-    page->tiles = (TexCacheTile*) safeCalloc(totalTiles, sizeof(TexCacheTile));
-
-    for (uint32_t row = 0; row < page->tilesY; row++) {
-        for (uint32_t col = 0; col < page->tilesX; col++) {
-            TexCacheTile* tile = &page->tiles[row * page->tilesX + col];
-            tile->regionX = col * RENDERER_MAX_TEX_DIM;
-            tile->regionY = row * RENDERER_MAX_TEX_DIM;
-            uint32_t re   = tile->regionX + RENDERER_MAX_TEX_DIM;
-            uint32_t be   = tile->regionY + RENDERER_MAX_TEX_DIM;
-            tile->regionW = (re <= w) ? RENDERER_MAX_TEX_DIM : (w - tile->regionX);
-            tile->regionH = (be <= h) ? RENDERER_MAX_TEX_DIM : (h - tile->regionY);
-        }
-    }
-
-    printf("CRenderer3DS: page %lu registered %ux%u -> %lux%lu tiles\n",
+    printf("CRenderer3DS: page %lu registered %ux%u (decode peak ~%lu KB)\n",
            (unsigned long)pageIdx, w, h,
-           (unsigned long)page->tilesX, (unsigned long)page->tilesY);
+           (unsigned long)((size_t)w * h * 4 / 1024));
     return true;
 }
 
-// ===[ Tiled draw ]===
+// ===[ drawRegion ]===
+//
+// Core draw primitive.  Looks up the exact source rectangle as a cached GPU
+// texture, uploading it on first use.  Draws a single C2D_DrawImage call.
+//
+// If the requested region is larger than RENDERER_MAX_TEX_DIM in either
+// dimension it is split along RENDERER_MAX_TEX_DIM boundaries and each chunk
+// is cached and drawn independently.  In practice rotated draws come from
+// sprite frames that are well under RENDERER_MAX_TEX_DIM, so the chunk loop
+// executes exactly once for them.
 
-static void drawTiledRegion(CRenderer3DS* C,
-                             uint32_t pageIdx,
-                             float srcX, float srcY,
-                             float srcW, float srcH,
-                             float dstX, float dstY,
-                             float dstW, float dstH,
-                             float angle, float alpha)
+static void drawRegion(CRenderer3DS* C,
+                        uint32_t pageIdx,
+                        float srcX,  float srcY,
+                        float srcW,  float srcH,
+                        float dstX,  float dstY,
+                        float dstW,  float dstH,
+                        float angle, float alpha)
 {
     if (pageIdx >= C->pageCacheCount) return;
     TexCachePage* page = &C->pageCache[pageIdx];
-    if (!page->tiles) return;
+    if (page->loadFailed) return;
 
-    float pixScaleX = (srcW > 0.0f) ? (dstW / srcW) : 1.0f;
-    float pixScaleY = (srcH > 0.0f) ? (dstH / srcH) : 1.0f;
+    page->lastUsedFrame = C->frameCounter;
 
-    uint32_t colMin = (uint32_t)srcX / RENDERER_MAX_TEX_DIM;
-    uint32_t rowMin = (uint32_t)srcY / RENDERER_MAX_TEX_DIM;
-    uint32_t colMax = (srcW > 0.0f) ? ((uint32_t)(srcX + srcW - 1.0f) / RENDERER_MAX_TEX_DIM) : colMin;
-    uint32_t rowMax = (srcH > 0.0f) ? ((uint32_t)(srcY + srcH - 1.0f) / RENDERER_MAX_TEX_DIM) : rowMin;
-
-    if (colMax >= page->tilesX) colMax = page->tilesX - 1;
-    if (rowMax >= page->tilesY) rowMax = page->tilesY - 1;
-
-    // FIX: check if any tile in the needed region is unloaded, and if so,
-    // decode the PNG once and upload ALL tiles for this page in one shot.
-    // The old code decoded the full PNG individually for each unloaded tile,
-    // causing O(n) redundant decodes for a page with n unloaded tiles.
-    bool needsUpload = false;
-    for (uint32_t row = rowMin; row <= rowMax && !needsUpload; row++) {
-        for (uint32_t col = colMin; col <= colMax && !needsUpload; col++) {
-            if (!page->tiles[row * page->tilesX + col].loaded)
-                needsUpload = true;
-        }
+    // Clamp source rect to atlas bounds
+    if (srcX < 0.0f) { float d = -srcX * dstW / srcW; dstX += d; dstW -= d; srcW += srcX; srcX = 0.0f; }
+    if (srcY < 0.0f) { float d = -srcY * dstH / srcH; dstY += d; dstH -= d; srcH += srcY; srcY = 0.0f; }
+    {
+        float overX = (srcX + srcW) - (float)page->atlasW;
+        float overY = (srcY + srcH) - (float)page->atlasH;
+        if (overX > 0.0f) { dstW -= overX * dstW / srcW; srcW -= overX; }
+        if (overY > 0.0f) { dstH -= overY * dstH / srcH; srcH -= overY; }
     }
-    if (needsUpload) {
-        uploadPageAllTiles(page, pageIdx);
-    }
+    if (srcW <= 0.0f || srcH <= 0.0f) return;
 
-    C2D_ImageTint tint;
-    C2D_AlphaImageTint(&tint, alpha);
+    float pixScaleX = dstW / srcW;
+    float pixScaleY = dstH / srcH;
 
-    for (uint32_t row = rowMin; row <= rowMax; row++) {
-        for (uint32_t col = colMin; col <= colMax; col++) {
-            TexCacheTile* tile = &page->tiles[row * page->tilesX + col];
-            if (!tile->loaded) continue; // upload failed for this tile; skip
+    // Split along RENDERER_MAX_TEX_DIM chunk boundaries so each chunk fits in
+    // a single GPU texture.
+    float chunkY = srcY;
+    while (chunkY < srcY + srcH) {
+        float nextBY = (float)(((uint32_t)chunkY / RENDERER_MAX_TEX_DIM) + 1) * RENDERER_MAX_TEX_DIM;
+        float chunkH = nextBY - chunkY;
+        if (chunkY + chunkH > srcY + srcH) chunkH = (srcY + srcH) - chunkY;
 
-            float tileL = (float)tile->regionX;
-            float tileT = (float)tile->regionY;
-            float tileR = tileL + (float)tile->regionW;
-            float tileB = tileT + (float)tile->regionH;
+        float chunkX = srcX;
+        while (chunkX < srcX + srcW) {
+            float nextBX = (float)(((uint32_t)chunkX / RENDERER_MAX_TEX_DIM) + 1) * RENDERER_MAX_TEX_DIM;
+            float chunkW = nextBX - chunkX;
+            if (chunkX + chunkW > srcX + srcW) chunkW = (srcX + srcW) - chunkX;
 
-            float clipL = (srcX       > tileL) ? srcX       : tileL;
-            float clipT = (srcY       > tileT) ? srcY       : tileT;
-            float clipR = (srcX + srcW < tileR) ? srcX + srcW : tileR;
-            float clipB = (srcY + srcH < tileB) ? srcY + srcH : tileB;
+            uint16_t iSrcX = (uint16_t)chunkX;
+            uint16_t iSrcY = (uint16_t)chunkY;
+            uint16_t iSrcW = (uint16_t)chunkW;
+            uint16_t iSrcH = (uint16_t)chunkH;
 
-            if (clipR <= clipL || clipB <= clipT) continue;
+            // Cache lookup
+            RegionCacheEntry* entry = regionLookup(page, iSrcX, iSrcY, iSrcW, iSrcH,
+                                                   C->frameCounter);
+            if (!entry) {
+                // Cache miss: decode the page once this frame, then upload region
+                if (!ensurePageDecoded(page, pageIdx)) goto next_chunk;
 
-            float u0 = (clipL - tileL) / (float)tile->texW;
-            float u1 = (clipR - tileL) / (float)tile->texW;
-            float v0 = (clipT - tileT) / (float)tile->texH;
-            float v1 = (clipB - tileT) / (float)tile->texH;
+                entry = regionAlloc(page, iSrcX, iSrcY, iSrcW, iSrcH, C->frameCounter);
+                if (!uploadRegion(page, entry, pageIdx)) goto next_chunk;
+            }
 
-            Tex3DS_SubTexture subtex = {
-                .width  = (uint16_t)(clipR - clipL),
-                .height = (uint16_t)(clipB - clipT),
-                .left   = u0,  .right  = u1,
-                .top    = 1.0f - v0, .bottom = 1.0f - v1,
-            };
-            C2D_Image image = { .tex = &tile->tex, .subtex = &subtex };
+            {
+                // The region fills [0..iSrcW/texW] x [0..iSrcH/texH] of the GPU texture.
+                // linearToTile Y-flips, so citro2d top > bottom (top = 1.0, bottom < 1.0).
+                float u1 = (float)iSrcW / (float)entry->texW;
+                float v1 = (float)iSrcH / (float)entry->texH;
 
-            C2D_DrawParams params = {
-                .pos    = { dstX + (clipL - srcX) * pixScaleX,
-                            dstY + (clipT - srcY) * pixScaleY,
-                            (clipR - clipL) * pixScaleX,
-                            (clipB - clipT) * pixScaleY },
-                .center = { 0.0f, 0.0f },
-                .depth  = C->zCounter,
-                .angle  = angle,
-            };
-            C2D_DrawImage(image, &params, &tint);
-            C->zCounter += 0.0001f;
+                Tex3DS_SubTexture subtex = {
+                    .width  = iSrcW,
+                    .height = iSrcH,
+                    .left   = 0.0f, .right  = u1,
+                    .top    = 1.0f, .bottom = 1.0f - v1,
+                };
+                C2D_Image image = { .tex = &entry->tex, .subtex = &subtex };
+
+                C2D_ImageTint tint;
+                C2D_AlphaImageTint(&tint, alpha);
+
+                C2D_DrawParams params = {
+                    .pos    = { dstX + (chunkX - srcX) * pixScaleX,
+                                dstY + (chunkY - srcY) * pixScaleY,
+                                chunkW * pixScaleX,
+                                chunkH * pixScaleY },
+                    .center = { 0.0f, 0.0f },
+                    .depth  = C->zCounter,
+                    .angle  = angle,
+                };
+                C2D_DrawImage(image, &params, &tint);
+                C->zCounter += 0.0001f;
+            }
+
+next_chunk:
+            chunkX = nextBX;
         }
+        chunkY = nextBY;
     }
 }
 
@@ -384,8 +473,9 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     renderer->drawValign = 0;
 
     uint32_t pageCount = dataWin->txtr.count;
-    C->pageCache      = (TexCachePage*) safeCalloc(pageCount, sizeof(TexCachePage));
-    C->pageCacheCount = pageCount;
+    C->pageCache       = (TexCachePage*) safeCalloc(pageCount, sizeof(TexCachePage));
+    C->pageCacheCount  = pageCount;
+    C->frameCounter    = 1;
 
     verifyLodepngAllocator();
     logMemory("before page registration");
@@ -394,7 +484,7 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     logMemory("after page registration");
 
     C->top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-    printf("CRenderer3DS: initialized (%lu pages, fully lazy)\n",
+    printf("CRenderer3DS: initialized (%lu pages, region-cache mode)\n",
            (unsigned long)pageCount);
     logMemory("renderer ready");
 }
@@ -403,12 +493,14 @@ static void CDestroy(Renderer* renderer) {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     for (uint32_t i = 0; i < C->pageCacheCount; i++) {
         TexCachePage* page = &C->pageCache[i];
-        if (page->pixels) { lodepng_free(page->pixels); page->pixels = NULL; }
-        if (!page->tiles) continue;
-        uint32_t total = page->tilesX * page->tilesY;
-        for (uint32_t t = 0; t < total; t++)
-            if (page->tiles[t].loaded) C3D_TexDelete(&page->tiles[t].tex);
-        free(page->tiles);
+        if (page->pixels) {
+            lodepng_free(page->pixels);
+            page->pixels = NULL;
+        }
+        for (uint32_t r = 0; r < page->regionCount; r++) {
+            if (page->regions[r].loaded)
+                C3D_TexDelete(&page->regions[r].tex);
+        }
     }
     free(C->pageCache);
     free(C);
@@ -447,8 +539,25 @@ static void CBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH,
     C2D_SceneBegin(C->top);
 }
 
-static void CEndFrame(Renderer* renderer) { C3D_FrameEnd(0); }
-static void CEndView(Renderer* renderer)  { /* no-op */ }
+static void CEndFrame(Renderer* renderer) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+
+    // Free decoded page pixels.  The per-region GPU textures (C3D_Tex) stay
+    // resident in linear RAM across frames; they are evicted lazily by LRU
+    // when regionAlloc needs to reclaim a slot.
+    for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+        TexCachePage* page = &C->pageCache[i];
+        if (page->pixels) {
+            lodepng_free(page->pixels);
+            page->pixels = NULL;
+        }
+    }
+
+    C->frameCounter++;
+    C3D_FrameEnd(0);
+}
+
+static void CEndView(Renderer* renderer) { /* no-op */ }
 
 static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     float x, float y, float originX, float originY,
@@ -461,29 +570,24 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
     uint32_t pageIdx = (uint32_t)tpag->texturePageId;
 
-    // FIX: removed unused gameX/gameY variables that were computed but never read.
     float dstX = (x + ((float)tpag->targetX - originX) * xscale - (float)C->viewX) * C->scaleX + C->offsetX;
     float dstY = (y + ((float)tpag->targetY - originY) * yscale - (float)C->viewY) * C->scaleY + C->offsetY;
     float dstW = (float)tpag->sourceWidth  * xscale * C->scaleX;
     float dstH = (float)tpag->sourceHeight * yscale * C->scaleY;
 
-    if (pageIdx < C->pageCacheCount && C->pageCache[pageIdx].tiles) {
-        drawTiledRegion(C, pageIdx,
-                        (float)tpag->sourceX, (float)tpag->sourceY,
-                        (float)tpag->sourceWidth, (float)tpag->sourceHeight,
-                        dstX, dstY, dstW, dstH,
-                        angleDeg * (float)(M_PI / 180.0), alpha);
-        return;
-    }
-    else
-    {
-        LOG_ERR("CRenderer3DS: texture page %lu not loaded, drawing placeholder\n",
-                 (unsigned long)pageIdx);
+    if (pageIdx < C->pageCacheCount) {
+        drawRegion(C, pageIdx,
+                   (float)tpag->sourceX,     (float)tpag->sourceY,
+                   (float)tpag->sourceWidth,  (float)tpag->sourceHeight,
+                   dstX, dstY, dstW, dstH,
+                   angleDeg * (float)(M_PI / 180.0), alpha);
+    } else {
+        LOG_ERR("CRenderer3DS: page %lu out of range\n", (unsigned long)pageIdx);
         uint8_t a = (uint8_t)(alpha * 255.0f);
         C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH,
-                C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color), a));
+                          C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color), a));
+        C->zCounter += 0.001f;
     }
-    C->zCounter += 0.001f;
 }
 
 static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
@@ -502,23 +606,19 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
     float dstW = (float)srcW * xscale * C->scaleX;
     float dstH = (float)srcH * yscale * C->scaleY;
 
-    if (pageIdx < C->pageCacheCount && C->pageCache[pageIdx].tiles) {
-        drawTiledRegion(C, pageIdx,
-                        (float)(tpag->sourceX + srcOffX),
-                        (float)(tpag->sourceY + srcOffY),
-                        (float)srcW, (float)srcH,
-                        dstX, dstY, dstW, dstH, 0.0f, alpha);
-        return;
-    }
-    else
-    {
-        LOG_ERR("CRenderer3DS: texture page %lu not loaded, drawing placeholder\n",
-                 (unsigned long)pageIdx);
+    if (pageIdx < C->pageCacheCount) {
+        drawRegion(C, pageIdx,
+                   (float)(tpag->sourceX + srcOffX),
+                   (float)(tpag->sourceY + srcOffY),
+                   (float)srcW, (float)srcH,
+                   dstX, dstY, dstW, dstH, 0.0f, alpha);
+    } else {
+        LOG_ERR("CRenderer3DS: page %lu out of range\n", (unsigned long)pageIdx);
         uint8_t a = (uint8_t)(alpha * 255.0f);
         C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH,
-                C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color), a));
+                          C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color), a));
+        C->zCounter += 0.0001f;
     }
-    C->zCounter += 0.0001f;
 }
 
 static void CDrawRectangle(Renderer* renderer,
@@ -537,9 +637,8 @@ static void CDrawRectangle(Renderer* renderer,
     float w   = sx2 - sx1;
     float h   = sy2 - sy1;
 
-    // FIX: outline was previously ignored; always filled regardless of the flag.
     if (outline) {
-        float pw = C->scaleX; // one game-pixel wide in screen space
+        float pw = C->scaleX;
         float ph = C->scaleY;
         C2D_DrawRectSolid(sx1,      sy1,      C->zCounter, w + pw, ph,     col); // top
         C->zCounter += 0.0001f;
@@ -563,16 +662,13 @@ static void CDrawLine(Renderer* renderer,
     uint8_t r = BGR_R(color), g = BGR_G(color), b = BGR_B(color);
     uint8_t a = (uint8_t)(alpha * 255.0f);
     C2D_DrawLine((x1 - C->viewX) * C->scaleX + C->offsetX,
-                 (y1 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r,g,b,a),
+                 (y1 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r, g, b, a),
                  (x2 - C->viewX) * C->scaleX + C->offsetX,
-                 (y2 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r,g,b,a),
+                 (y2 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r, g, b, a),
                  width, C->zCounter);
     C->zCounter += 0.0001f;
 }
 
-// FIX: added missing drawLineColor — PS2 renderer has it in the vtable;
-// omitting it leaves a NULL slot that crashes on any drawLineColor call.
-// citro2d C2D_DrawLine supports per-endpoint colors natively, so wire both up.
 static void CDrawLineColor(Renderer* renderer,
     float x1, float y1, float x2, float y2,
     float width, uint32_t color1, uint32_t color2, float alpha)
@@ -618,7 +714,7 @@ static RendererVtable CVtable = {
     .drawSpritePart          = CDrawSpritePart,
     .drawRectangle           = CDrawRectangle,
     .drawLine                = CDrawLine,
-    .drawLineColor           = CDrawLineColor, // FIX: was missing, leaving a NULL vtable slot
+    .drawLineColor           = CDrawLineColor,
     .drawText                = CDrawText,
     .flush                   = CFlush,
     .createSpriteFromSurface = CCreateSpriteFromSurface,
@@ -627,9 +723,10 @@ static RendererVtable CVtable = {
 
 Renderer* CRenderer3DS_create(void) {
     CRenderer3DS* C = safeCalloc(1, sizeof(CRenderer3DS));
-    C->base.vtable = &CVtable;
-    C->scaleX   = 2.0f;
-    C->scaleY   = 2.0f;
-    C->zCounter = 0.5f;
+    C->base.vtable  = &CVtable;
+    C->scaleX       = 2.0f;
+    C->scaleY       = 2.0f;
+    C->zCounter     = 0.5f;
+    C->frameCounter = 1;
     return (Renderer*) C;
 }
