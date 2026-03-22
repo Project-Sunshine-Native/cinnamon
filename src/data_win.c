@@ -1214,7 +1214,7 @@ static void parseSTRG(BinaryReader* reader, DataWin* dw) {
     free(ptrs);
 }
 
-static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t chunkEnd) {
+static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t fileSize) {
     Txtr* t = &dw->txtr;
 
     uint32_t count;
@@ -1223,7 +1223,6 @@ static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t chunkEnd) {
 
     if (count == 0) { free(ptrs); t->textures = NULL; return; }
 
-    // Read metadata entries
     t->textures = safeMalloc(count * sizeof(Texture));
     repeat(count, i) {
         BinaryReader_seek(reader, ptrs[i]);
@@ -1233,23 +1232,31 @@ static void parseTXTR(BinaryReader* reader, DataWin* dw, size_t chunkEnd) {
     }
     free(ptrs);
 
-    // Compute blob sizes from successive offsets
+    // CORRECTED SIZE CALCULATION WITH PROPER VARIABLE DECLARATION
     repeat(count, i) {
         if (t->textures[i].blobOffset == 0) {
             t->textures[i].blobSize = 0; // external texture
             continue;
         }
-        if (count > i + 1 && t->textures[i + 1].blobOffset != 0) {
-            t->textures[i].blobSize = t->textures[i + 1].blobOffset - t->textures[i].blobOffset;
+        
+        // DECLARE nextOffset HERE (inside the loop)
+        uint32_t nextOffset = (i < count - 1) ? t->textures[i + 1].blobOffset : 0;
+        
+        if (nextOffset != 0 && nextOffset > t->textures[i].blobOffset) {
+            // Standard case: size = next offset - current offset
+            t->textures[i].blobSize = nextOffset - t->textures[i].blobOffset;
         } else {
-            t->textures[i].blobSize = (uint32_t)(chunkEnd - t->textures[i].blobOffset);
+            // FALLBACK: Use remaining file size (clamped to reasonable limit)
+            if (fileSize > t->textures[i].blobOffset) {
+                t->textures[i].blobSize = (uint32_t)(fileSize - t->textures[i].blobOffset);
+                // Prevent absurd allocations (max 16MB for 4096x4096 RGBA8)
+                if (t->textures[i].blobSize > 16*1024*1024) {
+                    t->textures[i].blobSize = 16*1024*1024;
+                }
+            } else {
+                t->textures[i].blobSize = 0;
+            }
         }
-    }
-
-    // Load blob data into owned buffers
-    repeat(count, i) {
-        if (t->textures[i].blobOffset == 0 || t->textures[i].blobSize == 0) continue;
-        t->textures[i].blobData = BinaryReader_readBytesAt(reader, t->textures[i].blobOffset, t->textures[i].blobSize);
     }
 }
 
@@ -1268,12 +1275,14 @@ static void parseAUDO(BinaryReader* reader, DataWin* dw) {
         a->entries[i].dataSize = BinaryReader_readUint32(reader);
         a->entries[i].dataOffset = (uint32_t)BinaryReader_getPosition(reader);
         // Load audio data into owned buffer
+        /*
         if (a->entries[i].dataSize > 0) {
             a->entries[i].data = safeMalloc(a->entries[i].dataSize);
             BinaryReader_readBytes(reader, a->entries[i].data, a->entries[i].dataSize);
         } else {
             a->entries[i].data = NULL;
         }
+        */
     }
     free(ptrs);
 }
@@ -1408,7 +1417,7 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         } else if (options.parseStrg && memcmp(chunkName, "STRG", 4) == 0) {
             parseSTRG(&reader, dw);
         } else if (options.parseTxtr && memcmp(chunkName, "TXTR", 4) == 0) {
-            parseTXTR(&reader, dw, chunkEnd);
+            parseTXTR(&reader, dw, fileSize);
         } else if (options.parseAudo && memcmp(chunkName, "AUDO", 4) == 0) {
             parseAUDO(&reader, dw);
         } else {
@@ -1421,7 +1430,9 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         chunkIndex++;
     }
 
-    fclose(file);
+    //fclose(file);
+    // we keep file open for streaming.
+    dw->file = file;
 
     return dw;
 }
@@ -1608,6 +1619,12 @@ void DataWin_free(DataWin* dw) {
     // Owned buffers
     free(dw->strgBuffer);
     free(dw->bytecodeBuffer);
+
+    if (dw->file) {
+        fclose(dw->file);
+        dw->file = NULL;
+    }
+
     free(dw);
 }
 
@@ -1618,3 +1635,4 @@ int32_t DataWin_resolveTPAG(DataWin* dw, uint32_t offset) {
     if (0 > idx) return -1;
     return dw->tpagOffsetMap[idx].value;
 }
+

@@ -28,6 +28,7 @@ typedef struct {
     void (*deleteSprite)(Renderer* renderer, int32_t spriteIndex);
     // Optional: platform-specific tile rendering (nullptr = use default drawSpritePart path)
     void (*drawTile)(Renderer* renderer, RoomTile* tile, float offsetX, float offsetY);
+    void (*onRoomEnd)(Renderer* renderer);
 } RendererVtable;
 
 // ===[ Renderer Base Struct ]===

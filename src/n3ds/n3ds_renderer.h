@@ -40,8 +40,11 @@ typedef struct {
     uint16_t srcW, srcH;   // dimensions of the source rect (cache key)
     uint32_t texW, texH;   // actual POT GPU texture dimensions (>= srcW/srcH)
     C3D_Tex  tex;
-    bool     loaded;
-    uint32_t lastUsed;     // frameCounter when this entry was last drawn (LRU)
+    bool     loaded;       // true once the GPU texture is ready to draw
+    bool     loadFailed;   // true if C3D_TexInit or swizzle alloc failed; never retry
+    // NOTE: no 'pinned' field — whether an entry is pinned is determined by which
+    // array it lives in: pinnedRegions[] = permanent font glyphs, regions[] = LRU sprites
+    uint32_t lastUsed;     // frameCounter when last drawn (LRU; unused for pinned entries)
 } RegionCacheEntry;
 
 typedef struct {
@@ -57,10 +60,23 @@ typedef struct {
     uint8_t* pixels;
 
     bool     loadFailed;    // permanent decode failure (OOM etc.); never retry
+    uint32_t lastSuccessfullDecodedFrame;
     uint32_t lastUsedFrame; // frameCounter of the last frame that drew from this page
 
+    uint32_t decodeTimeout;
+    uint32_t lastDecodeFrame;
+
+    // Font glyph cache — allocated once at init, never evicted, separate from sprites.
+    // Searched first in regionLookup so font draws never touch the sprite LRU pool.
+    RegionCacheEntry* pinnedRegions;
+    uint32_t          pinnedRegionCount;
+    uint32_t          pinnedRegionCapacity; // current allocation size
+
+    // Sprite region cache — LRU evictable, completely separate from font glyphs.
+    // All 256 slots are always available for sprites regardless of how many fonts
+    // share this page.
     RegionCacheEntry regions[REGION_CACHE_MAX];
-    uint32_t         regionCount; // number of slots currently in use (<= REGION_CACHE_MAX)
+    uint32_t         regionCount;
 } TexCachePage;
 
 // ===[ CRenderer3DS ]===

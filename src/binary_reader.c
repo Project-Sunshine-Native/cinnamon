@@ -10,6 +10,11 @@ BinaryReader BinaryReader_create(FILE* file, size_t fileSize) {
 }
 
 void BinaryReader_setBuffer(BinaryReader* reader, uint8_t* buffer, size_t baseOffset, size_t size) {
+    if (!reader->file) {
+        fprintf(stderr, "BinaryReader: file pointer is invalid or file is gone\n");
+        exit(1);
+    }
+    
     reader->buffer = buffer;
     reader->bufferBase = baseOffset;
     reader->bufferSize = size;
@@ -17,6 +22,11 @@ void BinaryReader_setBuffer(BinaryReader* reader, uint8_t* buffer, size_t baseOf
 }
 
 void BinaryReader_clearBuffer(BinaryReader* reader) {
+    if (!reader->file) {
+        fprintf(stderr, "BinaryReader: file pointer is invalid or file is gone\n");
+        exit(1);
+    }
+
     reader->buffer = NULL;
     reader->bufferBase = 0;
     reader->bufferSize = 0;
@@ -24,6 +34,11 @@ void BinaryReader_clearBuffer(BinaryReader* reader) {
 }
 
 static void readCheck(BinaryReader* reader, void* dest, size_t bytes) {
+    if (!reader->file) {
+        fprintf(stderr, "BinaryReader: file pointer is invalid or file is gone\n");
+        exit(1);
+    }
+    
     if (reader->buffer != NULL) {
         if (reader->bufferPos + bytes > reader->bufferSize) {
             size_t absPos = reader->bufferBase + reader->bufferPos;
@@ -145,3 +160,4 @@ size_t BinaryReader_getPosition(BinaryReader* reader) {
     }
     return (size_t) ftell(reader->file);
 }
+

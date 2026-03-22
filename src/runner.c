@@ -1153,6 +1153,8 @@ void Runner_step(Runner* runner) {
 
         fprintf(stderr, "Room changed: %s (room %d) -> %s (room %d)\n", oldRoomName, oldRoomIndex, newRoomName, newRoomIndex);
 
+        runner->renderer->vtable->onRoomEnd(runner->renderer);
+
         // If the old room is persistent, save its instance and visual state
         if (oldRoom->persistent) {
             SavedRoomState* state = &runner->savedRoomStates[oldRoomIndex];

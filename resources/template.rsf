@@ -77,8 +77,8 @@ AccessControlInfo:
 
   # New3DS Exclusive Process Settings
   SystemModeExt                 : $(APP_SYSTEM_MODE_EXT) # Legacy(Default)/124MB/178MB  Legacy:Use Old3DS SystemMode
-  CpuSpeed                      : 804MHz # 256MHz(Default)/804MHz
-  EnableL2Cache                 : true # false(default)/true
+  CpuSpeed                      : 268MHz # 256MHz(Default)/804MHz
+  EnableL2Cache                 : false # false(default)/true
   CanAccessCore2                : true 
 
   # Virtual Address Mappings

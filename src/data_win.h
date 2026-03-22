@@ -3,6 +3,11 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>   // FILE, fseek, fread, SEEK_SET
+#include <stdlib.h>  // malloc, free
+
+// Write errors to both stderr (on-screen console) and stdout (file log).
+#define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); printf(__VA_ARGS__); } while(0)
 
 // Forward declaration for progress callback
 typedef struct DataWin DataWin;
@@ -605,9 +610,10 @@ typedef struct {
 // ===[ TXTR - Embedded Textures ]===
 typedef struct {
     uint32_t scaled;
-    uint32_t blobOffset; // absolute file offset to PNG data
-    uint32_t blobSize;   // computed size of blob data
-    uint8_t* blobData;   // owned copy of PNG data
+    uint32_t blobOffset; // absolute file offset in the file
+    uint32_t blobSize;   // size of PNG data
+    uint8_t* blobData;   // NULL until loaded
+    bool loaded;         // true if blobData is currently in RAM
 } Texture;
 
 typedef struct {
@@ -617,9 +623,10 @@ typedef struct {
 
 // ===[ AUDO - Embedded Audio ]===
 typedef struct {
-    uint32_t dataOffset; // absolute file offset to audio data
-    uint32_t dataSize;   // length of audio data
-    uint8_t* data;       // owned copy of audio data
+    uint32_t dataOffset; // absolute file offset in the file
+    uint32_t dataSize;   // size of audio data
+    uint8_t* data;       // NULL until loaded
+    bool loaded;         // true if data is currently in RAM
 } AudioEntry;
 
 typedef struct {
@@ -629,6 +636,10 @@ typedef struct {
 
 // ===[ Top-level DataWin container ]===
 typedef struct DataWin {
+    FILE* file;               // handle to the open data.win for streaming
+    const char* filePath;     // path, optional for reopening
+    size_t fileSize;
+
     uint8_t* strgBuffer;        // owned copy of STRG chunk raw data
     // Absolute file offset of strgBuffer[0], we need this because data.win stores absolute offsets (from the beginning of the data.win file) instead of relative offsets
     size_t strgBufferBase;
@@ -662,6 +673,17 @@ typedef struct DataWin {
     Txtr txtr;
     Audo audo;
 
+
+    // Streaming state for TXTR/AUDO
+    uint32_t txtrCacheSize;   // max number of textures in RAM
+    uint32_t audoCacheSize;   // max number of audio entries in RAM
+
+    // LRU tracking (simple)
+    uint32_t* txtrLastUsed;   // size = txtr.count, stores "frame counters"
+    uint32_t* audoLastUsed;   // size = audo.count
+
+    uint32_t frameCounter;    // increments every access, used for LRU
+
     // Lookup map: absolute file offset -> TPAG index (built during TPAG parsing)
     struct { uint32_t key; int32_t value; }* tpagOffsetMap;
 } DataWin;
@@ -672,3 +694,188 @@ void DataWin_printDebugSummary(DataWin* dataWin);
 int32_t DataWin_resolveTPAG(DataWin* dw, uint32_t offset);
 void GamePath_computeInternal(GamePath* path);
 PathPositionResult GamePath_getPosition(GamePath* path, double t);
+
+static uint8_t* DataWin_loadTexture(DataWin* dw, uint32_t index) {
+    printf("DataWin_loadTexture: Requested texture[%u] (count=%u)\n", index, dw->txtr.count);
+    
+    if (index >= dw->txtr.count) {
+        printf("DataWin_loadTexture: ERROR - Invalid texture index %u (max count %u)\n", index, dw->txtr.count);
+        return NULL;
+    }
+
+    printf("DataWin_loadTexture: Index %u valid (count=%u)\n", index, dw->txtr.count);
+    
+    printf("DataWin_loadTexture: State - textures[%u] = {data=%p, size=%u, offset=%llu, loaded=%s}\n", 
+           index,
+           dw->txtr.textures[index].blobData,
+           dw->txtr.textures[index].blobSize,
+           (unsigned long long)dw->txtr.textures[index].blobOffset,
+           dw->txtr.textures[index].loaded ? "yes" : "NO");
+
+    // If texture was already loaded in RAM AND has valid data, return that data.
+    // Otherwise we need to load it from the file.
+    if (dw->txtr.textures[index].loaded && 
+        dw->txtr.textures[index].blobData != NULL && 
+        dw->txtr.textures[index].blobSize > 0 && 
+        dw->txtr.textures[index].blobOffset > 0) {
+        
+        printf("DataWin_loadTexture: Texture[%u] already loaded in memory and validated\n", index);
+        dw->txtrLastUsed[index] = dw->frameCounter++;
+        return dw->txtr.textures[index].blobData;
+    }
+
+    // If we reach here, the texture is NOT properly loaded (missing data despite loaded=true,
+    // or truly not loaded yet), so we need to load it.
+    printf("DataWin_loadTexture: Texture[%u] needs loading, size=%u offset=%llu\n", 
+           index, dw->txtr.textures[index].blobSize, 
+           (unsigned long long)dw->txtr.textures[index].blobOffset);
+
+    // Validate the texture entry before loading
+    if (dw->txtr.textures[index].blobSize == 0) {
+        printf("DataWin_loadTexture: ERROR - Texture[%u] has zero blobSize\n", index);
+        return NULL;
+    }
+    
+    if (dw->txtr.textures[index].blobOffset == 0) {
+        printf("DataWin_loadTexture: ERROR - Texture[%u] has zero blobOffset\n", index);
+        return NULL;
+    }
+
+    // Apply cache size limits
+    uint32_t loadedCount = 0;
+    for (uint32_t i = 0; i < dw->txtr.count; i++)
+        if (dw->txtr.textures[i].loaded && dw->txtr.textures[i].blobData != NULL) loadedCount++;
+
+    if (loadedCount >= dw->txtrCacheSize) {
+        // Evict LRU
+        uint32_t lruIndex = 0xFFFFFFFF;
+        uint32_t minFrame = UINT32_MAX;
+        for (uint32_t i = 0; i < dw->txtr.count; i++) {
+            if (dw->txtr.textures[i].loaded && 
+                dw->txtr.textures[i].blobData != NULL && 
+                dw->txtrLastUsed[i] < minFrame) {
+                minFrame = dw->txtrLastUsed[i];
+                lruIndex = i;
+            }
+        }
+        if (lruIndex != 0xFFFFFFFF) {
+            printf("DataWin_loadTexture: Evicting texture[%u]\n", lruIndex);
+            free(dw->txtr.textures[lruIndex].blobData);
+            dw->txtr.textures[lruIndex].blobData = NULL;
+            dw->txtr.textures[lruIndex].loaded = false;
+        }
+    }
+
+    // Seek to the correct position in the file
+    if (fseek(dw->file, (long)dw->txtr.textures[index].blobOffset, SEEK_SET) != 0) {
+        printf("DataWin_loadTexture: Failed to seek to offset %llu for texture[%u]\n", 
+               (unsigned long long)dw->txtr.textures[index].blobOffset, index);
+        return NULL;
+    }
+
+    // Validate the blob size to prevent huge allocations
+    if (dw->txtr.textures[index].blobSize > 50 * 1024 * 1024) { // 50MB max
+        printf("DataWin_loadTexture: Texture[%u] too large: %u bytes\n", 
+               index, dw->txtr.textures[index].blobSize);
+        return NULL;
+    }
+
+    dw->txtr.textures[index].blobData = malloc(dw->txtr.textures[index].blobSize);
+    if (!dw->txtr.textures[index].blobData) {
+        printf("DataWin_loadTexture: Failed to allocate %u bytes for texture[%u]\n", 
+               dw->txtr.textures[index].blobSize, index);
+        return NULL;
+    }
+
+    size_t bytesRead = fread(dw->txtr.textures[index].blobData, 1, dw->txtr.textures[index].blobSize, dw->file);
+    if (bytesRead != dw->txtr.textures[index].blobSize) {
+        printf("DataWin_loadTexture: Failed to read full texture data for [%u]: got %zu/%u bytes\n", 
+               index, bytesRead, dw->txtr.textures[index].blobSize);
+        free(dw->txtr.textures[index].blobData);
+        dw->txtr.textures[index].blobData = NULL;
+        return NULL;
+    }
+
+    dw->txtr.textures[index].loaded = true;
+    printf("DataWin_loadTexture: Successfully loaded texture[%u] - %u bytes at offset %llu\n", 
+           index, dw->txtr.textures[index].blobSize, 
+           (unsigned long long)dw->txtr.textures[index].blobOffset);
+
+    dw->txtrLastUsed[index] = dw->frameCounter++;
+    return dw->txtr.textures[index].blobData;
+}
+
+static uint8_t* DataWin_loadAudio(DataWin* dw, uint32_t index) {
+    if (index >= dw->audo.count) {
+        printf("DataWin_loadAudio: Invalid audio index %u (max %u)\n", index, dw->audo.count);
+        return NULL;
+    }
+
+    if (!dw->audo.entries[index].loaded) {
+        // Validate the audio entry before loading
+        if (dw->audo.entries[index].dataSize == 0 || dw->audo.entries[index].dataOffset == 0) {
+            printf("DataWin_loadAudio: Audio[%u] has invalid size (%u) or offset (%llu)\n", 
+                   index, dw->audo.entries[index].dataSize, 
+                   (unsigned long long)dw->audo.entries[index].dataOffset);
+            return NULL;
+        }
+
+        uint32_t loadedCount = 0;
+        for (uint32_t i = 0; i < dw->audo.count; i++)
+            if (dw->audo.entries[i].loaded) loadedCount++;
+
+        if (loadedCount >= dw->audoCacheSize) {
+            uint32_t lruIndex = 0xFFFFFFFF;
+            uint32_t minFrame = UINT32_MAX;
+            for (uint32_t i = 0; i < dw->audo.count; i++) {
+                if (dw->audo.entries[i].loaded && dw->audoLastUsed[i] < minFrame) {
+                    minFrame = dw->audoLastUsed[i];
+                    lruIndex = i;
+                }
+            }
+            if (lruIndex != 0xFFFFFFFF) {
+                free(dw->audo.entries[lruIndex].data);
+                dw->audo.entries[lruIndex].data = NULL;
+                dw->audo.entries[lruIndex].loaded = false;
+            }
+        }
+
+        // Seek to the correct position in the file
+        if (fseek(dw->file, (long)dw->audo.entries[index].dataOffset, SEEK_SET) != 0) {
+            printf("DataWin_loadAudio: Failed to seek to offset %llu\n", 
+                   (unsigned long long)dw->audo.entries[index].dataOffset);
+            return NULL;
+        }
+
+        // Validate the data size to prevent huge allocations
+        if (dw->audo.entries[index].dataSize > 100 * 1024 * 1024) { // 100MB max
+            printf("DataWin_loadAudio: Audio[%u] too large: %u bytes\n", 
+                   index, dw->audo.entries[index].dataSize);
+            return NULL;
+        }
+
+        dw->audo.entries[index].data = malloc(dw->audo.entries[index].dataSize);
+        if (!dw->audo.entries[index].data) {
+            printf("DataWin_loadAudio: Failed to allocate %u bytes for audio[%u]\n", 
+                   dw->audo.entries[index].dataSize, index);
+            return NULL;
+        }
+
+        size_t bytesRead = fread(dw->audo.entries[index].data, 1, dw->audo.entries[index].dataSize, dw->file);
+        if (bytesRead != dw->audo.entries[index].dataSize) {
+            printf("DataWin_loadAudio: Failed to read full audio data for [%u]: got %zu/%u bytes\n", 
+                   index, bytesRead, dw->audo.entries[index].dataSize);
+            free(dw->audo.entries[index].data);
+            dw->audo.entries[index].data = NULL;
+            return NULL;
+        }
+
+        dw->audo.entries[index].loaded = true;
+        printf("DataWin_loadAudio: Successfully loaded audio[%u] size=%u offset=%llu\n", 
+               index, dw->audo.entries[index].dataSize, 
+               (unsigned long long)dw->audo.entries[index].dataOffset);
+    }
+
+    dw->audoLastUsed[index] = dw->frameCounter++;
+    return dw->audo.entries[index].data;
+}
