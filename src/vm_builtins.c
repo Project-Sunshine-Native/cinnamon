@@ -131,8 +131,10 @@ RValue VMBuiltins_getVariable(VMContext* ctx, const char* name, int32_t arrayInd
     }
 
     // OS constants
-    if (strcmp(name, "os_type") == 0) return RValue_makeReal(4.0); // os_linux
+    // os_linux, best to leave at that for compatibility
+    if (strcmp(name, "os_type") == 0) return RValue_makeReal(4.0);
     if (strcmp(name, "os_windows") == 0) return RValue_makeReal(0.0);
+    if (strcmp(name, "os_linux") == 0) return RValue_makeReal(4.0);
     if (strcmp(name, "os_ps4") == 0) return RValue_makeReal(6.0);
     if (strcmp(name, "os_psvita") == 0) return RValue_makeReal(12.0);
     if (strcmp(name, "os_3ds") == 0) return RValue_makeReal(14.0);

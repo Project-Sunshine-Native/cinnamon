@@ -33,6 +33,11 @@
 #include <string.h>
 #include <stdio.h>
 
+typedef struct {
+    u32 hwKey;   // 3DS button
+    int gmlKey;  // GML keycode
+} KeyMap;
+
 // ===[ COMMAND LINE ARGUMENTS ]===
 typedef struct {
     int key;
@@ -550,6 +555,15 @@ int main(int argc, char* argv[]) {
     Runner_initFirstRoom(runner);
     LogToSD("First room loaded!");
 
+    KeyMap keymap[] = {
+        { KEY_UP,    VK_UP },    // Move up
+        { KEY_DOWN,  VK_DOWN },  // Move down
+        { KEY_LEFT,  VK_LEFT },  // Move left
+        { KEY_RIGHT, VK_RIGHT }, // Move right
+        { KEY_A,     VK_Z },     // A button triggers Z (confirm)
+        { KEY_B,     VK_X },     // B button triggers X (cancel)
+    };
+
     // Main loop
     bool debugPaused = false;
     double lastFrameTime = svcGetSystemTick();
@@ -558,8 +572,22 @@ int main(int argc, char* argv[]) {
         RunnerKeyboard_beginFrame(runner->keyboard);
         hidScanInput(); // glfwPollEvents();
 
-        u32 kDown = hidKeysDown(); // Keys that are newly pressed
-        u32 kHeld = hidKeysHeld(); // Keys that are currently held down
+        u32 kDown = hidKeysDown();
+        u32 kUp   = hidKeysUp();
+
+        // on key down
+        for (int i = 0; i < sizeof(keymap)/sizeof(keymap[0]); i++) {
+            if (kDown & keymap[i].hwKey) {
+                RunnerKeyboard_onKeyDown(runner->keyboard, keymap[i].gmlKey);
+            }
+        }
+
+        // on key up
+        for (int i = 0; i < sizeof(keymap)/sizeof(keymap[0]); i++) {
+            if (kUp & keymap[i].hwKey) {
+                RunnerKeyboard_onKeyUp(runner->keyboard, keymap[i].gmlKey);
+            }
+        }
 
         // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)
         InputRecording_processFrame(globalInputRecording, runner->keyboard, runner->frameCount);

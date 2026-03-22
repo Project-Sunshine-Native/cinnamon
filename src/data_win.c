@@ -1287,10 +1287,9 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         exit(1);
     }
 
-    // Use a large read buffer to reduce the number of physical reads
-    // This is critical for slow I/O devices like the PS2 CDVD drive, where each fread
-    // call would otherwise trigger a separate disc read of just a few sectors
-    setvbuf(file, NULL, _IOFBF, 128 * 1024);
+    // Fast I/O device: use the default stdio buffer.
+    // No need for the 128KB setvbuf buffer that was added to amortize
+    // slow CDVD sector reads — that overhead doesn't exist here.
 
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
@@ -1302,7 +1301,6 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         exit(1);
     }
 
-    // Allocate and zero-initialize DataWin
     DataWin* dw = safeCalloc(1, sizeof(DataWin));
 
     BinaryReader reader = BinaryReader_create(file, (size_t) fileSize);
@@ -1320,10 +1318,11 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
     uint32_t formLength = BinaryReader_readUint32(&reader);
     (void) formLength;
 
-    // Pass 1: Count total chunks and find STRG chunk offset.
-    // All other chunks reference strings from STRG, so it must be loaded first.
+    // Pass 1: Find and load STRG only.
+    // All other chunks reference strings from STRG, so it must be
+    // loaded before pass 2. We count chunks here for progress reporting.
     int totalChunks = 0;
-    BinaryReader_seek(&reader, 8); // reset to after FORM header
+    BinaryReader_seek(&reader, 8);
 
     if (options.parseStrg) {
         while ((size_t) fileSize > BinaryReader_getPosition(&reader)) {
@@ -1344,12 +1343,13 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         }
     }
 
-    // Pass 2: Parse all chunks
-    // For each chunk that will be parsed, we bulk-read the entire chunk into memory first
-    // and then parse from the memory buffer. This dramatically reduces the number of physical
-    // reads on slow I/O devices like the PS2 CDVD drive.
-    BinaryReader_seek(&reader, 8); // skip past FORM header
+    // Pass 2: Parse all chunks directly from the FILE* stream.
+    // On a fast-I/O device there is no benefit to bulk-loading each chunk
+    // into a malloc'd buffer before parsing — doing so wastes RAM and adds
+    // an extra allocation/free per chunk. Parse directly from the reader.
+    BinaryReader_seek(&reader, 8);
     int chunkIndex = 0;
+
     while ((size_t) fileSize > BinaryReader_getPosition(&reader)) {
         if (BinaryReader_getPosition(&reader) + 8 > (size_t) fileSize) break;
 
@@ -1361,44 +1361,6 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
 
         if (options.progressCallback) {
             options.progressCallback(chunkName, chunkIndex, totalChunks, dw, options.progressCallbackUserData);
-        }
-
-        // Determine if this chunk will be parsed (and thus needs bulk loading)
-        bool shouldParse =
-            (options.parseGen8 && memcmp(chunkName, "GEN8", 4) == 0) ||
-            (options.parseOptn && memcmp(chunkName, "OPTN", 4) == 0) ||
-            (options.parseLang && memcmp(chunkName, "LANG", 4) == 0) ||
-            (options.parseExtn && memcmp(chunkName, "EXTN", 4) == 0) ||
-            (options.parseSond && memcmp(chunkName, "SOND", 4) == 0) ||
-            (options.parseAgrp && memcmp(chunkName, "AGRP", 4) == 0) ||
-            (options.parseSprt && memcmp(chunkName, "SPRT", 4) == 0) ||
-            (options.parseBgnd && memcmp(chunkName, "BGND", 4) == 0) ||
-            (options.parsePath && memcmp(chunkName, "PATH", 4) == 0) ||
-            (options.parseScpt && memcmp(chunkName, "SCPT", 4) == 0) ||
-            (options.parseGlob && memcmp(chunkName, "GLOB", 4) == 0) ||
-            (options.parseShdr && memcmp(chunkName, "SHDR", 4) == 0) ||
-            (options.parseFont && memcmp(chunkName, "FONT", 4) == 0) ||
-            (options.parseTmln && memcmp(chunkName, "TMLN", 4) == 0) ||
-            (options.parseObjt && memcmp(chunkName, "OBJT", 4) == 0) ||
-            (options.parseRoom && memcmp(chunkName, "ROOM", 4) == 0) ||
-            (options.parseTpag && memcmp(chunkName, "TPAG", 4) == 0) ||
-            (options.parseCode && memcmp(chunkName, "CODE", 4) == 0) ||
-            (options.parseVari && memcmp(chunkName, "VARI", 4) == 0) ||
-            (options.parseFunc && memcmp(chunkName, "FUNC", 4) == 0) ||
-            (options.parseStrg && memcmp(chunkName, "STRG", 4) == 0) ||
-            (options.parseTxtr && memcmp(chunkName, "TXTR", 4) == 0) ||
-            (options.parseAudo && memcmp(chunkName, "AUDO", 4) == 0);
-
-        // Bulk-read the chunk data into memory for fast parsing
-        uint8_t* chunkBuffer = NULL;
-        if (shouldParse && chunkLength > 0) {
-            chunkBuffer = safeMalloc(chunkLength);
-            size_t read = fread(chunkBuffer, 1, chunkLength, reader.file);
-            if (read != chunkLength) {
-                fprintf(stderr, "DataWin: short read on chunk %.4s (expected %u, got %zu)\n", chunkName, chunkLength, read);
-                exit(1);
-            }
-            BinaryReader_setBuffer(&reader, chunkBuffer, chunkDataStart, chunkLength);
         }
 
         if (options.parseGen8 && memcmp(chunkName, "GEN8", 4) == 0) {
@@ -1453,13 +1415,8 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
             printf("Unknown chunk: %.4s (length %u at offset 0x%zX)\n", chunkName, chunkLength, chunkDataStart - 8);
         }
 
-        // Free the chunk buffer and revert to FILE*-based reads for the next header
-        if (chunkBuffer != NULL) {
-            BinaryReader_clearBuffer(&reader);
-            free(chunkBuffer);
-        }
-
-        // Seek to chunk end (skip any unread data or trailing padding)
+        // Seek to chunk end to skip any unread data or trailing padding.
+        // On a fast-I/O device this fseek is essentially free.
         fseek(reader.file, (long) chunkEnd, SEEK_SET);
         chunkIndex++;
     }
