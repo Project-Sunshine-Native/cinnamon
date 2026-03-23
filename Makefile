@@ -257,11 +257,11 @@ $(OFILES_SOURCES) : $(HFILES)
 $(OUTPUT_FILE).elf : $(OFILES)
 
 $(OUTPUT_FILE).3ds : $(OUTPUT_FILE).elf banner.bnr icon.icn
-	@$(MAKEROM) -f cci -o $(OUTPUT_FILE).3ds -DAPP_ENCRYPTED=true $(COMMON_MAKEROM_PARAMS)
+	@$(MAKEROM) -f cci -o $(OUTPUT_FILE).3ds -DAPP_ENCRYPTED=true $(COMMON_MAKEROM_PARAMS) -v
 	@echo "built ... $(notdir $@)"
 
 $(OUTPUT_FILE).cia : $(OUTPUT_FILE).elf banner.bnr icon.icn
-	@$(MAKEROM) -f cia -o $(OUTPUT_FILE).cia -DAPP_ENCRYPTED=false $(COMMON_MAKEROM_PARAMS)
+	@$(MAKEROM) -f cia -o $(OUTPUT_FILE).cia -DAPP_ENCRYPTED=false $(COMMON_MAKEROM_PARAMS) -v
 	@echo "built ... $(notdir $@)"
 
 $(OUTPUT_FILE).zip : $(OUTPUT_FILE).smdh $(OUTPUT_FILE).3dsx
