@@ -78,7 +78,8 @@ static void verifyLodepngAllocator(void) {
     void* p = lodepng_malloc(1024 * 1024);
     u32 after = linearSpaceFree();
     if (p && before != after)
-        printf("[lodepng] custom allocator OK (linear -%ld KB)\n", (long)(before - after) / 1024);
+        printf("[lodepng] custom allocator OK (linear %ld KB)\n",
+       ((long)before - (long)after) / 1024);
     else {
         LOG_ERR("[lodepng] WARNING: custom allocator NOT using linear heap!\n");
         LOG_ERR("[lodepng] Add -DLODEPNG_NO_COMPILE_ALLOCATORS to the build rule for lodepng.c\n");
