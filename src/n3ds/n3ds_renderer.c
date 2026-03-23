@@ -640,8 +640,9 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
 // Read only the PNG IHDR (~33 bytes) to record dimensions.  No decode, no GPU
 // work - everything is demand-driven from drawRegion on first use.
 
-static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
-    if (tx->blobOffset == 0) {
+// Now passing blobOffset directly instead of the Texture* pointer
+static bool registerPage(TexCachePage* page, uint32_t blobOffset, uint32_t pageIdx) {
+    if (blobOffset == 0) {
         printf("CRenderer3DS: page %lu has no blob (external texture), skipping\n",
                (unsigned long)pageIdx);
         page->loadFailed = true;
@@ -656,25 +657,38 @@ static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
     page->regionCount   = 0;
     page->decodeTimeout = 120;
 
-    // TODO: This is hacky... we should just cache this to the same file...
-    // Read only the first 33 bytes of the PNG blob (PNG signature + IHDR chunk)
-    // directly from the data.win file.  This avoids loading the entire compressed
-    // PNG (which can be hundreds of KB) just to get the image dimensions.
-    // PNG layout: 8-byte signature + 4 len + 4 "IHDR" + 4 W + 4 H + ... = 24 bytes min.
-    uint8_t hdr[33];
-    DataWin* dw = g_renderer->base.dataWin;
-    if (fseek(dw->file, (long)tx->blobOffset, SEEK_SET) != 0 ||
-        fread(hdr, 1, sizeof(hdr), dw->file) != sizeof(hdr)) {
-        LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header from data.win\n",
-                (unsigned long)pageIdx);
+    // Force 4-byte alignment on the stack so lodepng doesn't crash on ARM11
+    uint32_t hdr_buf[9];
+    memset(hdr_buf, 0, sizeof(hdr_buf));
+    uint8_t* hdr = (uint8_t*)hdr_buf;
+    
+    FILE* f = fopen("sdmc:/cinnamon/data.win", "rb");
+    if (!f) {
+        LOG_ERR("CRenderer3DS: page %lu - failed to open data.win\n", (unsigned long)pageIdx);
         page->loadFailed = true;
         return false;
     }
 
-    unsigned w = 0, h = 0;
-    if (lodepng_inspect(&w, &h, NULL, hdr, sizeof(hdr)) != 0) {
-        LOG_ERR("CRenderer3DS: page %lu - lodepng_inspect failed on IHDR bytes\n",
+    if (fseek(f, (long)blobOffset, SEEK_SET) != 0 ||
+        fread(hdr, 1, 33, f) != 33) {
+        LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header from data.win\n",
                 (unsigned long)pageIdx);
+        fclose(f);
+        page->loadFailed = true;
+        return false;
+    }
+    fclose(f);
+
+    // Provide a valid LodePNGState to prevent NULL pointer dereferences
+    unsigned w = 0, h = 0;
+    LodePNGState state;
+    lodepng_state_init(&state);
+    unsigned err = lodepng_inspect(&w, &h, &state, hdr, 33);
+    lodepng_state_cleanup(&state);
+    
+    if (err != 0) {
+        LOG_ERR("CRenderer3DS: page %lu - lodepng_inspect failed on IHDR bytes (err %u)\n",
+                (unsigned long)pageIdx, err);
         page->loadFailed = true;
         return false;
     }
@@ -708,7 +722,7 @@ static void drawRegion(CRenderer3DS* C,
                         float dstX,  float dstY,
                         float dstW,  float dstH,
                         float angle, u32 color,
-                        float blend = 1.0)
+                        float blend)
 {
     DBG_LOG("drawRegion: Called for page %lu: src=(%.1f,%.1f,%.1f,%.1f) dst=(%.1f,%.1f,%.1f,%.1f)\n",
            (unsigned long)pageIdx, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
@@ -1099,11 +1113,17 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     logMemory("before page registration");
     for (uint32_t i = 0; i < pageCount; i++)
     {
-        printf("during page registaration, starting page: %d", i);
+        printf("during page registaration, starting page: %d\n", i);
         logMemory("during page registration, starting page");
-        registerPage(&C->pageCache[i], &dataWin->txtr.textures[i], i);
+        
+        // Extract blobOffset to bypass unaligned memory crashes
+        uint32_t safeBlobOffset = 0;
+        memcpy(&safeBlobOffset, &dataWin->txtr.textures[i].blobOffset, sizeof(uint32_t));
+        
+        registerPage(&C->pageCache[i], safeBlobOffset, i);
+        
         logMemory("during page registration, finished page");
-        printf("during page registaration, finished page: %d", i);
+        printf("during page registaration, finished page: %d\n", i);
     }
     logMemory("after page registration");
 
