@@ -1,0 +1,43 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/cinnamon.dir/src/binary_reader.c.o"
+  "CMakeFiles/cinnamon.dir/src/binary_reader.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/data_win.c.o"
+  "CMakeFiles/cinnamon.dir/src/data_win.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/data_win_print.c.o"
+  "CMakeFiles/cinnamon.dir/src/data_win_print.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/ini.c.o"
+  "CMakeFiles/cinnamon.dir/src/ini.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/input_recording.c.o"
+  "CMakeFiles/cinnamon.dir/src/input_recording.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/instance.c.o"
+  "CMakeFiles/cinnamon.dir/src/instance.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/json_reader.c.o"
+  "CMakeFiles/cinnamon.dir/src/json_reader.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/json_writer.c.o"
+  "CMakeFiles/cinnamon.dir/src/json_writer.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/n3ds/main.c.o"
+  "CMakeFiles/cinnamon.dir/src/n3ds/main.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.c.o"
+  "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_file_system.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.c.o"
+  "CMakeFiles/cinnamon.dir/src/n3ds/n3ds_renderer.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.c.o"
+  "CMakeFiles/cinnamon.dir/src/n3ds/stb_impl.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/noop_file_system.c.o"
+  "CMakeFiles/cinnamon.dir/src/noop_file_system.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/runner.c.o"
+  "CMakeFiles/cinnamon.dir/src/runner.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/runner_keyboard.c.o"
+  "CMakeFiles/cinnamon.dir/src/runner_keyboard.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/vm.c.o"
+  "CMakeFiles/cinnamon.dir/src/vm.c.o.d"
+  "CMakeFiles/cinnamon.dir/src/vm_builtins.c.o"
+  "CMakeFiles/cinnamon.dir/src/vm_builtins.c.o.d"
+  "cinnamon"
+  "cinnamon.pdb"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang C)
+  include(CMakeFiles/cinnamon.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

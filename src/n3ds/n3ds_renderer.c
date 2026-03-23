@@ -17,7 +17,7 @@
 #define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); printf(__VA_ARGS__); } while(0)
 
 // Define CINNAMON_DEBUG_LOGGING to re-enable verbose per-draw-call logging.
-// Leave undefined in production — every printf flushes to the SD card via
+// Leave undefined in production - every printf flushes to the SD card via
 // line-buffered stdout and costs several milliseconds, easily dropping from
 // 60 fps to ~15 fps when many sprites are on screen.
 // #define CINNAMON_DEBUG_LOGGING
@@ -230,7 +230,7 @@ static RegionCacheEntry* regionLookup(TexCachePage* page,
                                        uint16_t srcW, uint16_t srcH,
                                        uint32_t frameCounter)
 {
-    // Pinned font glyphs — no LRU update needed, these never expire
+    // Pinned font glyphs - no LRU update needed, these never expire
     for (uint32_t i = 0; i < page->pinnedRegionCount; i++) {
         RegionCacheEntry* e = &page->pinnedRegions[i];
         if (e->srcX == srcX && e->srcY == srcY &&
@@ -279,7 +279,7 @@ static RegionCacheEntry* regionAllocPinned(TexCachePage* page,
 
 // ===[ Region cache: sprite alloc / LRU eviction ]===
 //
-// Operates only on the sprite regions[] array — pinned font glyphs are never
+// Operates only on the sprite regions[] array - pinned font glyphs are never
 // touched here.  The sprite pool is always fully available regardless of how
 // many font glyphs are pinned on the same page.
 
@@ -299,7 +299,7 @@ static RegionCacheEntry* regionAlloc(TexCachePage* page,
     }
 
     // All slots occupied: evict the least-recently-used entry
-    // (no pinned entries can exist in regions[] — they live in pinnedRegions[])
+    // (no pinned entries can exist in regions[] - they live in pinnedRegions[])
     uint32_t oldestIdx = 0;
     uint32_t oldest    = page->regions[0].lastUsed;
     for (uint32_t i = 1; i < REGION_CACHE_MAX; i++) {
@@ -326,9 +326,9 @@ static RegionCacheEntry* regionAlloc(TexCachePage* page,
 // contiguous block.  Before each decode we evict loaded region entries
 // (globally, LRU order) until there is enough headroom.
 //
-// We need: atlasW * atlasH * 4        — lodepng output buffer
-//        + atlasW * atlasH * 4        — lodepng internal pre-filter scratch
-//        + 2 MB                       — huffman tables, zlib window, misc
+// We need: atlasW * atlasH * 4        - lodepng output buffer
+//        + atlasW * atlasH * 4        - lodepng internal pre-filter scratch
+//        + 2 MB                       - huffman tables, zlib window, misc
 // (Total ≈ 2× raw size + 2 MB)
 //
 // After eviction the linear heap has one large free region that lodepng can
@@ -412,7 +412,7 @@ static void regionEvictAllNonPinnedOLD3DS(CRenderer3DS* C)
 // the already-decoded pixels without re-decoding.  CEndFrame frees them.
 //
 // Before decoding, evict enough GPU region textures to guarantee a contiguous
-// block for lodepng — otherwise heap fragmentation causes error 83 even when
+// block for lodepng - otherwise heap fragmentation causes error 83 even when
 // total free bytes appear sufficient.
 
 // ===[ SD pixel cache ]===
@@ -426,7 +426,7 @@ static void regionEvictAllNonPinnedOLD3DS(CRenderer3DS* C)
 //   [0..3]   magic  "C3CP"
 //   [4..7]   width  (uint32_t)
 //   [8..11]  height (uint32_t)
-//   [12..15] blobSize — used as a simple version tag; if the PNG changes
+//   [12..15] blobSize - used as a simple version tag; if the PNG changes
 //            the blobSize changes and the cache is discarded.
 //   [16..]   raw RGBA8 pixels, width*height*4 bytes
 
@@ -501,7 +501,7 @@ static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blo
 
     FILE* f = fopen(path, "wb");
     if (!f) {
-        printf("CRenderer3DS: WARNING — could not write cache for page %u\n", pageIdx);
+        printf("CRenderer3DS: WARNING, could not write cache for page %u\n", pageIdx);
         return;
     }
 
@@ -551,7 +551,7 @@ static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
     unsigned w = 0, h = 0;
     unsigned err = lodepng_decode32(&linearPixels, &w, &h, blobData, blobSize);
     if (err) {
-        LOG_ERR("CRenderer3DS: lodepng error %u on page %u — %s\n",
+        LOG_ERR("CRenderer3DS: lodepng error %u on page %u - %s\n",
                 err, pageIdx, lodepng_error_text(err));
         page->loadFailed = true;
         return false;
@@ -595,7 +595,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
                      GPU_RGBA8))
     {
         LOG_ERR("CRenderer3DS: C3D_TexInit failed page %lu region %ux%u @ (%u,%u) "
-                "(GPU tex %ux%u) — marked failed\n",
+                "(GPU tex %ux%u) - marked failed\n",
                 (unsigned long)pageIdx,
                 (unsigned)entry->srcW, (unsigned)entry->srcH,
                 (unsigned)entry->srcX, (unsigned)entry->srcY,
@@ -608,7 +608,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
     uint8_t* swizzle = (uint8_t*) linearAlloc(bufSize);
     if (!swizzle) {
         LOG_ERR("CRenderer3DS: linearAlloc(%lu KB) failed for swizzle buffer "
-                "page %lu region %ux%u @ (%u,%u) — marked failed\n",
+                "page %lu region %ux%u @ (%u,%u) - marked failed\n",
                 (unsigned long)(bufSize / 1024), (unsigned long)pageIdx,
                 (unsigned)entry->srcW, (unsigned)entry->srcH,
                 (unsigned)entry->srcX, (unsigned)entry->srcY);
@@ -638,7 +638,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
 // ===[ Page registration ]===
 //
 // Read only the PNG IHDR (~33 bytes) to record dimensions.  No decode, no GPU
-// work — everything is demand-driven from drawRegion on first use.
+// work - everything is demand-driven from drawRegion on first use.
 
 static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
     if (tx->blobOffset == 0) {
@@ -656,6 +656,7 @@ static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
     page->regionCount   = 0;
     page->decodeTimeout = 120;
 
+    // TODO: This is hacky... we should just cache this to the same file...
     // Read only the first 33 bytes of the PNG blob (PNG signature + IHDR chunk)
     // directly from the data.win file.  This avoids loading the entire compressed
     // PNG (which can be hundreds of KB) just to get the image dimensions.
@@ -664,7 +665,7 @@ static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
     DataWin* dw = g_renderer->base.dataWin;
     if (fseek(dw->file, (long)tx->blobOffset, SEEK_SET) != 0 ||
         fread(hdr, 1, sizeof(hdr), dw->file) != sizeof(hdr)) {
-        LOG_ERR("CRenderer3DS: page %lu — failed to read PNG header from data.win\n",
+        LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header from data.win\n",
                 (unsigned long)pageIdx);
         page->loadFailed = true;
         return false;
@@ -672,7 +673,7 @@ static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
 
     unsigned w = 0, h = 0;
     if (lodepng_inspect(&w, &h, NULL, hdr, sizeof(hdr)) != 0) {
-        LOG_ERR("CRenderer3DS: page %lu — lodepng_inspect failed on IHDR bytes\n",
+        LOG_ERR("CRenderer3DS: page %lu - lodepng_inspect failed on IHDR bytes\n",
                 (unsigned long)pageIdx);
         page->loadFailed = true;
         return false;
@@ -698,6 +699,8 @@ static bool registerPage(TexCachePage* page, Texture* tx, uint32_t pageIdx) {
 // sprite frames that are well under RENDERER_MAX_TEX_DIM, so the chunk loop
 // executes exactly once for them.
 
+// TODO: Remove blend, we don't even use it
+// TODO: Make some of this preprocessed on first upload?
 static void drawRegion(CRenderer3DS* C,
                         uint32_t pageIdx,
                         float srcX,  float srcY,
@@ -705,7 +708,7 @@ static void drawRegion(CRenderer3DS* C,
                         float dstX,  float dstY,
                         float dstW,  float dstH,
                         float angle, u32 color,
-                        float blend)   // 0.0 = preserve texture RGB (sprites), 1.0 = replace with tint (text)
+                        float blend = 1.0)
 {
     DBG_LOG("drawRegion: Called for page %lu: src=(%.1f,%.1f,%.1f,%.1f) dst=(%.1f,%.1f,%.1f,%.1f)\n",
            (unsigned long)pageIdx, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
@@ -800,7 +803,7 @@ static void drawRegion(CRenderer3DS* C,
                 C2D_Image image = { .tex = &entry->tex, .subtex = &subtex };
 
                 C2D_ImageTint tint;
-                C2D_PlainImageTint(&tint, color, blend);
+                C2D_PlainImageTint(&tint, color, 1.0);
 
                 float chunkDestX = dstX + (chunkX - srcX) * pixScaleX;
                 float chunkDestY = dstY + (chunkY - srcY) * pixScaleY;
@@ -920,12 +923,12 @@ static void preloadFontGlyphs(CRenderer3DS* C, DataWin* dw) {
                 uploaded++;
         }
 
-        printf("CRenderer3DS: font %lu (%lu glyphs) on page %lu — %u uploaded, %u already cached\n",
+        printf("CRenderer3DS: font %lu (%lu glyphs) on page %lu - %u uploaded, %u already cached\n",
                (unsigned long)fi, (unsigned long)font->glyphCount,
                (unsigned long)pageIdx, uploaded, skipped);
     }
 
-    // Free all decoded page pixels — pinned GPU textures remain resident
+    // Free all decoded page pixels - pinned GPU textures remain resident
     for (uint32_t i = 0; i < C->pageCacheCount; i++) {
         if (C->pageCache[i].pixels) {
             free(C->pageCache[i].pixels);
@@ -944,7 +947,7 @@ static void preloadFontGlyphs(CRenderer3DS* C, DataWin* dw) {
 // while the linear heap is fully clean (no GPU textures yet, no fragmentation).
 //
 // On Old 3DS the linear heap is ~30 MB.  Pages up to 1024x2048 need ~18 MB
-// peak and always succeed.  2048x2048 pages need ~34 MB and will fail — they
+// peak and always succeed.  2048x2048 pages need ~34 MB and will fail - they
 // are left uncached and fall back to the runtime decode path.
 //
 // After this function returns, ensurePageDecoded() will almost always find
@@ -988,7 +991,7 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         buildCachePath(path, sizeof(path), i);
         if (isCacheValid(path, blobSize, page->atlasW, page->atlasH)) { done++; continue; }
 
-        // Show progress bar — simple filled rect on top screen, no text needed
+        // Show progress bar - simple filled rect on top screen, no text needed
         {
             C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
             C2D_TargetClear(C->top, C2D_Color32(20, 20, 40, 255));
@@ -1011,7 +1014,7 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         // Load the PNG blob
         uint8_t* blobData = DataWin_loadTexture(dw, i);
         if (!blobData) {
-            printf("CRenderer3DS: precompute: page %u — blob load failed, skipping\n", i);
+            printf("CRenderer3DS: precompute: page %u - blob load failed, skipping\n", i);
             done++;
             continue;
         }
@@ -1021,9 +1024,9 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         unsigned w = 0, h = 0;
         unsigned err = lodepng_decode32(&linearPixels, &w, &h, blobData, blobSize);
         if (err) {
-            printf("CRenderer3DS: precompute: page %u lodepng error %u (%s) — will retry at runtime\n",
+            printf("CRenderer3DS: precompute: page %u lodepng error %u (%s) - will retry at runtime\n",
                    i, err, lodepng_error_text(err));
-            // Do NOT set loadFailed — let the runtime path try with eviction
+            // Do NOT set loadFailed - let the runtime path try with eviction
             // Free the blob to reclaim main RAM before moving to the next page
             free(dw->txtr.textures[i].blobData);
             dw->txtr.textures[i].blobData = NULL;
@@ -1048,7 +1051,7 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         // Save decoded pixels to SD card
         savePageToSDCache(page, i, blobSize);
 
-        // Free pixels and blob — no GPU work yet, we just needed them for the cache
+        // Free pixels and blob - no GPU work yet, we just needed them for the cache
         free(page->pixels);
         page->pixels = NULL;
         free(dw->txtr.textures[i].blobData);
@@ -1095,7 +1098,13 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     verifyLodepngAllocator();
     logMemory("before page registration");
     for (uint32_t i = 0; i < pageCount; i++)
+    {
+        printf("during page registaration, starting page: %d", i);
+        logMemory("during page registration, starting page");
         registerPage(&C->pageCache[i], &dataWin->txtr.textures[i], i);
+        logMemory("during page registration, finished page");
+        printf("during page registaration, finished page: %d", i);
+    }
     logMemory("after page registration");
 
     // Precompute SD pixel caches for all pages.
@@ -1108,10 +1117,10 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
 
     bool isNew3DS = false;
     if (APT_CheckNew3DS(&isNew3DS) == 0 && isNew3DS) {
-        printf("CRenderer3DS: running on New 3DS — preloading font glyphs\n");
+        printf("CRenderer3DS: running on New 3DS - preloading font glyphs\n");
         preloadFontGlyphs(C, dataWin);
     } else {
-        printf("CRenderer3DS: running on Old 3DS — skipping font glyph preload\n");
+        printf("CRenderer3DS: running on Old 3DS - skipping font glyph preload\n");
     }
 
     printf("CRenderer3DS: initialized (%lu pages, region-cache mode)\n",
@@ -1231,7 +1240,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     if (pageIdx < C->pageCacheCount) {
         // blend=1.0f: GPU computes output_rgb = texture_rgb * tint_rgb/255.
         // When the GML 'color' is c_white (0xFFFFFF), tint_rgb = (1,1,1) so the texture
-        // is unchanged — identical to blend=0.0.  When the GML code passes a non-white
+        // is unchanged - identical to blend=0.0.  When the GML code passes a non-white
         // color (e.g., c_yellow for highlight effects), blend=1.0 correctly tints the
         // sprite.  blend=0.0 would silently ignore the color parameter, which is why
         // text highlights and colored sprite effects were broken.
@@ -1461,7 +1470,7 @@ static void CDrawText(Renderer* renderer, const char* text,
 // the game switches rooms so stale sprite textures from the previous room are
 // freed, making linear RAM available for the new room's assets.
 //
-// Pinned entries (font glyphs preloaded at init) are kept — they compact to
+// Pinned entries (font glyphs preloaded at init) are kept - they compact to
 // the front of each page's region array so the slot space they vacate is
 // immediately reusable.
 static void COnRoomEnd(Renderer* renderer) {
@@ -1472,7 +1481,7 @@ static void COnRoomEnd(Renderer* renderer) {
         TexCachePage* page = &C->pageCache[pi];
         if (page->regionCount == 0) continue;
 
-        // Evict and discard all sprite regions — pinnedRegions (font glyphs) are untouched
+        // Evict and discard all sprite regions - pinnedRegions (font glyphs) are untouched
         for (uint32_t r = 0; r < page->regionCount; r++) {
             if (page->regions[r].loaded) {
                 C3D_TexDelete(&page->regions[r].tex);
@@ -1483,7 +1492,7 @@ static void COnRoomEnd(Renderer* renderer) {
         page->regionCount = 0;
     }
 
-    printf("CRenderer3DS: room end — evicted %u sprite textures, font glyphs retained\n",
+    printf("CRenderer3DS: room end - evicted %u sprite textures, font glyphs retained\n",
            totalEvicted);
     logMemory("after room eviction");
 }
