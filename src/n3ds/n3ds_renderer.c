@@ -45,30 +45,33 @@
 typedef struct { size_t size; uint32_t _pad; } LodePNGAllocHeader;
 
 void* lodepng_malloc(size_t size) {
-    size_t total = size + sizeof(LodePNGAllocHeader);
-    LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
-    if (!hdr) return NULL;
-    hdr->size = size;
-    return hdr + 1;
+    //size_t total = size + sizeof(LodePNGAllocHeader);
+    //LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
+    //if (!hdr) return NULL;
+    //hdr->size = size;
+    //return hdr + 1;
+    return malloc(size);
 }
 
 void lodepng_free(void* ptr);
 
 void* lodepng_realloc(void* ptr, size_t new_size) {
-    if (!ptr)      return lodepng_malloc(new_size);
-    if (!new_size) { lodepng_free(ptr); return NULL; }
-    LodePNGAllocHeader* old_hdr = (LodePNGAllocHeader*)ptr - 1;
-    size_t old_size = old_hdr->size;
-    void* new_ptr = lodepng_malloc(new_size);
-    if (!new_ptr) return NULL;
-    memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
-    lodepng_free(ptr);
-    return new_ptr;
+    //if (!ptr)      return lodepng_malloc(new_size);
+    //if (!new_size) { lodepng_free(ptr); return NULL; }
+    //LodePNGAllocHeader* old_hdr = (LodePNGAllocHeader*)ptr - 1;
+    //size_t old_size = old_hdr->size;
+    //void* new_ptr = lodepng_malloc(new_size);
+    //if (!new_ptr) return NULL;
+    //memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
+    //lodepng_free(ptr);
+    //return new_ptr;
+    return realloc(ptr, new_size);
 }
 
 void lodepng_free(void* ptr) {
-    if (!ptr) return;
-    linearFree((LodePNGAllocHeader*)ptr - 1);
+    //if (!ptr) return;
+    //linearFree((LodePNGAllocHeader*)ptr - 1);
+    free(ptr);
 }
 
 #include "lodepng.h"
