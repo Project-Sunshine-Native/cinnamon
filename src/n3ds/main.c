@@ -361,7 +361,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ===[ Graphics init — done BEFORE DataWin_parse so we can show a loading bar ]===
-    romfsInit();
+    //romfsInit();
     gfxInitDefault();
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
@@ -944,16 +944,17 @@ int main(int argc, char* argv[]) {
     glfwTerminate();
     */
 
+    C2D_Fini();
+	C3D_Fini();
+	gfxExit();
+	//romfsExit();
     Runner_free(runner);
     // GlfwFileSystem_destroy(glfwFileSystem);
     VM_free(vm);
     DataWin_free(dataWin);
+    fsExit();
 
     // Deinit libs
-	C2D_Fini();
-	C3D_Fini();
-	gfxExit();
-	romfsExit();
 
     //freeCommandLineArgs(&args);
 

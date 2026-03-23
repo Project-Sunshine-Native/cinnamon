@@ -1650,7 +1650,6 @@ void DataWin_free(DataWin* dw) {
 
     if (dw->file) {
         fclose(dw->file);
-        dw->file = NULL;
     }
 
     free(dw);
