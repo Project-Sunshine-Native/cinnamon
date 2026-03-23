@@ -118,6 +118,30 @@ static void captureScreenshot(const char* filenamePattern, int frameNumber, int 
 }
 */
 
+static void cleanup(Runner* runner, VMContext* vm, DataWin* dataWin, Renderer* renderer, InputRecording* inputRec)
+{
+    // Save & free input recording if active
+    if (inputRec) {
+        if (inputRec->isRecording) InputRecording_save(inputRec);
+        InputRecording_free(inputRec);
+        inputRec = NULL;
+    }
+
+    // Free game/app objects first
+    if (runner) Runner_free(runner);
+    if (vm) VM_free(vm);
+    if (dataWin) DataWin_free(dataWin);
+
+    // Destroy renderer last, before shutting down C2D/C3D
+    if (renderer && renderer->vtable) renderer->vtable->destroy(renderer);
+
+    // Shut down libraries
+    C2D_Fini();
+    C3D_Fini();
+    gfxExit();
+    fsExit();
+}
+
 // ===[ KEYBOARD INPUT ]===
 
 static int32_t glfwKeyToGml(int glfwKey) {
@@ -241,6 +265,8 @@ void ShowErrorAndExit(const char* msg)
     C2D_Fini();
     C3D_Fini();
     gfxExit();
+
+    cleanup(NULL, NULL, NULL, NULL, globalInputRecording);
 
     exit(0);
 }
@@ -930,33 +956,11 @@ int main(int argc, char* argv[]) {
         if (globalInputRecording->isRecording) {
             InputRecording_save(globalInputRecording);
         }
-        InputRecording_free(globalInputRecording);
         globalInputRecording = NULL;
     }
 
-    renderer->vtable->destroy(renderer);
-
-    // Cleanup
-    /*
-    renderer->vtable->destroy(renderer);
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    */
-
-    C2D_Fini();
-	C3D_Fini();
-	gfxExit();
-	//romfsExit();
-    Runner_free(runner);
-    // GlfwFileSystem_destroy(glfwFileSystem);
-    VM_free(vm);
-    DataWin_free(dataWin);
-    fsExit();
-
-    // Deinit libs
-
-    //freeCommandLineArgs(&args);
+    // massive cleanup
+    cleanup(runner, vm, dataWin, renderer, globalInputRecording);
 
     printf("Bye! :3\n");
     return 0;
