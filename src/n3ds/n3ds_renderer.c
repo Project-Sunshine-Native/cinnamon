@@ -1211,35 +1211,20 @@ static void CBeginView(Renderer* renderer,
     C->viewX = viewX;
     C->viewY = viewY;
 
-    if (viewW <= 0 || viewH <= 0 || portW <= 0 || portH <= 0 ||
-        C->gameW <= 0 || C->gameH <= 0 || C->screenW <= 0 || C->screenH <= 0)
-    {
+    if (viewW > 0 && viewH > 0 && portW > 0 && portH > 0) {
+        // Scale the view to fit the port, preserving aspect ratio (letterbox/pillarbox)
+        float scale = fminf((float)portW / (float)viewW, (float)portH / (float)viewH);
+        C->scaleX  = scale;
+        C->scaleY  = scale;
+        // Center within the port, then offset by the port's own origin
+        C->offsetX = (float)portX + ((float)portW - (float)viewW * scale) * 0.5f;
+        C->offsetY = (float)portY + ((float)portH - (float)viewH * scale) * 0.5f;
+    } else {
         C->scaleX  = 1.0f;
         C->scaleY  = 1.0f;
         C->offsetX = (float)portX;
         C->offsetY = (float)portY;
-        return;
     }
-
-    // Level 1: map the full game canvas into the physical screen (letterbox/pillarbox).
-    // This gives a single scale factor and centering offset shared by all ports.
-    float gs = fminf((float)C->screenW / (float)C->gameW,
-                     (float)C->screenH / (float)C->gameH);
-    float globalOffX = ((float)C->screenW - (float)C->gameW * gs) * 0.5f;
-    float globalOffY = ((float)C->screenH - (float)C->gameH * gs) * 0.5f;
-
-    // Level 2: map this port (in game space) into screen space.
-    float screenPortX = (float)portX * gs + globalOffX;
-    float screenPortY = (float)portY * gs + globalOffY;
-    float screenPortW = (float)portW * gs;
-    float screenPortH = (float)portH * gs;
-
-    // Level 3: world->screen transform stored for every draw call.
-    // Draw calls use:  screenX = (worldX - viewX) * scaleX + offsetX
-    C->scaleX  = screenPortW / (float)viewW;
-    C->scaleY  = screenPortH / (float)viewH;
-    C->offsetX = screenPortX;
-    C->offsetY = screenPortY;
 }
 
 //static u64 lastframetime = 0;
