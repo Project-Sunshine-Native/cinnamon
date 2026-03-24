@@ -17,9 +17,8 @@ jobs:
 
       - name: Install 3DS Libraries
         run: |
-          sudo dkp-pacman -Syu --noconfirm
           sudo dkp-pacman -S --needed --noconfirm \
-            3ds-cmake 3ds-examples 3ds-pkg-config 3dslink 3dstools tex3ds
+              3ds-pkg-config 3dslink 3dstools tex3ds libctru citro3d citro2d
 
       - name: Download makerom
         uses: robinraju/release-downloader@v1
@@ -44,8 +43,8 @@ jobs:
 
           # Setup bannertool
           unzip bannertool.zip
-          sudo mv linux-x86_64/bannertool /opt/devkitpro/bannertool
-          sudo chmod +x /opt/devkitpro/bannertool
+          sudo mv linux-x86_64/bannertool /opt/devkitpro/tools/bin/bannertool
+          sudo chmod +x /opt/devkitpro/tools/bin/bannertool
 
       - name: Build
         run: |
