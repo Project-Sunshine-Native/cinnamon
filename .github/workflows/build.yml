@@ -44,7 +44,7 @@ jobs:
 
           # Setup bannertool
           unzip bannertool.zip
-          sudo mv bannertool/linux-x86_64/bannertool /opt/devkitpro/bannertool
+          sudo mv linux-x86_64/bannertool /opt/devkitpro/bannertool
           sudo chmod +x /opt/devkitpro/bannertool
 
       - name: Build
