@@ -89,7 +89,7 @@ static char* RValue_toString(RValue val) {
             snprintf(buf, sizeof(buf), "%.16g", val.real);
             return strdup(buf);
         case RVALUE_INT32:
-            snprintf(buf, sizeof(buf), "%d", val.int32);
+            snprintf(buf, sizeof(buf), "%ld", val.int32);
             return strdup(buf);
         case RVALUE_INT64:
             snprintf(buf, sizeof(buf), "%lld", (long long) val.int64);
@@ -101,7 +101,7 @@ static char* RValue_toString(RValue val) {
         case RVALUE_UNDEFINED:
             return strdup("undefined");
         case RVALUE_ARRAY_REF:
-            snprintf(buf, sizeof(buf), "<array_ref:%d>", val.int32);
+            snprintf(buf, sizeof(buf), "<array_ref:%ld>", val.int32);
             return strdup(buf);
         case RVALUE_DS_MAP:
             snprintf(buf, sizeof(buf), "<ds_map:%lld>", (long long) val.int64);
@@ -132,7 +132,7 @@ static char* RValue_toStringTyped(RValue val) {
             snprintf(buf, sizeof(buf), "real(%.16g)", val.real);
             return strdup(buf);
         case RVALUE_INT32:
-            snprintf(buf, sizeof(buf), "int32(%d)", val.int32);
+            snprintf(buf, sizeof(buf), "int32(%ld)", val.int32);
             return strdup(buf);
         case RVALUE_INT64:
             snprintf(buf, sizeof(buf), "int64(%lld)", (long long) val.int64);
@@ -149,7 +149,7 @@ static char* RValue_toStringTyped(RValue val) {
         case RVALUE_UNDEFINED:
             return strdup("undefined");
         case RVALUE_ARRAY_REF:
-            snprintf(buf, sizeof(buf), "<array_ref:%d>", val.int32);
+            snprintf(buf, sizeof(buf), "<array_ref:%ld>", val.int32);
             return strdup(buf);
         case RVALUE_DS_MAP:
             snprintf(buf, sizeof(buf), "<ds_map:%lld>", (long long) val.int64);

@@ -849,21 +849,21 @@ static uint8_t* DataWin_loadAudio(DataWin* dw, uint32_t index) {
 
         // Validate the data size to prevent huge allocations
         if (dw->audo.entries[index].dataSize > 100 * 1024 * 1024) { // 100MB max
-            printf("DataWin_loadAudio: Audio[%u] too large: %u bytes\n", 
+            printf("DataWin_loadAudio: Audio[%lu] too large: %lu bytes\n", 
                    index, dw->audo.entries[index].dataSize);
             return NULL;
         }
 
         dw->audo.entries[index].data = malloc(dw->audo.entries[index].dataSize);
         if (!dw->audo.entries[index].data) {
-            printf("DataWin_loadAudio: Failed to allocate %u bytes for audio[%u]\n", 
+            printf("DataWin_loadAudio: Failed to allocate %lu bytes for audio[%lu]\n", 
                    dw->audo.entries[index].dataSize, index);
             return NULL;
         }
 
         size_t bytesRead = fread(dw->audo.entries[index].data, 1, dw->audo.entries[index].dataSize, dw->file);
         if (bytesRead != dw->audo.entries[index].dataSize) {
-            printf("DataWin_loadAudio: Failed to read full audio data for [%u]: got %zu/%u bytes\n", 
+            printf("DataWin_loadAudio: Failed to read full audio data for [%lu]: got %zu/%lu bytes\n", 
                    index, bytesRead, dw->audo.entries[index].dataSize);
             free(dw->audo.entries[index].data);
             dw->audo.entries[index].data = NULL;
@@ -871,7 +871,7 @@ static uint8_t* DataWin_loadAudio(DataWin* dw, uint32_t index) {
         }
 
         dw->audo.entries[index].loaded = true;
-        printf("DataWin_loadAudio: Successfully loaded audio[%u] size=%u offset=%llu\n", 
+        printf("DataWin_loadAudio: Successfully loaded audio[%lu] size=%lu offset=%llu\n", 
                index, dw->audo.entries[index].dataSize, 
                (unsigned long long)dw->audo.entries[index].dataOffset);
     }

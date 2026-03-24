@@ -133,7 +133,8 @@ static void linearToTile(uint8_t*       dst,
                 for (uint32_t px = 0; px < 8; px++) {
                     uint32_t lx = tx + px;
                     uint32_t ly = ty + py;
-                    uint32_t flippedLy = (texH - 1) - ly;
+                    // citro2d automatically does this
+                    //uint32_t flippedLy = (texH - 1) - ly;
 
                     uint32_t m = 0;
                     for (uint32_t bit = 0; bit < 3; bit++) {
@@ -439,7 +440,7 @@ static void regionEvictAllNonPinnedOLD3DS(CRenderer3DS* C)
 #define PIXEL_CACHE_HEADER_SIZE 16
 
 static void buildCachePath(char* out, size_t outLen, uint32_t pageIdx) {
-    snprintf(out, outLen, "sdmc:/cinnamon/cache/page_%u.bin", pageIdx);
+    snprintf(out, outLen, "sdmc:/cinnamon/cache/page_%lu.bin", pageIdx);
 }
 
 // Returns true if the cache file at `path` is valid for a page with `blobSize`
@@ -495,7 +496,7 @@ static bool loadPageFromSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t b
     }
     fclose(f);
 
-    printf("CRenderer3DS: page %u loaded from SD cache (%ux%u)\n",
+    printf("CRenderer3DS: page %lu loaded from SD cache (%lux%lu)\n",
            pageIdx, page->atlasW, page->atlasH);
     return true;
 }
@@ -506,7 +507,7 @@ static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blo
 
     FILE* f = fopen(path, "wb");
     if (!f) {
-        printf("CRenderer3DS: WARNING, could not write cache for page %u\n", pageIdx);
+        printf("CRenderer3DS: WARNING, could not write cache for page %lu\n", pageIdx);
         return;
     }
 
@@ -523,7 +524,7 @@ static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blo
     fwrite(hdr, 1, sizeof(hdr), f);
     fwrite(page->pixels, 1, (size_t)w * h * 4, f);
     fclose(f);
-    printf("CRenderer3DS: page %u saved to SD cache (%ux%u, %lu KB)\n",
+    printf("CRenderer3DS: page %lu saved to SD cache (%lux%lu, %lu KB)\n",
            pageIdx, w, h, (unsigned long)((size_t)w * h * 4 / 1024));
 }
 
@@ -556,7 +557,7 @@ static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
     unsigned w = 0, h = 0;
     unsigned err = lodepng_decode32(&linearPixels, &w, &h, blobData, blobSize);
     if (err) {
-        LOG_ERR("CRenderer3DS: lodepng error %u on page %u - %s\n",
+        LOG_ERR("CRenderer3DS: lodepng error %u on page %lu - %s\n",
                 err, pageIdx, lodepng_error_text(err));
         page->loadFailed = true;
         return false;
@@ -569,7 +570,7 @@ static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
     page->pixels = malloc(pixSize);
     if (!page->pixels) {
         lodepng_free(linearPixels);
-        LOG_ERR("CRenderer3DS: malloc failed for %zu KB pixel buf page %u\n",
+        LOG_ERR("CRenderer3DS: malloc failed for %zu KB pixel buf page %lu\n",
                 pixSize / 1024, pageIdx);
         page->loadFailed = true;
         return false;
@@ -942,7 +943,7 @@ static void preloadFontGlyphs(CRenderer3DS* C, DataWin* dw) {
                 uploaded++;
         }
 
-        printf("CRenderer3DS: font %lu (%lu glyphs) on page %lu - %u uploaded, %u already cached\n",
+        printf("CRenderer3DS: font %lu (%lu glyphs) on page %lu - %lu uploaded, %lu already cached\n",
                (unsigned long)fi, (unsigned long)font->glyphCount,
                (unsigned long)pageIdx, uploaded, skipped);
     }
@@ -973,7 +974,7 @@ static void preloadFontGlyphs(CRenderer3DS* C, DataWin* dw) {
 // the SD cache and never need to call lodepng during gameplay.
 
 static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
-    printf("CRenderer3DS: checking SD pixel caches for %u pages...\n", C->pageCacheCount);
+    printf("CRenderer3DS: checking SD pixel caches for %lu pages...\n", C->pageCacheCount);
     logMemory("before SD cache precompute");
 
     // Count how many pages actually need caching
@@ -990,12 +991,12 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
     }
 
     if (needCount == 0) {
-        printf("CRenderer3DS: all %u pages already cached on SD\n", C->pageCacheCount);
+        printf("CRenderer3DS: all %lu pages already cached on SD\n", C->pageCacheCount);
         logMemory("SD cache precompute skipped");
         return;
     }
 
-    printf("CRenderer3DS: caching %u/%u pages to SD card (first run)...\n",
+    printf("CRenderer3DS: caching %lu/%lu pages to SD card (first run)...\n",
            needCount, C->pageCacheCount);
 
     uint32_t done = 0;
@@ -1033,7 +1034,7 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         // Load the PNG blob
         uint8_t* blobData = DataWin_loadTexture(dw, i);
         if (!blobData) {
-            printf("CRenderer3DS: precompute: page %u - blob load failed, skipping\n", i);
+            printf("CRenderer3DS: precompute: page %lu - blob load failed, skipping\n", i);
             done++;
             continue;
         }
@@ -1043,7 +1044,7 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         unsigned w = 0, h = 0;
         unsigned err = lodepng_decode32(&linearPixels, &w, &h, blobData, blobSize);
         if (err) {
-            printf("CRenderer3DS: precompute: page %u lodepng error %u (%s) - will retry at runtime\n",
+            printf("CRenderer3DS: precompute: page %lu lodepng error %u (%s) - will retry at runtime\n",
                    i, err, lodepng_error_text(err));
             // Do NOT set loadFailed - let the runtime path try with eviction
             // Free the blob to reclaim main RAM before moving to the next page
@@ -1059,7 +1060,7 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         page->pixels = malloc(pixSize);
         if (!page->pixels) {
             lodepng_free(linearPixels);
-            LOG_ERR("CRenderer3DS: precompute: malloc failed for page %u (%zu KB)\n",
+            LOG_ERR("CRenderer3DS: precompute: malloc failed for page %lu (%zu KB)\n",
                     i, pixSize / 1024);
             done++;
             continue;
@@ -1118,7 +1119,7 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     logMemory("before page registration");
     for (uint32_t i = 0; i < pageCount; i++)
     {
-        printf("during page registaration, starting page: %d\n", i);
+        printf("during page registaration, starting page: %ld\n", i);
         logMemory("during page registration, starting page");
         
         // Extract blobOffset to bypass unaligned memory crashes
@@ -1128,7 +1129,7 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
         registerPage(&C->pageCache[i], safeBlobOffset, i);
         
         logMemory("during page registration, finished page");
-        printf("during page registaration, finished page: %d\n", i);
+        printf("during page registaration, finished page: %ld\n", i);
     }
     logMemory("after page registration");
 
@@ -1206,7 +1207,7 @@ static void CBeginView(Renderer* renderer,
     }
 }
 
-static u64 lastframetime = 0;
+//static u64 lastframetime = 0;
 
 static void CBeginFrame(Renderer* renderer, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
@@ -1532,7 +1533,7 @@ static void COnRoomEnd(Renderer* renderer) {
         page->regionCount = 0;
     }
 
-    printf("CRenderer3DS: room end - evicted %u sprite textures, font glyphs retained\n",
+    printf("CRenderer3DS: room end - evicted %lu sprite textures, font glyphs retained\n",
            totalEvicted);
     logMemory("after room eviction");
 }
