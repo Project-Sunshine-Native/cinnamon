@@ -28,6 +28,7 @@
 #  define DBG_LOG(...) ((void)0)
 #endif
 
+// TODO: update this comment, its outdated
 // ===[ Linear-backed lodepng allocator ]===
 //
 // lodepng calls malloc/realloc/free internally.  On 3DS the app heap is only
@@ -501,18 +502,20 @@ static bool loadPageFromSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t b
     return true;
 }
 
-static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blobSize) {
+static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blobSize, void* pixels) {
+    if (!pixels) return; // Guard against null pointers
+
     char path[128];
     buildCachePath(path, sizeof(path), pageIdx);
 
     FILE* f = fopen(path, "wb");
     if (!f) {
-        printf("CRenderer3DS: WARNING, could not write cache for page %lu\n", pageIdx);
+        printf("CRenderer3DS: WARNING, could not write cache for page %lu\n", (unsigned long)pageIdx);
         return;
     }
 
     uint32_t w = page->atlasW, h = page->atlasH;
-    uint8_t hdr[PIXEL_CACHE_HEADER_SIZE];
+    uint8_t hdr[PIXEL_CACHE_HEADER_SIZE] = {0}; // Zero-init for safety
     memcpy(hdr, PIXEL_CACHE_MAGIC, 4);
     hdr[4]  = (uint8_t)(w);        hdr[5]  = (uint8_t)(w >> 8);
     hdr[6]  = (uint8_t)(w >> 16);  hdr[7]  = (uint8_t)(w >> 24);
@@ -522,10 +525,13 @@ static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blo
     hdr[14] = (uint8_t)(blobSize >> 16); hdr[15] = (uint8_t)(blobSize >> 24);
 
     fwrite(hdr, 1, sizeof(hdr), f);
-    fwrite(page->pixels, 1, (size_t)w * h * 4, f);
+    // Write directly from the provided pointer (the linear heap)
+    fwrite(pixels, 1, (size_t)w * h * 4, f); 
     fclose(f);
+
     printf("CRenderer3DS: page %lu saved to SD cache (%lux%lu, %lu KB)\n",
-           pageIdx, w, h, (unsigned long)((size_t)w * h * 4 / 1024));
+           (unsigned long)pageIdx, (unsigned long)w, (unsigned long)h, 
+           (unsigned long)((size_t)w * h * 4 / 1024));
 }
 
 static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
@@ -581,7 +587,8 @@ static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
     page->lastDecodeFrame = currentFrame;
 
     // 3. Save to SD cache for next run (non-fatal if it fails)
-    savePageToSDCache(page, pageIdx, blobSize);
+    savePageToSDCache(page, pageIdx, blobSize, page->pixels);
+
 
     return true;
 }
@@ -1006,12 +1013,8 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         uint32_t blobSize = dw->txtr.textures[i].blobSize;
         if (blobSize == 0) { done++; continue; }
 
-        // Skip if already valid on SD
-        char path[128];
-        buildCachePath(path, sizeof(path), i);
-        if (isCacheValid(path, blobSize, page->atlasW, page->atlasH)) { done++; continue; }
-
         // Show progress bar - simple filled rect on top screen, no text needed
+        // TODO: why do we have two progress bars showing the same thing..?
         {
             C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
             C2D_TargetClear(C->top, C2D_Color32(20, 20, 40, 255));
@@ -1030,6 +1033,11 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
 
             C3D_FrameEnd(0);
         }
+
+        // Skip if already valid on SD
+        char path[128];
+        buildCachePath(path, sizeof(path), i);
+        if (isCacheValid(path, blobSize, page->atlasW, page->atlasH)) { done++; continue; }
 
         // Load the PNG blob
         uint8_t* blobData = DataWin_loadTexture(dw, i);
@@ -1056,20 +1064,32 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         }
 
         // Copy to main heap and release linear heap immediately
-        size_t pixSize = (size_t)w * h * 4;
-        page->pixels = malloc(pixSize);
-        if (!page->pixels) {
-            lodepng_free(linearPixels);
-            LOG_ERR("CRenderer3DS: precompute: malloc failed for page %lu (%zu KB)\n",
-                    i, pixSize / 1024);
-            done++;
-            continue;
-        }
-        memcpy(page->pixels, linearPixels, pixSize);
-        lodepng_free(linearPixels); // release linear heap now
+        //size_t pixSize = (size_t)w * h * 4;
+        //page->pixels = malloc(pixSize);
+        //if (!page->pixels) {
+        //    lodepng_free(linearPixels);
+        //    LOG_ERR("CRenderer3DS: precompute: malloc failed for page %lu (%zu KB)\n",
+        //            i, pixSize / 1024);
+        //    done++;
+        //    continue;
+        //}
+        //memcpy(page->pixels, linearPixels, pixSize);
+        //lodepng_free(linearPixels); // release linear heap now
 
         // Save decoded pixels to SD card
-        savePageToSDCache(page, i, blobSize);
+        //savePageToSDCache(page, i, blobSize);
+
+        // Save directly from the linear heap buffer
+        // We don't really need to copy to main heap 
+        // and waste time and break on bigger textures
+
+        savePageToSDCache(page, i, blobSize, linearPixels);
+
+        // Release the linear heap immediately after saving
+        lodepng_free(linearPixels);
+
+        // Set this to NULL so the rest of your code knows it's not in RAM
+        page->pixels = NULL; 
 
         // Free pixels and blob - no GPU work yet, we just needed them for the cache
         free(page->pixels);
