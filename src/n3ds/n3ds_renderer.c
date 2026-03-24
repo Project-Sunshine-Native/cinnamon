@@ -348,34 +348,44 @@ static RegionCacheEntry* regionAlloc(TexCachePage* page,
 // (Alternatively, thread it through, but this is simpler for a single-threaded renderer.)
 static CRenderer3DS* g_renderer = NULL;
 
-static void evictRegionsForDecode(uint32_t skipPageIdx, size_t bytesNeeded) {
-    if (!g_renderer) return;
+static bool findOldestLoadedRegion(uint32_t skipPageIdx, uint32_t* outPage, uint32_t* outSlot) {
+    uint32_t victimPage = UINT32_MAX;
+    uint32_t victimSlot = UINT32_MAX;
+    uint32_t oldest     = UINT32_MAX;
+    bool found          = false;
 
-    // Keep evicting the globally oldest loaded region until we have enough room.
-    for (;;) {
-        if ((size_t)linearSpaceFree() >= bytesNeeded) return;
+    for (uint32_t pi = 0; pi < g_renderer->pageCacheCount; pi++) {
+        if (pi == skipPageIdx) continue;
 
-        // Find the globally oldest loaded region entry across all pages.
-        uint32_t victimPage  = UINT32_MAX;
-        uint32_t victimSlot  = UINT32_MAX;
-        uint32_t oldest      = UINT32_MAX;
+        TexCachePage* p = &g_renderer->pageCache[pi];
+        for (uint32_t ri = 0; ri < p->regionCount; ri++) {
+            RegionCacheEntry* e = &p->regions[ri];
+            if (!e->loaded) continue;
 
-        for (uint32_t pi = 0; pi < g_renderer->pageCacheCount; pi++) {
-            if (pi == skipPageIdx) continue;
-            TexCachePage* p = &g_renderer->pageCache[pi];
-            for (uint32_t ri = 0; ri < p->regionCount; ri++) {
-                RegionCacheEntry* e = &p->regions[ri];
-                if (!e->loaded) continue; // sprite pool only; pinned live in pinnedRegions[]
-                if (e->lastUsed < oldest) {
-                    oldest     = e->lastUsed;
-                    victimPage = pi;
-                    victimSlot = ri;
-                }
+            if (!found || e->lastUsed < oldest) {
+                oldest     = e->lastUsed;
+                victimPage = pi;
+                victimSlot = ri;
+                found      = true;
             }
         }
+    }
 
-        if (victimPage == UINT32_MAX) {
-            // Nothing left to evict.
+    if (!found) return false;
+
+    *outPage = victimPage;
+    *outSlot = victimSlot;
+    return true;
+}
+
+static void evictRegionsForDecode(uint32_t skipPageIdx, size_t bytesNeeded) {
+    if (!g_renderer || bytesNeeded == 0) return;
+
+    while ((size_t)linearSpaceFree() < bytesNeeded) {
+        uint32_t victimPage;
+        uint32_t victimSlot;
+
+        if (!findOldestLoadedRegion(skipPageIdx, &victimPage, &victimSlot)) {
             printf("[TEX] eviction exhausted; %lu KB free (needed %lu KB)\n",
                    (unsigned long)(linearSpaceFree() / 1024),
                    (unsigned long)(bytesNeeded / 1024));
@@ -383,8 +393,11 @@ static void evictRegionsForDecode(uint32_t skipPageIdx, size_t bytesNeeded) {
         }
 
         RegionCacheEntry* e = &g_renderer->pageCache[victimPage].regions[victimSlot];
+
         C3D_TexDelete(&e->tex);
-        e->loaded = false;
+        memset(&e->tex, 0, sizeof(e->tex));
+        e->loaded   = false;
+        e->lastUsed  = 0;
     }
 }
 
@@ -1253,20 +1266,21 @@ static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int3
 static void CEndFrame(Renderer* renderer) {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
 
+    // Unneeded we just get rid of oldest if space is needed
     // Free decoded pixels that AREN'T on the hot list (keep some for next frame)
-    uint32_t currentFrame = C->frameCounter;
-    for (uint32_t i = 0; i < C->pageCacheCount; i++) {
-        TexCachePage* page = &C->pageCache[i];
+    //uint32_t currentFrame = C->frameCounter;
+    //for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+    //    TexCachePage* page = &C->pageCache[i];
         
         // Only free if it's older than our desired timeout
-        if (page->pixels &&
-            (currentFrame - page->lastDecodeFrame > page->decodeTimeout)) {
-            free(page->pixels);
-            page->pixels = NULL;
-            DBG_LOG("CRenderer3DS: Freed decoded pixels for page %lu (age: %u frames)\n",
-                    (unsigned long)i, currentFrame - page->lastDecodeFrame);
-        }
-    }
+        //if (page->pixels &&
+        //    (currentFrame - page->lastDecodeFrame > page->decodeTimeout)) {
+        //    free(page->pixels);
+        //    page->pixels = NULL;
+        //    DBG_LOG("CRenderer3DS: Freed decoded pixels for page %lu (age: %u frames)\n",
+        //            (unsigned long)i, currentFrame - page->lastDecodeFrame);
+        //}
+    //}
 
     C->frameCounter++;
     C3D_FrameEnd(0);
@@ -1372,22 +1386,26 @@ static void CDrawRectangle(Renderer* renderer,
     float sy1 = (y1 - (float)C->viewY) * C->scaleY + C->offsetY;
     float sx2 = (x2 - (float)C->viewX) * C->scaleX + C->offsetX;
     float sy2 = (y2 - (float)C->viewY) * C->scaleY + C->offsetY;
-    float w   = sx2 - sx1;
-    float h   = sy2 - sy1;
 
     if (outline) {
-        float pw = C->scaleX;
-        float ph = C->scaleY;
-        C2D_DrawRectSolid(sx1,      sy1,      C->zCounter, w + pw, ph,     col); // top
+        float pw = 1.0f * C->scaleX;
+        float ph = 1.0f * C->scaleY;
+
+        // Top
+        C2D_DrawRectSolid(sx1, sy1, C->zCounter, sx2 - sx1 + pw, ph, col);
         C->zCounter += 0.0001f;
-        C2D_DrawRectSolid(sx1,      sy2,      C->zCounter, w + pw, ph,     col); // bottom
+        // Bottom
+        C2D_DrawRectSolid(sx1, sy2, C->zCounter, sx2 - sx1 + pw, ph, col);
         C->zCounter += 0.0001f;
-        C2D_DrawRectSolid(sx1,      sy1 + ph, C->zCounter, pw,     h - ph, col); // left
+        // Left
+        C2D_DrawRectSolid(sx1, sy1 + ph, C->zCounter, pw, sy2 - sy1 - ph, col);
         C->zCounter += 0.0001f;
-        C2D_DrawRectSolid(sx2,      sy1 + ph, C->zCounter, pw,     h - ph, col); // right
+        // Right
+        C2D_DrawRectSolid(sx2, sy1 + ph, C->zCounter, pw, sy2 - sy1 - ph, col);
         C->zCounter += 0.0001f;
     } else {
-        C2D_DrawRectSolid(sx1, sy1, C->zCounter, w, h, col);
+        // Filled rect adds +1 like GL
+        C2D_DrawRectSolid(sx1, sy1, C->zCounter, sx2 - sx1 + 1, sy2 - sy1 + 1, col);
         C->zCounter += 0.0001f;
     }
 }
@@ -1558,6 +1576,8 @@ static void COnRoomEnd(Renderer* renderer) {
     logMemory("after room eviction");
 }
 
+static void COnRoomStart(Renderer* renderer) { /* no-op */ }
+
 static void CFlush(Renderer* renderer) { /* no-op */ }
 
 static int32_t CCreateSpriteFromSurface(Renderer* renderer,
@@ -1587,6 +1607,7 @@ static RendererVtable CVtable = {
     .createSpriteFromSurface = CCreateSpriteFromSurface,
     .deleteSprite            = CDeleteSprite,
     .onRoomEnd               = COnRoomEnd,
+    .onRoomStart             = COnRoomStart,
 };
 
 Renderer* CRenderer3DS_create(void) {

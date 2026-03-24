@@ -1202,6 +1202,7 @@ void Runner_step(Runner* runner) {
 
         // Fire Room Start for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
+        runner->renderer->vtable->onRoomStart(runner->renderer);
 
         runner->pendingRoom = -1;
     }
