@@ -147,13 +147,16 @@ static void linearToTile(uint8_t*       dst,
                         dst[dstOff + 3] = a;
 
                         if (a) {
-                            dst[dstOff + 0] = src[srcOff + 2]; // B
-                            dst[dstOff + 1] = src[srcOff + 1]; // G
-                            dst[dstOff + 2] = src[srcOff + 0]; // R
+                            uint32_t srcOff = ((srcY0 + ly) * fullSrcW + (srcX0 + lx)) * 4;
+                            dst[dstOff + 0] = src[srcOff + 3]; // A
+                            dst[dstOff + 1] = src[srcOff + 2]; // B
+                            dst[dstOff + 2] = src[srcOff + 1]; // G
+                            dst[dstOff + 3] = src[srcOff + 0]; // R
                         } else {
                             dst[dstOff + 0] = 0;
                             dst[dstOff + 1] = 0;
                             dst[dstOff + 2] = 0;
+                            dst[dstOff + 3] = 0;
                         }
                     }
                     else {
@@ -817,7 +820,7 @@ static void drawRegion(CRenderer3DS* C,
                 C2D_Image image = { .tex = &entry->tex, .subtex = &subtex };
 
                 C2D_ImageTint tint;
-                C2D_PlainImageTint(&tint, color, 1.0);
+                C2D_PlainImageTint(&tint, color, blend);
 
                 float chunkDestX = dstX + (chunkX - srcX) * pixScaleX;
                 float chunkDestY = dstY + (chunkY - srcY) * pixScaleY;
@@ -1270,7 +1273,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                    (float)tpag->sourceX,    (float)tpag->sourceY,
                    (float)tpag->sourceWidth, (float)tpag->sourceHeight,
                    dstX, dstY, dstW, dstH,
-                   angleDeg * (float)(M_PI / 180.0), tintColor, 1.0f);
+                   angleDeg * (float)(M_PI / 180.0), tintColor, 0.0f);
     } else {
         DBG_LOG("CDrawSprite: ERROR - pageIdx %lu out of range (count %lu)\n",
                 (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
@@ -1310,7 +1313,7 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                    dstX, dstY, dstW, dstH, 0.0f,
                    C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                (uint8_t)(alpha * 255.0f)),
-                   1.0f); // blend=1: multiply texture by tint (c_white = no change)
+                   0.0f); // blend=1: multiply texture by tint (c_white = no change)
     } else {
         DBG_LOG("CDrawSpritePart: ERROR - Page %lu out of range\n", (unsigned long)pageIdx);
         C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH, C2D_Color32(255, 0, 0, 255));
