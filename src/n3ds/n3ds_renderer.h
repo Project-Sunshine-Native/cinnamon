@@ -92,6 +92,11 @@ typedef struct {
     float   zCounter;
     uint32_t frameCounter;  // incremented at end of each frame; used for LRU timestamps
 
+    // Stored from beginFrame so beginView can compose the two-level transform:
+    // game-space port  ->  screen-space rect  ->  world-to-screen.
+    int32_t gameW, gameH;     // game resolution passed to beginFrame
+    int32_t screenW, screenH; // physical screen dimensions (e.g. 400x240 top screen)
+
     TexCachePage* pageCache;
     uint32_t      pageCacheCount;
 } CRenderer3DS;
