@@ -642,7 +642,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
     GSPGPU_FlushDataCache(entry->tex.data, bufSize);
     linearFree(swizzle);
 
-    C3D_TexSetFilter(&entry->tex, GPU_LINEAR, GPU_NEAREST);
+    C3D_TexSetFilter(&entry->tex, GPU_NEAREST, GPU_NEAREST);
     C3D_TexSetWrap(&entry->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     entry->loaded = true;
     return true;
