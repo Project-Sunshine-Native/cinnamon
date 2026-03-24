@@ -7,62 +7,55 @@ on:
     branches: [main]
 
 jobs:
-  build-glfw:
-    name: Build (GLFW)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get commit info
-        id: commit-info
-        run: |
-          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "date=$(git log -1 --format=%cd --date=short)" >> $GITHUB_OUTPUT
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake libglfw3-dev
-
-      - name: Configure
-        run: cmake -B build -DPLATFORM=glfw -DCMAKE_BUILD_TYPE=Debug "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
-
-      - name: Build
-        run: cmake --build build -j$(nproc)
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: butterscotch-glfw-linux
-          path: build/butterscotch
-
-  build-ps2:
-    name: Build (PS2)
+  build-n3ds:
+    name: Build (N3DS)
     runs-on: ubuntu-latest
     container:
-      image: ps2dev/ps2dev:latest
+      image: devkitpro/devkitarm:latest
     steps:
-      - name: Install build tools
-        run: apk add --no-cache cmake make gmp-dev mpfr-dev mpc1-dev git
-
       - uses: actions/checkout@v4
 
-      # Yeah, the safe.directory is needed because "fatal: detected dubious ownership in repository at '/__w/Butterscotch/Butterscotch'"
-      - name: Get commit info
-        id: commit-info
+      - name: Install 3DS Libraries
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "date=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+          sudo dkp-pacman -Syu --noconfirm
+          sudo dkp-pacman -S --needed --noconfirm \
+            3ds-cmake 3ds-examples 3ds-pkg-config 3dslink 3dstools tex3ds
 
-      - name: Configure
-        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=$PS2SDK/ps2dev.cmake -DPLATFORM=ps2 "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
+      - name: Download makerom
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: "3DSGuy/Project_CTR"
+          tag: "makerom-v0.19.0"
+          fileName: "makerom-v0.19.0-ubuntu_x86_64.zip"
+
+      - name: Download bannertool
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: "Epicpkmn11/bannertool"
+          tag: "v1.2.2"
+          fileName: "bannertool.zip"
+
+      - name: Setup Tools
+        run: |
+          # Setup makerom
+          unzip makerom-v0.19.0-ubuntu_x86_64.zip
+          chmod +x makerom
+          sudo mv makerom /opt/devkitpro/tools/bin/
+
+          # Setup bannertool
+          unzip bannertool.zip
+          sudo mv linux-x86_64/bannertool /opt/devkitpro/bannertool
+          sudo chmod +x /opt/devkitpro/bannertool
 
       - name: Build
         run: |
-          cmake --build build -j$(nproc)
-          cp build/butterscotch build/butterscotch.elf
+          make -j$(nproc)
+          make cia
 
-      - name: Upload artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: butterscotch-ps2
-          path: build/butterscotch.elf
+          name: butterscotch-n3ds
+          path: |
+            *.3dsx
+            *.cia
