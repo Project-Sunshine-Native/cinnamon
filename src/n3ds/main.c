@@ -658,6 +658,7 @@ int main(int argc, char* argv[]) {
         { KEY_RIGHT, VK_RIGHT }, // Move right
         { KEY_A,     VK_Z },     // A button triggers Z (confirm)
         { KEY_B,     VK_X },     // B button triggers X (cancel)
+        { KEY_X,     VK_C },     // X button triggers C (menu)
     };
 
     // Main loop
