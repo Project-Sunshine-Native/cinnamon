@@ -930,7 +930,7 @@ int main(int argc, char* argv[]) {
             C3D_FrameEnd(0);
         }
 
-        // Limit frame rate to room speed (skip in headless mode for max speed!!)
+        // Limit frame rate to room speed
         if (runner->currentRoom->speed > 0) {
             double targetFrameTime = 1.0 / (runner->currentRoom->speed);
             double nextFrameTime = lastFrameTime + targetFrameTime;

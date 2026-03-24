@@ -44,6 +44,8 @@
 
 typedef struct { size_t size; uint32_t _pad; } LodePNGAllocHeader;
 
+TickCounter timer;
+
 void* lodepng_malloc(size_t size) {
     //size_t total = size + sizeof(LodePNGAllocHeader);
     //LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
@@ -1148,6 +1150,9 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
 
     printf("CRenderer3DS: initialized (%lu pages, region-cache mode)\n",
            (unsigned long)pageCount);
+
+    osTickCounterStart(&timer);
+
     logMemory("renderer ready");
 }
 
@@ -1205,16 +1210,16 @@ static u64 lastframetime = 0;
 
 static void CBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
-    u64 now = osGetTime() * 1000ULL;
+    osTickCounterUpdate(&timer);
+    double targetMs = 1000.0 / runner->currentRoom->speed;
+    double elapsedMs = osTickCounterRead(&timer);
 
-    if (lastframetime != 0){
-        u64 waitingtime = now-lastframetime;
-
-        if (waitingtime < 1000000ULL / 30) 
-            svcSleepThread((s64)((1000000ULL / 30 - waitingtime) * 1000ULL));
+    if (elapsedMs < targetMs) {
+        // Wait for the remainder of the frame
+        // 1ms = 1,000,000ns
+        svcSleepThread((s64)((targetMs - elapsedMs) * 1000000ULL));
     }
-
-    lastframetime = now;
+    osTickCounterStart(&timer); // Reset for the next frame
 
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->zCounter = 0.5f;
