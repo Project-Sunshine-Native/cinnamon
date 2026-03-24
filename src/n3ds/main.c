@@ -831,7 +831,7 @@ int main(int argc, char* argv[]) {
 
         // Begin the frame via renderer vtable (if provided). This pairs with endFrame below
         if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->beginFrame != NULL) {
-            runner->renderer->vtable->beginFrame(runner->renderer, gameW, gameH, fbWidth, fbHeight);
+            runner->renderer->vtable->beginFrame(runner->renderer, runner->currentRoom->speed, gameW, gameH, fbWidth, fbHeight);
         }
 
         // NOTE: do NOT call beginFrame a second time here — CBeginFrame calls C3D_FrameBegin
