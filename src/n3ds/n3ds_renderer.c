@@ -1208,10 +1208,10 @@ static void CBeginView(Renderer* renderer,
 
 static u64 lastframetime = 0;
 
-static void CBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
+static void CBeginFrame(Renderer* renderer, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
     osTickCounterUpdate(&timer);
-    double targetMs = 1000.0 / runner->currentRoom->speed;
+    double targetMs = 1000.0 / speed;
     double elapsedMs = osTickCounterRead(&timer);
 
     if (elapsedMs < targetMs) {
