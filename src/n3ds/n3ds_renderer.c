@@ -148,7 +148,10 @@ static void linearToTile(uint8_t*       dst,
                     if (lx < copyW && ly < copyH) {
                         uint32_t srcOff = ((srcY0 + ly) * fullSrcW + (srcX0 + lx)) * 4;
                         uint8_t a = src[srcOff + 3];
+                        dst[dstOff + 3] = a;
+
                         if (a) {
+                            uint32_t srcOff = ((srcY0 + ly) * fullSrcW + (srcX0 + lx)) * 4;
                             dst[dstOff + 0] = src[srcOff + 3]; // A
                             dst[dstOff + 1] = src[srcOff + 2]; // B
                             dst[dstOff + 2] = src[srcOff + 1]; // G
@@ -639,7 +642,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
     GSPGPU_FlushDataCache(entry->tex.data, bufSize);
     linearFree(swizzle);
 
-    C3D_TexSetFilter(&entry->tex, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetFilter(&entry->tex, GPU_LINEAR, GPU_NEAREST);
     C3D_TexSetWrap(&entry->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     entry->loaded = true;
     return true;
@@ -1085,11 +1088,12 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
         // Release the linear heap immediately after saving
         lodepng_free(linearPixels);
 
-        // Set this to NULL so the rest of the code knows pixels aren't in RAM.
-        // linearPixels was already freed above; page->pixels was never set here.
-        page->pixels = NULL;
+        // Set this to NULL so the rest of your code knows it's not in RAM
+        page->pixels = NULL; 
 
-        // Free the blob – no GPU work needed, we only wanted it for the cache.
+        // Free pixels and blob - no GPU work yet, we just needed them for the cache
+        free(page->pixels);
+        page->pixels = NULL;
         free(dw->txtr.textures[i].blobData);
         dw->txtr.textures[i].blobData = NULL;
         dw->txtr.textures[i].loaded   = false;
@@ -1240,7 +1244,7 @@ static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int3
 
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->zCounter = 0.5f;
-    CBeginView(renderer, 0, 0, gameW, gameH, 0, 0, windowW, windowH, 0.0f);
+    CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, windowW, windowH, 0.0f);
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     C2D_TargetClear(C->top, clearColor);
     C2D_SceneBegin(C->top);
@@ -1289,12 +1293,8 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
     uint32_t pageIdx = (uint32_t)tpag->texturePageId;
 
-    float worldX = x + ((float)tpag->targetX - originX) * xscale;
-    float worldY = y + ((float)tpag->targetY - originY) * yscale;
-
-    float dstX = (worldX - C->viewX) * C->scaleX + C->offsetX;
-    float dstY = (worldY - C->viewY) * C->scaleY + C->offsetY;
-
+    float dstX = (x + ((float)tpag->targetX - originX) * xscale - (float)C->viewX) * C->scaleX + C->offsetX;
+    float dstY = (y + ((float)tpag->targetY - originY) * yscale - (float)C->viewY) * C->scaleY + C->offsetY;
     float dstW = (float)tpag->sourceWidth  * xscale * C->scaleX;
     float dstH = (float)tpag->sourceHeight * yscale * C->scaleY;
 
@@ -1311,7 +1311,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                    (float)tpag->sourceX,    (float)tpag->sourceY,
                    (float)tpag->sourceWidth, (float)tpag->sourceHeight,
                    dstX, dstY, dstW, dstH,
-                   -angleDeg * (float)(M_PI / 180.0), tintColor, 0.0f);
+                   angleDeg * (float)(M_PI / 180.0), tintColor, 0.0f);
     } else {
         DBG_LOG("CDrawSprite: ERROR - pageIdx %lu out of range (count %lu)\n",
                 (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
