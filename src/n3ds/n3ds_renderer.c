@@ -1229,7 +1229,7 @@ static void CBeginView(Renderer* renderer,
 
 //static u64 lastframetime = 0;
 
-static void CBeginFrame(Renderer* renderer, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
+static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
     osTickCounterUpdate(&timer);
     double targetMs = 1000.0 / speed;
@@ -1246,7 +1246,7 @@ static void CBeginFrame(Renderer* renderer, uint32_t speed, int32_t gameW, int32
     C->zCounter = 0.5f;
     CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, windowW, windowH, 0.0f);
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-    C2D_TargetClear(C->top, C2D_Color32(0, 0, 0, 255));
+    C2D_TargetClear(C->top, clearColor);
     C2D_SceneBegin(C->top);
 }
 

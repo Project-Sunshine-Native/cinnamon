@@ -831,7 +831,7 @@ int main(int argc, char* argv[]) {
 
         // Begin the frame via renderer vtable (if provided). This pairs with endFrame below
         if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->beginFrame != NULL) {
-            runner->renderer->vtable->beginFrame(runner->renderer, runner->currentRoom->speed, gameW, gameH, fbWidth, fbHeight);
+            runner->renderer->vtable->beginFrame(runner->renderer, C2D_Color32(BGR_R(runner->backgroundColor), BGR_G(runner->backgroundColor), BGR_B(runner->backgroundColor), 255), runner->currentRoom->speed, gameW, gameH, fbWidth, fbHeight);
         }
 
         // NOTE: do NOT call beginFrame a second time here — CBeginFrame calls C3D_FrameBegin
