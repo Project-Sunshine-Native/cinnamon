@@ -13,7 +13,7 @@ typedef struct Renderer Renderer;
 typedef struct {
     void (*init)(Renderer* renderer, DataWin* dataWin);
     void (*destroy)(Renderer* renderer);
-    void (*beginFrame)(Renderer* renderer, u32 clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH);
+    void (*beginFrame)(Renderer* renderer, uint32_t clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH);
     void (*endFrame)(Renderer* renderer);
     void (*beginView)(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle);
     void (*endView)(Renderer* renderer);
