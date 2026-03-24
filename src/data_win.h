@@ -814,7 +814,7 @@ static uint8_t* DataWin_loadAudio(DataWin* dw, uint32_t index) {
     if (!dw->audo.entries[index].loaded) {
         // Validate the audio entry before loading
         if (dw->audo.entries[index].dataSize == 0 || dw->audo.entries[index].dataOffset == 0) {
-            printf("DataWin_loadAudio: Audio[%u] has invalid size (%u) or offset (%llu)\n", 
+            printf("DataWin_loadAudio: Audio[%u] has invalid size (%lu) or offset (%llu)\n", 
                    index, dw->audo.entries[index].dataSize, 
                    (unsigned long long)dw->audo.entries[index].dataOffset);
             return NULL;
