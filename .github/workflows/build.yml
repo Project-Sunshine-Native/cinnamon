@@ -13,12 +13,39 @@ jobs:
     container:
       image: devkitpro/devkitarm:latest
     steps:
-      - name: Install build tools
-        run: |
-          apt-get update
-          apt-get install -y git make 3ds-dev 3ds-tools 3ds-libctru
-
       - uses: actions/checkout@v4
+
+      - name: Install 3DS Libraries
+        run: |
+          sudo dkp-pacman -Syu --noconfirm
+          sudo dkp-pacman -S --needed --noconfirm \
+            3ds-cmake 3ds-examples 3ds-pkg-config 3dslink 3dstools tex3ds
+
+      - name: Download makerom
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: "3DSGuy/Project_CTR"
+          tag: "makerom-v0.19.0"
+          fileName: "makerom-v0.19.0-ubuntu_x86_64.zip"
+
+      - name: Download bannertool
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: "Epicpkmn11/bannertool"
+          tag: "v1.2.2"
+          fileName: "bannertool.zip"
+
+      - name: Setup Tools
+        run: |
+          # Setup makerom
+          unzip makerom-v0.19.0-ubuntu_x86_64.zip
+          chmod +x makerom
+          sudo mv makerom /opt/devkitpro/tools/bin/
+
+          # Setup bannertool
+          unzip bannertool.zip
+          sudo mv bannertool/linux-x86_64/bannertool /opt/devkitpro/bannertool
+          sudo chmod +x /opt/devkitpro/bannertool
 
       - name: Build
         run: |
