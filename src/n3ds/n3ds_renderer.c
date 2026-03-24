@@ -1201,9 +1201,21 @@ static void CBeginView(Renderer* renderer,
     }
 }
 
-static void CBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH,
-                         int32_t windowW, int32_t windowH)
+static u64 lastframetime = 0;
+
+static void CBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
+    u64 now = osGetTime() * 1000ULL;
+
+    if (lastframetime != 0){
+        u64 waitingtime = now-lastframetime;
+
+        if (waitingtime < 1000000ULL / 30) 
+            svcSleepThread((s64)((1000000ULL / 30 - waitingtime) * 1000ULL));
+    }
+
+    lastframetime = now;
+
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->zCounter = 0.5f;
     CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, windowW, windowH, 0.0f);
