@@ -857,7 +857,8 @@ int main(int argc, char* argv[]) {
         // TODO: Render one of the views to the bottom screen!
         if (viewsEnabled) {
             repeat(8, vi) {
-                if (!activeRoom->views[vi].enabled) continue;
+                if (!activeRoom->views[vi].enabled)
+                    continue;
 
                 int32_t viewX = activeRoom->views[vi].viewX;
                 int32_t viewY = activeRoom->views[vi].viewY;
@@ -871,8 +872,8 @@ int main(int argc, char* argv[]) {
 
                 runner->viewCurrent = vi;
                 // TODO: Add renderer, see first comment about  renderer
-                // renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
-
+                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX * 400 / gameW, portY * 240 / gameH, portW * 400 / gameW, portH * 240 / gameH, viewAngle);
+                    
                 Runner_draw(runner);
 
                 // renderer->vtable->endView(renderer);
