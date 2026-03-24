@@ -61,7 +61,7 @@ COMMON      := -Wall -O2 -mword-relocations -fomit-frame-pointer -ffunction-sect
 CFLAGS 		:= $(COMMON) -std=gnu99 -Wno-unused-function -DLODEPNG_NO_COMPILE_ALLOCATORS
 CXXFLAGS    := $(COMMON) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS     := $(ARCH)
-LDFLAGS     = -specs=3dsx.specs $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS     =  $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 #---------------------------------------------------------------------------------
 # Libraries needed to link into the executable.

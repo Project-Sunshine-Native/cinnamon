@@ -8,7 +8,7 @@ BasicInfo:
   #RootPath                : $(APP_ROMFS)
 
 TitleInfo:
-  Category                : Application
+  Category                : Base
   UniqueId                : $(APP_UNIQUE_ID)
 
 Option:
@@ -155,7 +155,7 @@ AccessControlInfo:
    #- cfg:nor
    #- cfg:u
    #- csnd:SND
-   #- dsp::DSP
+   - dsp::DSP
    #- frd:u
    - fs:USER
    - gsp::Gpu
