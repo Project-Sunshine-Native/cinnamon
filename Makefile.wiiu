@@ -26,12 +26,23 @@ APP_AUTHOR      := MrPowerGamerBR
 APP_ICON        := resources/icon.png
 APP_CONTENT     := $(CONTENT_DIR)
 
-UNDERTALE_ASSET_DIR ?= /home/gray/.local/share/Steam/steamapps/common/Undertale
+ifeq ($(OS),Windows_NT)
+DEFAULT_UNDERTALE_ASSET_DIR := $(USERPROFILE)/AppData/Local/Steam/steamapps/common/Undertale
+CAFEGLSL        ?= $(TOPDIR)/tools/CafeGLSL/glslcompiler.exe
+else
+DEFAULT_UNDERTALE_ASSET_DIR := /home/gray/.local/share/Steam/steamapps/common/Undertale
+CAFEGLSL        ?= $(TOPDIR)/tools/CafeGLSL/glslcompiler.elf
+endif
 
-CAFEGLSL        := $(TOPDIR)/tools/CafeGLSL/glslcompiler.elf
+UNDERTALE_ASSET_DIR ?= $(DEFAULT_UNDERTALE_ASSET_DIR)
+
 WIIU_SHADER_DIR := $(TOPDIR)/resources/wiiu/shaders
 WIIU_SHADERS    := $(WIIU_SHADER_DIR)/textured_quad.gsh $(WIIU_SHADER_DIR)/pos_col.gsh
 WIIU_SHADER_HDR := $(TOPDIR)/src/wiiu/textured_quad_gsh.h $(TOPDIR)/src/wiiu/pos_col_gsh.h
+WIIU_SHADER_PREBUILT := $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
+HAVE_CAFEGLSL := $(if $(wildcard $(CAFEGLSL)),1,0)
+UNDERTALE_OGG_FILES := $(wildcard $(UNDERTALE_ASSET_DIR)/*.ogg)
+UNDERTALE_WAV_FILES := $(wildcard $(UNDERTALE_ASSET_DIR)/*.wav)
 
 COMMON      := -Wall -O2 -ffunction-sections -fdata-sections $(MACHDEP) $(INCLUDE) -D__WIIU__
 CFLAGS      := $(COMMON) -std=gnu99 -Wno-unused-function
@@ -62,7 +73,7 @@ else
     export LD := $(CXX)
 endif
 
-.PHONY: all clean wuhb rpx shaders stage-assets
+.PHONY: all clean wuhb rpx shaders stage-assets verify-precompiled-shaders regen-shaders
 
 all: wuhb
 
@@ -73,16 +84,36 @@ stage-assets:
 		cp -f "$(UNDERTALE_ASSET_DIR)/data.win" "$(OUTPUT_DIR)/data.win"; \
 		cp -f "$(UNDERTALE_ASSET_DIR)/data.win" "$(CONTENT_DIR)/data.win"; \
 	fi
-	@if ls "$(UNDERTALE_ASSET_DIR)"/*.ogg >/dev/null 2>&1; then \
-		cp -f "$(UNDERTALE_ASSET_DIR)"/*.ogg "$(OUTPUT_DIR)/"; \
-		cp -f "$(UNDERTALE_ASSET_DIR)"/*.ogg "$(CONTENT_DIR)/"; \
+	@if [ -n "$(strip $(UNDERTALE_OGG_FILES))" ]; then \
+		cp -f $(UNDERTALE_OGG_FILES) "$(OUTPUT_DIR)/"; \
+		cp -f $(UNDERTALE_OGG_FILES) "$(CONTENT_DIR)/"; \
 	fi
-	@if ls "$(UNDERTALE_ASSET_DIR)"/*.wav >/dev/null 2>&1; then \
-		cp -f "$(UNDERTALE_ASSET_DIR)"/*.wav "$(OUTPUT_DIR)/"; \
-		cp -f "$(UNDERTALE_ASSET_DIR)"/*.wav "$(CONTENT_DIR)/"; \
+	@if [ -n "$(strip $(UNDERTALE_WAV_FILES))" ]; then \
+		cp -f $(UNDERTALE_WAV_FILES) "$(OUTPUT_DIR)/"; \
+		cp -f $(UNDERTALE_WAV_FILES) "$(CONTENT_DIR)/"; \
 	fi
 
+ifeq ($(HAVE_CAFEGLSL),1)
 shaders: $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
+else
+shaders: verify-precompiled-shaders
+endif
+
+verify-precompiled-shaders:
+	@missing=0; \
+	for file in $(WIIU_SHADER_PREBUILT); do \
+		if [ ! -f "$$file" ]; then \
+			echo "Missing precompiled shader artifact: $$file"; \
+			missing=1; \
+		fi; \
+	done; \
+	if [ $$missing -ne 0 ]; then \
+		echo "CafeGLSL compiler not found at $(CAFEGLSL), and precompiled shader artifacts are incomplete."; \
+		exit 1; \
+	fi
+	@echo "using precompiled CafeGLSL shaders (compiler not found at $(CAFEGLSL))"
+
+regen-shaders: $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
 
 wuhb: shaders stage-assets
 	@[ -d $(BUILD) ] || mkdir -p $(BUILD)
