@@ -5,6 +5,50 @@
 #include <string.h>
 #include <stdbool.h>
 
+//Big endian read for Wii U
+#ifdef __WIIU__
+uint16_t BinaryReader_readUint16LE(const void* data) {
+    const uint8_t* bytes = (const uint8_t*) data;
+    return (uint16_t) ((uint16_t) bytes[0] |
+                       ((uint16_t) bytes[1] << 8));
+}
+
+int16_t BinaryReader_readInt16LE(const void* data) {
+    return (int16_t) BinaryReader_readUint16LE(data);
+}
+
+uint32_t BinaryReader_readUint32LE(const void* data) {
+    const uint8_t* bytes = (const uint8_t*) data;
+    return (uint32_t) ((uint32_t) bytes[0] |
+                       ((uint32_t) bytes[1] << 8) |
+                       ((uint32_t) bytes[2] << 16) |
+                       ((uint32_t) bytes[3] << 24));
+}
+
+int32_t BinaryReader_readInt32LE(const void* data) {
+    return (int32_t) BinaryReader_readUint32LE(data);
+}
+
+uint64_t BinaryReader_readUint64LE(const void* data) {
+    const uint8_t* bytes = (const uint8_t*) data;
+    return (uint64_t) ((uint64_t) bytes[0] |
+                       ((uint64_t) bytes[1] << 8) |
+                       ((uint64_t) bytes[2] << 16) |
+                       ((uint64_t) bytes[3] << 24) |
+                       ((uint64_t) bytes[4] << 32) |
+                       ((uint64_t) bytes[5] << 40) |
+                       ((uint64_t) bytes[6] << 48) |
+                       ((uint64_t) bytes[7] << 56));
+}
+
+float BinaryReader_readFloat32LE(const void* data) {
+    uint32_t bits = BinaryReader_readUint32LE(data);
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+#endif
+
 BinaryReader BinaryReader_create(FILE* file, size_t fileSize) {
     return (BinaryReader){.file = file, .fileSize = fileSize, .buffer = NULL, .bufferBase = 0, .bufferSize = 0, .bufferPos = 0};
 }
@@ -65,39 +109,75 @@ uint8_t BinaryReader_readUint8(BinaryReader* reader) {
 }
 
 int16_t BinaryReader_readInt16(BinaryReader* reader) {
+#ifdef __WIIU__
+    uint8_t bytes[2];
+    readCheck(reader, bytes, sizeof(bytes));
+    return BinaryReader_readInt16LE(bytes);
+#else
     int16_t value;
     readCheck(reader, &value, 2);
     return value;
+#endif
 }
 
 uint16_t BinaryReader_readUint16(BinaryReader* reader) {
+#ifdef __WIIU__
+    uint8_t bytes[2];
+    readCheck(reader, bytes, sizeof(bytes));
+    return BinaryReader_readUint16LE(bytes);
+#else
     uint16_t value;
     readCheck(reader, &value, 2);
     return value;
+#endif
 }
 
 int32_t BinaryReader_readInt32(BinaryReader* reader) {
+#ifdef __WIIU__
+    uint8_t bytes[4];
+    readCheck(reader, bytes, sizeof(bytes));
+    return BinaryReader_readInt32LE(bytes);
+#else
     int32_t value;
     readCheck(reader, &value, 4);
     return value;
+#endif
 }
 
 uint32_t BinaryReader_readUint32(BinaryReader* reader) {
+#ifdef __WIIU__
+    uint8_t bytes[4];
+    readCheck(reader, bytes, sizeof(bytes));
+    return BinaryReader_readUint32LE(bytes);
+#else
     uint32_t value;
     readCheck(reader, &value, 4);
     return value;
+#endif
 }
 
 float BinaryReader_readFloat32(BinaryReader* reader) {
+#ifdef __WIIU__
+    uint8_t bytes[4];
+    readCheck(reader, bytes, sizeof(bytes));
+    return BinaryReader_readFloat32LE(bytes);
+#else
     float value;
     readCheck(reader, &value, 4);
     return value;
+#endif
 }
 
 uint64_t BinaryReader_readUint64(BinaryReader* reader) {
+#ifdef __WIIU__
+    uint8_t bytes[8];
+    readCheck(reader, bytes, sizeof(bytes));
+    return BinaryReader_readUint64LE(bytes);
+#else
     uint64_t value;
     readCheck(reader, &value, 8);
     return value;
+#endif
 }
 
 bool BinaryReader_readBool32(BinaryReader* reader) {
@@ -160,4 +240,3 @@ size_t BinaryReader_getPosition(BinaryReader* reader) {
     }
     return (size_t) ftell(reader->file);
 }
-
