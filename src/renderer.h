@@ -15,7 +15,7 @@ typedef struct {
     void (*destroy)(Renderer* renderer);
     void (*beginFrame)(Renderer* renderer, uint32_t clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH);
     void (*endFrame)(Renderer* renderer);
-    void (*beginView)(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle);
+    void (*beginView)(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle, uint32_t viewIndex);
     void (*endView)(Renderer* renderer);
     void (*drawSprite)(Renderer* renderer, int32_t tpagIndex, float x, float y, float originX, float originY, float xscale, float yscale, float angleDeg, uint32_t color, float alpha);
     void (*drawSpritePart)(Renderer* renderer, int32_t tpagIndex, int32_t srcOffX, int32_t srcOffY, int32_t srcW, int32_t srcH, float x, float y, float xscale, float yscale, uint32_t color, float alpha);
@@ -29,6 +29,7 @@ typedef struct {
     // Optional: platform-specific tile rendering (nullptr = use default drawSpritePart path)
     void (*drawTile)(Renderer* renderer, RoomTile* tile, float offsetX, float offsetY);
     void (*onRoomEnd)(Renderer* renderer);
+    void (*onRoomStart)(Renderer* renderer);
 } RendererVtable;
 
 // ===[ Renderer Base Struct ]===

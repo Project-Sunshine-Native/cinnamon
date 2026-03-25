@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
-    consoleInit(GFX_BOTTOM, NULL);
+    //consoleInit(GFX_BOTTOM, NULL);
 
     LogToSD("Initialized 3DS libraries (pre-parse)");
 
@@ -872,7 +872,7 @@ int main(int argc, char* argv[]) {
 
                 runner->viewCurrent = vi;
                 // TODO: Add renderer, see first comment about  renderer
-                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX * 400 / gameW, portY * 240 / gameH, portW * 400 / gameW, portH * 240 / gameH, viewAngle);
+                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX * 400 / gameW, portY * 240 / gameH, portW * 400 / gameW, portH * 240 / gameH, viewAngle, vi);
                     
                 Runner_draw(runner);
 
@@ -884,8 +884,7 @@ int main(int argc, char* argv[]) {
         if (!anyViewRendered) {
             // No views enabled or views disabled: render with default full-screen view
             runner->viewCurrent = 0;
-            // TODO: Add renderer, see first comment about  renderer
-            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f, 0);
             Runner_draw(runner);
             renderer->vtable->endView(renderer);
         }
