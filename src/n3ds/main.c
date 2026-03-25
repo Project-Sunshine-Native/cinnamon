@@ -387,7 +387,6 @@ int main(int argc, char* argv[]) {
     }
 
     // ===[ Graphics init — done BEFORE DataWin_parse so we can show a loading bar ]===
-    //romfsInit();
     gfxInitDefault();
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
@@ -585,8 +584,8 @@ int main(int argc, char* argv[]) {
     }
     */
 
-    // Initalize romfs access
-    // (romfsInit was already called before DataWin_parse for the loading bar)
+    // Initalize sdmc access
+    // (sdmcInit was already called before DataWin_parse for the loading bar)
 
     // gfxInitDefault / C3D_Init / C2D_Init / C2D_Prepare / consoleInit were
     // already called before DataWin_parse so the loading bar could be shown.
