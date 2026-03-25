@@ -1,5 +1,5 @@
 # Cinnamon
-A fork of butterscotch with 3ds (and later Wii U) support!
+A fork of butterscotch with 3DS and Wii U support!
 
 ### TO-DO:
 - Replace all glfw references with citro3d (not using citro2d because citro3d is closer) in n3ds/main.c

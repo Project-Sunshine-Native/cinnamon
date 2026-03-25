@@ -1,0 +1,124 @@
+#---------------------------------------------------------------------------------
+.SUFFIXES:
+#---------------------------------------------------------------------------------
+
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitPro")
+endif
+
+ifeq ($(strip $(DEVKITPPC)),)
+$(error "Please set DEVKITPPC in your environment. export DEVKITPPC=<path to>/devkitPro/devkitPPC")
+endif
+
+TOPDIR ?= $(CURDIR)
+include $(DEVKITPRO)/wut/share/wut_rules
+
+TARGET      := cinnamon
+BUILD       := build-wiiu
+SOURCES     := src src/wiiu
+INCLUDES    := include src src/wiiu
+OUTPUT      := output-wiiu
+CONTENT_DIR := $(TOPDIR)/$(OUTPUT)/content
+
+APP_NAME        := Cinnamon
+APP_SHORTNAME   := Cinnamon
+APP_AUTHOR      := MrPowerGamerBR
+APP_ICON        := resources/icon.png
+APP_CONTENT     := $(CONTENT_DIR)
+
+UNDERTALE_ASSET_DIR ?= /home/gray/.local/share/Steam/steamapps/common/Undertale
+
+CAFEGLSL        := $(TOPDIR)/tools/CafeGLSL/glslcompiler.elf
+WIIU_SHADER_DIR := $(TOPDIR)/resources/wiiu/shaders
+WIIU_SHADERS    := $(WIIU_SHADER_DIR)/textured_quad.gsh $(WIIU_SHADER_DIR)/pos_col.gsh
+WIIU_SHADER_HDR := $(TOPDIR)/src/wiiu/textured_quad_gsh.h $(TOPDIR)/src/wiiu/pos_col_gsh.h
+
+COMMON      := -Wall -O2 -ffunction-sections -fdata-sections $(MACHDEP) $(INCLUDE) -D__WIIU__
+CFLAGS      := $(COMMON) -std=gnu99 -Wno-unused-function
+CXXFLAGS    := $(COMMON) -std=gnu++11 -fno-rtti -fno-exceptions
+ASFLAGS     := $(MACHDEP)
+LDFLAGS     := $(RPXSPECS) -Wl,-Map,$(notdir $*.map),--gc-sections
+LIBS        := -lSDL2 -lwut -lm
+LIBDIRS     := $(PORTLIBS) $(WUT_ROOT)
+
+ifneq ($(BUILD),$(notdir $(CURDIR)))
+
+export TOPDIR      := $(CURDIR)
+export OUTPUT_DIR  := $(TOPDIR)/$(OUTPUT)
+export OUTPUT_FILE := $(OUTPUT_DIR)/$(TARGET)
+export VPATH       := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir))
+
+export DEPSDIR     := $(CURDIR)/$(BUILD)
+export CFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+export CPPFILES    := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+export OFILES      := $(CFILES:.c=.o) $(CPPFILES:.cpp=.o)
+export INCLUDE     := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+                      $(foreach dir,$(LIBDIRS),-I$(dir)/include)
+export LIBPATHS    := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+ifeq ($(strip $(CPPFILES)),)
+    export LD := $(CC)
+else
+    export LD := $(CXX)
+endif
+
+.PHONY: all clean wuhb rpx shaders stage-assets
+
+all: wuhb
+
+stage-assets:
+	@[ -d $(OUTPUT_DIR) ] || mkdir -p $(OUTPUT_DIR)
+	@[ -d $(CONTENT_DIR) ] || mkdir -p $(CONTENT_DIR)
+	@if [ -f "$(UNDERTALE_ASSET_DIR)/data.win" ]; then \
+		cp -f "$(UNDERTALE_ASSET_DIR)/data.win" "$(OUTPUT_DIR)/data.win"; \
+		cp -f "$(UNDERTALE_ASSET_DIR)/data.win" "$(CONTENT_DIR)/data.win"; \
+	fi
+	@if ls "$(UNDERTALE_ASSET_DIR)"/*.ogg >/dev/null 2>&1; then \
+		cp -f "$(UNDERTALE_ASSET_DIR)"/*.ogg "$(OUTPUT_DIR)/"; \
+		cp -f "$(UNDERTALE_ASSET_DIR)"/*.ogg "$(CONTENT_DIR)/"; \
+	fi
+	@if ls "$(UNDERTALE_ASSET_DIR)"/*.wav >/dev/null 2>&1; then \
+		cp -f "$(UNDERTALE_ASSET_DIR)"/*.wav "$(OUTPUT_DIR)/"; \
+		cp -f "$(UNDERTALE_ASSET_DIR)"/*.wav "$(CONTENT_DIR)/"; \
+	fi
+
+shaders: $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
+
+wuhb: shaders stage-assets
+	@[ -d $(BUILD) ] || mkdir -p $(BUILD)
+	@[ -d $(OUTPUT_DIR) ] || mkdir -p $(OUTPUT_DIR)
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.wiiu $(OUTPUT_FILE).wuhb
+
+rpx: shaders stage-assets
+	@[ -d $(BUILD) ] || mkdir -p $(BUILD)
+	@[ -d $(OUTPUT_DIR) ] || mkdir -p $(OUTPUT_DIR)
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.wiiu $(OUTPUT_FILE).rpx
+
+clean:
+	@rm -rf $(BUILD) $(OUTPUT)
+
+$(WIIU_SHADER_DIR)/textured_quad.gsh: $(WIIU_SHADER_DIR)/textured_quad.vs $(WIIU_SHADER_DIR)/textured_quad.ps $(CAFEGLSL)
+	@echo compiling ... $(notdir $@)
+	@$(CAFEGLSL) -vs $(WIIU_SHADER_DIR)/textured_quad.vs -ps $(WIIU_SHADER_DIR)/textured_quad.ps -o $@
+
+$(TOPDIR)/src/wiiu/textured_quad_gsh.h: $(WIIU_SHADER_DIR)/textured_quad.gsh
+	@echo embedding ... $(notdir $@)
+	@xxd -i -n resources_wiiu_shaders_textured_quad_gsh $< > $@
+
+$(WIIU_SHADER_DIR)/pos_col.gsh: $(WIIU_SHADER_DIR)/pos_col.vs $(WIIU_SHADER_DIR)/pos_col.ps $(CAFEGLSL)
+	@echo compiling ... $(notdir $@)
+	@$(CAFEGLSL) -vs $(WIIU_SHADER_DIR)/pos_col.vs -ps $(WIIU_SHADER_DIR)/pos_col.ps -o $@
+
+$(TOPDIR)/src/wiiu/pos_col_gsh.h: $(WIIU_SHADER_DIR)/pos_col.gsh
+	@echo embedding ... $(notdir $@)
+	@xxd -i -n resources_wiiu_shaders_pos_col_gsh $< > $@
+
+else
+
+DEPENDS := $(OFILES:.o=.d)
+
+-include $(DEPENDS)
+
+$(OUTPUT_FILE).elf: $(OFILES)
+
+endif
