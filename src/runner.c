@@ -1202,7 +1202,13 @@ void Runner_step(Runner* runner) {
 
         // Fire Room Start for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
-        runner->renderer->vtable->onRoomStart(runner->renderer);
+#ifndef __WIIU__
+        if (runner->renderer != nullptr &&
+            runner->renderer->vtable != nullptr &&
+            runner->renderer->vtable->onRoomStart != nullptr) {
+            runner->renderer->vtable->onRoomStart(runner->renderer);
+        }
+#endif
 
         runner->pendingRoom = -1;
     }
