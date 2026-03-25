@@ -1301,7 +1301,7 @@ static void parseAUDO(BinaryReader* reader, DataWin* dw) {
 static void logMemUse(const char* tag)
 {
 #ifdef __3DS__
-    printf("[MEM] %-40s total used: %lu KB, total free: %lu KB\n", tag, (unsigned long)(osGetMemRegionUsed(MEMREGION_ALL) / 1024), (unsigned long)(osGetMemRegionFree(MEMREGION_ALL) / 1024));
+    printf("[MEM] %-40s total used: %lu KB, total free: %lu KB\n", tag, (unsigned long)(osGetMemRegionUsed(MEMREGION_APPLICATION) / 1024), (unsigned long)(osGetMemRegionFree(MEMREGION_APPLICATION) / 1024));
 #endif
 }
 
