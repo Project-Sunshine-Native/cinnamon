@@ -9,6 +9,10 @@
 #include "stb_ds.h"
 #include "utils.h"
 
+#ifdef __3DS__
+#include <3ds/os.h>
+#endif
+
 // ===[ HELPERS ]===
 
 // Reads a uint32 absolute file offset, resolves it into the pre-loaded STRG buffer,
@@ -1294,9 +1298,18 @@ static void parseAUDO(BinaryReader* reader, DataWin* dw) {
     free(ptrs);
 }
 
+static void logMemUse(const char* tag)
+{
+#ifdef __3DS__
+    printf("[MEM] %-40s total used: %lu KB, total free: %lu KB\n", tag, (unsigned long)(osGetMemRegionUsed(MEMREGION_ALL) / 1024), (unsigned long)(osGetMemRegionFree(MEMREGION_ALL) / 1024));
+#endif
+}
+
 // ===[ MAIN PARSE FUNCTION ]===
 
 DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
+    logMemUse("Data Win parse start...");
+
     FILE* file = fopen(filePath, "rb");
     if (!file) {
         fprintf(stderr, "Failed to open file: %s\n", filePath);
@@ -1305,7 +1318,7 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
 
     // Fast I/O device: use the default stdio buffer.
     // No need for the 128KB setvbuf buffer that was added to amortize
-    // slow CDVD sector reads — that overhead doesn't exist here.
+    // slow CDVD sector reads, that overhead doesn't exist here.
 
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
@@ -1334,6 +1347,8 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
     uint32_t formLength = BinaryReader_readUint32(&reader);
     (void) formLength;
 
+    logMemUse("Before STRG load");
+
     // Pass 1: Find and load STRG only.
     // All other chunks reference strings from STRG, so it must be
     // loaded before pass 2. We count chunks here for progress reporting.
@@ -1359,6 +1374,8 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         }
     }
 
+    logMemUse("After STRG load");
+
     // Pass 2: Parse all chunks directly from the FILE* stream.
     // On a fast-I/O device there is no benefit to bulk-loading each chunk
     // into a malloc'd buffer before parsing — doing so wastes RAM and adds
@@ -1380,53 +1397,99 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
         }
 
         if (options.parseGen8 && memcmp(chunkName, "GEN8", 4) == 0) {
+            logMemUse("Before GEN8 Load");
             parseGEN8(&reader, dw);
+            logMemUse("After GEN8 Load");
         } else if (options.parseOptn && memcmp(chunkName, "OPTN", 4) == 0) {
+            logMemUse("Before OPTN Load");
             parseOPTN(&reader, dw);
+            logMemUse("After OPTN Load");
         } else if (options.parseLang && memcmp(chunkName, "LANG", 4) == 0) {
+            logMemUse("Before LANG Load");
             parseLANG(&reader, dw);
+            logMemUse("After LANG Load");
         } else if (options.parseExtn && memcmp(chunkName, "EXTN", 4) == 0) {
+            logMemUse("Before EXTN Load");
             parseEXTN(&reader, dw);
+            logMemUse("After EXTN Load");
         } else if (options.parseSond && memcmp(chunkName, "SOND", 4) == 0) {
+            logMemUse("Before SOND Load");
             parseSOND(&reader, dw);
+            logMemUse("After SOND Load");
         } else if (options.parseAgrp && memcmp(chunkName, "AGRP", 4) == 0) {
+            logMemUse("Before AGRP Load");
             parseAGRP(&reader, dw);
+            logMemUse("Before AGRP Load");
         } else if (options.parseSprt && memcmp(chunkName, "SPRT", 4) == 0) {
+            logMemUse("Before SPRT Load");
             parseSPRT(&reader, dw, options.skipLoadingPreciseMasksForNonPreciseSprites);
+            logMemUse("After SPRT Load");
         } else if (options.parseBgnd && memcmp(chunkName, "BGND", 4) == 0) {
+            logMemUse("Before BGND Load");
             parseBGND(&reader, dw);
+            logMemUse("After BGND Load");
         } else if (options.parsePath && memcmp(chunkName, "PATH", 4) == 0) {
+            logMemUse("Before PATH Load");
             parsePATH(&reader, dw);
+            logMemUse("After PATH Load");
         } else if (options.parseScpt && memcmp(chunkName, "SCPT", 4) == 0) {
+            logMemUse("Before SCPT Load");
             parseSCPT(&reader, dw);
+            logMemUse("After SCPT Load");
         } else if (options.parseGlob && memcmp(chunkName, "GLOB", 4) == 0) {
+            logMemUse("Before GLOB Load");
             parseGLOB(&reader, dw);
+            logMemUse("After GLOB Load");
         } else if (options.parseShdr && memcmp(chunkName, "SHDR", 4) == 0) {
+            logMemUse("Before SHDR Load");
             parseSHDR(&reader, dw);
+            logMemUse("After SHDR Load");
         } else if (options.parseFont && memcmp(chunkName, "FONT", 4) == 0) {
+            logMemUse("Before FONT Load");
             parseFONT(&reader, dw);
+            logMemUse("After FONT Load");
         } else if (options.parseTmln && memcmp(chunkName, "TMLN", 4) == 0) {
+            logMemUse("Before TMLN Load");
             parseTMLN(&reader, dw);
+            logMemUse("After TMLN Load");
         } else if (options.parseObjt && memcmp(chunkName, "OBJT", 4) == 0) {
+            logMemUse("Before OBJT Load");
             parseOBJT(&reader, dw);
+            logMemUse("After OBJT Load");
         } else if (options.parseRoom && memcmp(chunkName, "ROOM", 4) == 0) {
+            logMemUse("Before ROOM Load");
             parseROOM(&reader, dw);
+            logMemUse("After ROOM Load");
         } else if (memcmp(chunkName, "DAFL", 4) == 0) {
             // Empty chunk, nothing to parse
         } else if (options.parseTpag && memcmp(chunkName, "TPAG", 4) == 0) {
+            logMemUse("Before TPAG Load");
             parseTPAG(&reader, dw);
+            logMemUse("After TPAG Load");
         } else if (options.parseCode && memcmp(chunkName, "CODE", 4) == 0) {
+            logMemUse("Before CODE Load");
             parseCODE(&reader, dw, chunkLength, chunkDataStart);
+            logMemUse("After CODE Load");
         } else if (options.parseVari && memcmp(chunkName, "VARI", 4) == 0) {
+            logMemUse("Before VARI Load");
             parseVARI(&reader, dw, chunkLength);
+            logMemUse("After VARI Load");
         } else if (options.parseFunc && memcmp(chunkName, "FUNC", 4) == 0) {
+            logMemUse("Before FUNC Load");
             parseFUNC(&reader, dw);
+            logMemUse("After FUNC Load");
         } else if (options.parseStrg && memcmp(chunkName, "STRG", 4) == 0) {
+            logMemUse("Before STRG Load");
             parseSTRG(&reader, dw);
+            logMemUse("After STRG Load");
         } else if (options.parseTxtr && memcmp(chunkName, "TXTR", 4) == 0) {
+            logMemUse("Before TXTR Load");
             parseTXTR(&reader, dw, fileSize);
+            logMemUse("After TXTR Load");
         } else if (options.parseAudo && memcmp(chunkName, "AUDO", 4) == 0) {
+            logMemUse("Before AUDO Load");
             parseAUDO(&reader, dw);
+            logMemUse("After AUDO Load");
         } else {
             printf("Unknown chunk: %.4s (length %u at offset 0x%zX)\n", chunkName, chunkLength, chunkDataStart - 8);
         }
@@ -1454,6 +1517,8 @@ DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options) {
     if (dw->audo.count > 0) {
         dw->audoLastUsed = safeCalloc(dw->audo.count, sizeof(uint32_t));
     }
+
+    logMemUse("After DataWin parse");
 
     return dw;
 }
