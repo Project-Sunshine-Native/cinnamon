@@ -358,12 +358,15 @@ static void progressCb(const char* chunkName, int chunkIndex, int totalChunks,
 // ===[ MAIN ]===
 int main(int argc, char* argv[]) {
     fsInit();
+    romfsInit();
+    gfxInitDefault();
 
-    // send printf to sdcard
-    freopen("sdmc:/cinnamon/full_log.txt", "w", stdout);
-
-    // Flush to SD card every new line (\n) so we can see logs in real-time without needing to close the app
+    freopen("sdmc:/cinnamon/full_log.txt", "w", stdout); // create/overwrite
     setvbuf(stdout, NULL, _IOLBF, 0);
+
+    // redirect stderr to the same file without truncating
+    freopen("sdmc:/cinnamon/full_log.txt", "a", stderr); // append
+    setvbuf(stderr, NULL, _IOLBF, 0);
 
     list("sdmc:/cinnamon", 0);
 
@@ -371,23 +374,22 @@ int main(int argc, char* argv[]) {
     //args.dataWinPath = "sdmc:/cinnamon/data.win";
     //parseCommandLineArgs(&args, argc, argv);
 
-    printf("Checking if %s exists...\n", "sdmc:/cinnamon/data.win");
+    printf("Checking if %s exists...\n", "romfs:/cinnamon/data.win");
 
     LogToSD("Loading data.win...");
 
-    FILE* f = fopen("sdmc:/cinnamon/data.win", "rb");
+    FILE* f = fopen("romfs:/cinnamon/data.win", "rb");
     if (f) {
-        printf("File %s found.\n", "sdmc:/cinnamon/data.win");
+        printf("File %s found.\n", "romfs:/cinnamon/data.win");
         fclose(f);
     } else {
-        fprintf(stderr, "Error: data.win not found at sdmc:/cinnamon/data.win\n");
-        LogToSD("Error: data.win not found at sdmc:/cinnamon/data.win");
+        fprintf(stderr, "Error: data.win not found at romfs:/cinnamon/data.win\n");
+        LogToSD("Error: data.win not found at romfs:/cinnamon/data.win");
         ShowErrorAndExit("An error has occurred.\nPlease make sure data.win is located at: cinnamon/data.win\non your SD card!\nPress START to exit.");
         return 0;
     }
 
     // ===[ Graphics init — done BEFORE DataWin_parse so we can show a loading bar ]===
-    gfxInitDefault();
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
@@ -406,10 +408,10 @@ int main(int argc, char* argv[]) {
         .lastChunkIndex = -1,
     };
 
-    printf("Loading %s...\n", "sdmc:/cinnamon/data.win");
+    printf("Loading %s...\n", "romfs:/cinnamon/data.win");
 
     DataWin* dataWin = DataWin_parse(
-        "sdmc:/cinnamon/data.win",
+        "romfs:/cinnamon/data.win",
         (DataWinParserOptions) {
             .parseGen8 = true,
             .parseOptn = true,
