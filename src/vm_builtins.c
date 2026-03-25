@@ -364,7 +364,11 @@ RValue VMBuiltins_getVariable(VMContext* ctx, const char* name, int32_t arrayInd
 
     // Keyboard variables
     if (runner != nullptr) {
+#ifdef __WIIU__
+        if (strcmp(name, "keyboard_key") == 0) return RValue_makeReal((double) runner->keyboard->currentKey);
+#else
         if (strcmp(name, "keyboard_key") == 0) return RValue_makeReal((double) runner->keyboard->lastKey);
+#endif
         if (strcmp(name, "keyboard_lastkey") == 0) return RValue_makeReal((double) runner->keyboard->lastKey);
     }
 
@@ -446,7 +450,11 @@ void VMBuiltins_setVariable(VMContext* ctx, const char* name, RValue val, int32_
 
     // Keyboard variables
     if (strcmp(name, "keyboard_key") == 0) {
+#ifdef __WIIU__
+        runner->keyboard->currentKey = RValue_toInt32(val);
+#else
         runner->keyboard->lastKey = RValue_toInt32(val);
+#endif
         return;
     }
     if (strcmp(name, "keyboard_lastkey") == 0) {
@@ -2876,10 +2884,14 @@ static RValue builtin_drawBackgroundPartExt(VMContext* ctx, RValue* args, [[mayb
     uint32_t color = (uint32_t) RValue_toInt32(args[9]);
     float alpha = (float) RValue_toReal(args[10]);
 
+#ifdef __WIIU__
+    Renderer_drawBackgroundPartExt(runner->renderer, bgIndex, left, top, width, height, x, y, xscale, yscale, color, alpha);
+#else
     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(runner->dataWin, bgIndex);
     if (0 > tpagIndex) return RValue_makeUndefined();
 
     runner->renderer->vtable->drawSpritePart(runner->renderer, tpagIndex, left, top, width, height, x, y, xscale, yscale, color, alpha);
+#endif
     return RValue_makeUndefined();
 }
 
