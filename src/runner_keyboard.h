@@ -85,6 +85,9 @@ typedef struct RunnerKeyboardState {
     bool keyDown[GML_KEY_COUNT];     // Currently held
     bool keyPressed[GML_KEY_COUNT];  // Just pressed this frame
     bool keyReleased[GML_KEY_COUNT]; // Just released this frame
+#ifdef __WIIU__
+    int32_t currentKey;              // Current active key (for keyboard_key)
+#endif
     int32_t lastKey;                 // Last key pressed (for keyboard_key variable)
 } RunnerKeyboardState;
 
