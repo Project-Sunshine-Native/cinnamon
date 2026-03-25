@@ -85,6 +85,7 @@ typedef struct {
     Renderer base;          // must remain first member
 
     C3D_RenderTarget* top;
+    C3D_RenderTarget* bottom;
 
     int32_t viewX, viewY;
     float   scaleX, scaleY;
@@ -94,6 +95,7 @@ typedef struct {
 
     TexCachePage* pageCache;
     uint32_t      pageCacheCount;
+    uint32_t       viewIndex;
 } CRenderer3DS;
 
 Renderer* CRenderer3DS_create(void);

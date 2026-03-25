@@ -1147,6 +1147,7 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
 
     // Create the render target first so progress bars can be shown during init
     C->top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    C->bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
     verifyLodepngAllocator();
     logMemory("before page registration");
@@ -1210,6 +1211,7 @@ static void CDestroy(Renderer* renderer) {
             if (page->regions[r].loaded)
                 C3D_TexDelete(&page->regions[r].tex);
         }
+        free(page->regions);
     }
     free(C->pageCache);
     free(C);
@@ -1218,11 +1220,12 @@ static void CDestroy(Renderer* renderer) {
 static void CBeginView(Renderer* renderer,
     int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH,
     int32_t portX, int32_t portY, int32_t portW, int32_t portH,
-    float viewAngle)
+    float viewAngle, uint32_t viewIndex)
 {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->viewX = viewX;
     C->viewY = viewY;
+    C->viewIndex = viewIndex;
 
     if (viewW > 0 && viewH > 0 && portW > 0 && portH > 0) {
         // Scale the view to fit the port, preserving aspect ratio (letterbox/pillarbox)
@@ -1257,10 +1260,18 @@ static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int3
 
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->zCounter = 0.5f;
-    CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, windowW, windowH, 0.0f);
+    //CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, windowW, windowH, 0.0f, C->viewIndex);
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-    C2D_TargetClear(C->top, clearColor);
-    C2D_SceneBegin(C->top);
+    if (C->viewIndex == 1)
+    {
+        C2D_TargetClear(C->bottom, clearColor);
+        C2D_SceneBegin(C->bottom);
+    }
+    else
+    {
+        C2D_TargetClear(C->top, clearColor);
+        C2D_SceneBegin(C->top);
+    }
 }
 
 static void CEndFrame(Renderer* renderer) {
