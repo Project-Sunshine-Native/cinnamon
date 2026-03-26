@@ -456,7 +456,8 @@ static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32
 
 // ===[ Room Management ]===
 
-static void initRoom(Runner* runner, int32_t roomIndex) {
+static void initRoom(Runner* runner, int32_t roomIndex)
+{
     DataWin* dataWin = runner->dataWin;
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
 
@@ -558,8 +559,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     // Two-pass instance creation (matches HTML5 runner behavior):
     // Pass 1: Create all instance objects so they exist for cross-references
     // Pass 2: Fire preCreateCode, CREATE events, and creationCode
-    // This ensures that when an instance's Create event reads another instance
-    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
+    // This ensures that when an instance's Create event reads another instance    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
 
     // Pass 1: Create all instances without firing events
     repeat(room->gameObjectCount, i) {
@@ -576,7 +576,8 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         if (alreadyExists) continue;
         if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
-        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (double) roomObj->x, (double) roomObj->y);
+        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition,
+                                               (double) roomObj->x, (double) roomObj->y);
         inst->imageXscale = (double) roomObj->scaleX;
         inst->imageYscale = (double) roomObj->scaleY;
         inst->imageAngle = (double) roomObj->rotation;
@@ -616,6 +617,38 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+
+    // -----------------------------------------------------------------
+    // TEXTURE PRELOAD: load all textures referenced by sprites of the
+    // instances that are now active in this room.
+    // -----------------------------------------------------------------    
+    if (dataWin->txtr.count > 0 && dataWin->txtrLastUsed != NULL) {
+        // Ensure we have a valid frame counter for LRU stamping
+        dataWin->frameCounter = 1;
+
+        for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
+            Instance* inst = runner->instances[i];
+            if (!inst->active) continue;
+            if (inst->spriteIndex < 0) continue;
+
+            Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
+            for (uint32_t t = 0; t < spr->textureCount; ++t) {
+                uint32_t tpagOffset = spr->textureOffsets[t];
+                int32_t tpagIndex   = DataWin_resolveTPAG(dataWin, tpagOffset);
+                if (tpagIndex < 0) continue;
+
+                TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
+                uint32_t texPageIdx = (uint32_t) tpagItem->texturePageId;
+                if (texPageIdx >= dataWin->txtr.count) continue;
+
+                // Load the texture into RAM (if not already present)
+                DataWin_loadTexture(dataWin, texPageIdx);
+                // Mark it as recently used so the LRU eviction loop won’t discard it
+                // until we actually need the space for other textures.
+                dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
+            }
+        }
+    }
 }
 
 // ===[ Public API ]===

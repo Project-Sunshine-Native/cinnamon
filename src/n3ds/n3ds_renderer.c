@@ -1463,30 +1463,44 @@ static void CDrawRectangle(Renderer* renderer,
     uint8_t a = (uint8_t)(alpha * 255.0f);
     u32 col = C2D_Color32(r, g, b, a);
 
-    float sx1 = (x1 - (float)C->viewX) * C->scaleX + C->offsetX;
-    float sy1 = (y1 - (float)C->viewY) * C->scaleY + C->offsetY;
-    float sx2 = (x2 - (float)C->viewX) * C->scaleX + C->offsetX;
-    float sy2 = (y2 - (float)C->viewY) * C->scaleY + C->offsetY;
+    // Normalize the rectangle in view space    
+    float left   = fminf(x1, x2);
+    float right  = fmaxf(x1, x2);
+    float top    = fminf(y1, y2);
+    float bottom = fmaxf(y1, y2);
+
+    right  += 1.0f;
+    bottom += 1.0f;
+
+    // Transform to screen space
+    float sx1 = (left   - (float)C->viewX) * C->scaleX + C->offsetX;
+    float sy1 = (top    - (float)C->viewY) * C->scaleY + C->offsetY;
+    float sx2 = (right  - (float)C->viewX) * C->scaleX + C->offsetX;
+    float sy2 = (bottom - (float)C->viewY) * C->scaleY + C->offsetY;
 
     if (outline) {
         float pw = 1.0f * C->scaleX;
         float ph = 1.0f * C->scaleY;
 
         // Top
-        C2D_DrawRectSolid(sx1, sy1, C->zCounter, sx2 - sx1 + pw, ph, col);
+        C2D_DrawLine(sx1, sy1, col, sx2, sy1, col, ph, C->zCounter);
         C->zCounter += 0.0001f;
+
         // Bottom
-        C2D_DrawRectSolid(sx1, sy2, C->zCounter, sx2 - sx1 + pw, ph, col);
+        C2D_DrawLine(sx1, sy2, col, sx2, sy2, col, ph, C->zCounter);
         C->zCounter += 0.0001f;
+
         // Left
-        C2D_DrawRectSolid(sx1, sy1 + ph, C->zCounter, pw, sy2 - sy1 - ph, col);
+        C2D_DrawLine(sx1, sy1, col, sx1, sy2, col, pw, C->zCounter);
         C->zCounter += 0.0001f;
+
         // Right
-        C2D_DrawRectSolid(sx2, sy1 + ph, C->zCounter, pw, sy2 - sy1 - ph, col);
+        C2D_DrawLine(sx2, sy1, col, sx2, sy2, col, pw, C->zCounter);
         C->zCounter += 0.0001f;
-    } else {
+    } 
+    else {
         // Filled rect adds +1 like GL
-        C2D_DrawRectSolid(sx1, sy1, C->zCounter, sx2 - sx1 + 1, sy2 - sy1 + 1, col);
+        C2D_DrawRectSolid(sx1, sy1, C->zCounter, sx2 - sx1, sy2 - sy1, col);
         C->zCounter += 0.0001f;
     }
 }

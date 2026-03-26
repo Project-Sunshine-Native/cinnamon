@@ -444,6 +444,7 @@ int main(int argc, char* argv[]) {
 
     // Loading bar resources are no longer needed
     C2D_TextBufDelete(loadingTextBuf);
+    C3D_RenderTargetDelete(loadingTop);
 
     Gen8* gen8 = &dataWin->gen8;
 	printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
