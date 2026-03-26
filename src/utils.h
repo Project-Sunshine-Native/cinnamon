@@ -54,6 +54,22 @@ abort(); \
 _val; \
 })
 
+static size_t gHeapUsed = 0;
+
+// todo: finish this and make gHeapUsed track all allocations and not just malloc and calloc
+static void logMemUse(const char* tag)
+{
+    printf("[MEM] %-40s tracked used: %lu KB\n",
+        tag ? tag : "(null)",
+        (unsigned long)(gHeapUsed / 1024));
+}
+
+#ifdef FULL_MEM_LOG
+  #define LOG_MEM_USE(action) logMemUse(action)
+#else
+  #define LOG_MEM_USE(action) ((void)0)
+#endif
+
 // Safe allocation macros - check for nullptr and abort with file/line info
 #define safeMalloc(size) ({ \
     void* _ptr = malloc(size); \
@@ -61,6 +77,7 @@ _val; \
         fprintf(stderr, "FATAL: malloc(%zu) failed at %s:%d\n", (size_t)(size), __FILE__, __LINE__); \
         abort(); \
     } \
+    gHeapUsed += size; \
     _ptr; \
 })
 
@@ -70,10 +87,12 @@ _val; \
         fprintf(stderr, "FATAL: calloc(%zu, %zu) failed at %s:%d\n", (size_t)(count), (size_t)(size), __FILE__, __LINE__); \
         abort(); \
     } \
+    gHeapUsed += (size_t)(count) * (size_t)(size); \
     _ptr; \
 })
 
 #define safeRealloc(ptr, size) ({ \
+    size_t oldSize = sizeof(ptr); \
     void* _ptr = realloc(ptr, size); \
     if (_ptr == nullptr) { \
         fprintf(stderr, "FATAL: realloc(%zu) failed at %s:%d\n", (size_t)(size), __FILE__, __LINE__); \
@@ -99,6 +118,14 @@ _val; \
     } \
     _ptr; \
 })
+
+#define safeFree(ptr) do { \
+    if (ptr) { \
+        free(ptr); \
+        ptr = NULL; \
+        gHeapUsed -= sizeof(ptr); \
+    } \
+} while (0)
 
 // Truncates to 6 decimal places, matching the HTML5 runner's ClampFloat
 static inline double clampFloat(double f) {
