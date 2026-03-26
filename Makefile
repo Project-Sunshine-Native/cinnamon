@@ -56,7 +56,7 @@ RSF             := $(TOPDIR)/$(RESOURCES)/template.rsf
 # options for code generation
 #---------------------------------------------------------------------------------
 ARCH 		:= -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp
-COMMON      := -Wall -O2 -mword-relocations -fomit-frame-pointer -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__
+COMMON      := -Wall -O2 -mword-relocations -fomit-frame-pointer -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__ -DLODEPNG_NO_COMPILE_ALLOCATORS
 # TODO: Fix unused functions
 CFLAGS 		:= $(COMMON) -std=gnu99 -Wno-unused-function -DLODEPNG_NO_COMPILE_ALLOCATORS
 CXXFLAGS    := $(COMMON) -fno-rtti -fno-exceptions -std=gnu++11

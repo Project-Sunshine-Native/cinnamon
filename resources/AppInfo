@@ -1,9 +1,9 @@
-APP_TITLE = Cinnamon DEV
-APP_DESCRIPTION = Cinnamon Engine FOR DEVS ONLY
+APP_TITLE = Undertale
+APP_DESCRIPTION = Welcome to UNDERTALE. In this RPG, you control a human who falls underground into the world of monsters. Now you must find your way out... or stay trapped forever.
 APP_AUTHOR = Owen
 APP_PRODUCT_CODE = 000400000B0E2A00
 APP_UNIQUE_ID = 0x1929
 APP_VERSION_MAJOR = 0
-APP_VERSION_MINOR = 1
+APP_VERSION_MINOR = 2
 APP_VERSION_MICRO = 0
 APP_SYSTEM_MODE = 0

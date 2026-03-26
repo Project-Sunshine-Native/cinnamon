@@ -456,7 +456,8 @@ static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32
 
 // ===[ Room Management ]===
 
-static void initRoom(Runner* runner, int32_t roomIndex) {
+static void initRoom(Runner* runner, int32_t roomIndex)
+{
     DataWin* dataWin = runner->dataWin;
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
 
@@ -558,8 +559,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     // Two-pass instance creation (matches HTML5 runner behavior):
     // Pass 1: Create all instance objects so they exist for cross-references
     // Pass 2: Fire preCreateCode, CREATE events, and creationCode
-    // This ensures that when an instance's Create event reads another instance
-    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
+    // This ensures that when an instance's Create event reads another instance    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
 
     // Pass 1: Create all instances without firing events
     repeat(room->gameObjectCount, i) {
@@ -576,7 +576,8 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         if (alreadyExists) continue;
         if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
-        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (double) roomObj->x, (double) roomObj->y);
+        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition,
+                                               (double) roomObj->x, (double) roomObj->y);
         inst->imageXscale = (double) roomObj->scaleX;
         inst->imageYscale = (double) roomObj->scaleY;
         inst->imageAngle = (double) roomObj->rotation;
@@ -616,6 +617,51 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+
+    // -----------------------------------------------------------------
+    // TEXTURE PRELOAD: load all textures referenced by sprites of the
+    // instances that are now active in this room.
+    // -----------------------------------------------------------------    
+    if (dataWin->txtr.count > 0) {
+        printf("[TXTR] scanning instances\n");
+
+        for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
+            Instance* inst = runner->instances[i];
+            if (!inst->active) {
+                printf("[TXTR] inst %d skipped: inactive\n", i);
+                continue;
+            }
+            if (inst->spriteIndex < 0) {
+                printf("[TXTR] inst %d skipped: no sprite\n", i);
+                continue;
+            }
+
+            Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
+            printf("[TXTR] inst %d sprite %d texCount %u\n", i, inst->spriteIndex, spr->textureCount);
+
+            for (uint32_t t = 0; t < spr->textureCount; ++t) {
+                uint32_t tpagOffset = spr->textureOffsets[t];
+                int32_t tpagIndex   = DataWin_resolveTPAG(dataWin, tpagOffset);
+                if (tpagIndex < 0) {
+                    printf("[TXTR]  t=%u invalid TPAG offset %u\n", t, tpagOffset);
+                    continue;
+                }
+
+                TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
+                uint32_t texPageIdx = (uint32_t) tpagItem->texturePageId;
+                if (texPageIdx >= dataWin->txtr.count) {
+                    printf("[TXTR]  t=%u page %u out of range (count %u)\n",
+                        t, texPageIdx, dataWin->txtr.count);
+                    continue;
+                }
+
+                printf("[TXTR]  loading page %u (inst %d)\n", texPageIdx, i);
+
+                DataWin_loadTexture(dataWin, texPageIdx);
+                dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
+            }
+        }
+    }
 }
 
 // ===[ Public API ]===
@@ -1199,6 +1245,8 @@ void Runner_step(Runner* runner) {
 
         // Load new room
         initRoom(runner, newRoomIndex);
+
+        runner->renderer->vtable->onRoomStart(runner->renderer);
 
         // Fire Room Start for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
