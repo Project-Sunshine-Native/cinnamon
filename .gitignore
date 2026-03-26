@@ -28,4 +28,4 @@
 
 # Build directories
 build-n3ds/
-.vscode/c_cpp_properties.json
+.vscode/
