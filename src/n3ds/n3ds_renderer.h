@@ -87,6 +87,8 @@ typedef struct {
     C3D_RenderTarget* top;
     C3D_RenderTarget* bottom;
 
+    C2D_Image border;
+
     int32_t viewX, viewY;
     float   scaleX, scaleY;
     float   offsetX, offsetY;
@@ -98,4 +100,4 @@ typedef struct {
     uint32_t       viewIndex;
 } CRenderer3DS;
 
-Renderer* CRenderer3DS_create(void);
+Renderer *CRenderer3DS_create(void);

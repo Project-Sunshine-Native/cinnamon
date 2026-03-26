@@ -1202,6 +1202,11 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
 static void CInit(Renderer* renderer, DataWin* dataWin) {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
 
+    C2D_SpriteSheet sheet = C2D_SpriteSheetLoad("romfs:/gfx/borders.t3x");
+    if (sheet) {
+        C->border = C2D_SpriteSheetGetImage(sheet, 0);
+    }
+    
     renderer->dataWin    = dataWin;
     renderer->drawColor  = 0xFFFFFF;
     renderer->drawAlpha  = 1.0f;
@@ -1216,7 +1221,6 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     g_renderer         = C;
 
     // Create the render target first so progress bars can be shown during init
-    C->top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
     C->bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
     verifyLodepngAllocator();
@@ -1247,11 +1251,13 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
 
     bool isNew3DS = false;
     if (APT_CheckNew3DS(&isNew3DS) == 0 && isNew3DS) {
-        printf("CRenderer3DS: running on New 3DS - preloading font glyphs\n");
-        preloadFontGlyphs(C, dataWin);
+        //printf("CRenderer3DS: running on New 3DS - preloading font glyphs\n");
+        //preloadFontGlyphs(C, dataWin);
     } else {
-        printf("CRenderer3DS: running on Old 3DS - skipping font glyph preload\n");
+        //printf("CRenderer3DS: running on Old 3DS - skipping font glyph preload\n");
     }
+
+    preloadFontGlyphs(C, dataWin);
 
     printf("CRenderer3DS: initialized (%lu pages, region-cache mode)\n",
            (unsigned long)pageCount);
@@ -1363,6 +1369,8 @@ static void CEndFrame(Renderer* renderer) {
         //}
     //}
 
+    //C2D_DrawImageAt(C->border, 0, 0, 0.5f, NULL, 1.0f, 1.0f);
+
     C->frameCounter++;
     C3D_FrameEnd(0);
 }
@@ -1466,8 +1474,8 @@ static void CDrawRectangle(Renderer* renderer,
     // Normalize the rectangle in view space    
     float left   = fminf(x1, x2);
     float right  = fmaxf(x1, x2);
-    float top    = fminf(y1, y2);
-    float bottom = fmaxf(y1, y2);
+    float bottom    = fminf(y1, y2);
+    float top = fmaxf(y1, y2);
 
     right  += 1.0f;
     bottom += 1.0f;

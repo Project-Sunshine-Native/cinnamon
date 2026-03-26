@@ -622,29 +622,42 @@ static void initRoom(Runner* runner, int32_t roomIndex)
     // TEXTURE PRELOAD: load all textures referenced by sprites of the
     // instances that are now active in this room.
     // -----------------------------------------------------------------    
-    if (dataWin->txtr.count > 0 && dataWin->txtrLastUsed != NULL) {
-        // Ensure we have a valid frame counter for LRU stamping
-        dataWin->frameCounter = 1;
+    if (dataWin->txtr.count > 0) {
+        printf("[TXTR] scanning instances\n");
 
         for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
             Instance* inst = runner->instances[i];
-            if (!inst->active) continue;
-            if (inst->spriteIndex < 0) continue;
+            if (!inst->active) {
+                printf("[TXTR] inst %d skipped: inactive\n", i);
+                continue;
+            }
+            if (inst->spriteIndex < 0) {
+                printf("[TXTR] inst %d skipped: no sprite\n", i);
+                continue;
+            }
 
             Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
+            printf("[TXTR] inst %d sprite %d texCount %u\n", i, inst->spriteIndex, spr->textureCount);
+
             for (uint32_t t = 0; t < spr->textureCount; ++t) {
                 uint32_t tpagOffset = spr->textureOffsets[t];
                 int32_t tpagIndex   = DataWin_resolveTPAG(dataWin, tpagOffset);
-                if (tpagIndex < 0) continue;
+                if (tpagIndex < 0) {
+                    printf("[TXTR]  t=%u invalid TPAG offset %u\n", t, tpagOffset);
+                    continue;
+                }
 
                 TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
                 uint32_t texPageIdx = (uint32_t) tpagItem->texturePageId;
-                if (texPageIdx >= dataWin->txtr.count) continue;
+                if (texPageIdx >= dataWin->txtr.count) {
+                    printf("[TXTR]  t=%u page %u out of range (count %u)\n",
+                        t, texPageIdx, dataWin->txtr.count);
+                    continue;
+                }
 
-                // Load the texture into RAM (if not already present)
+                printf("[TXTR]  loading page %u (inst %d)\n", texPageIdx, i);
+
                 DataWin_loadTexture(dataWin, texPageIdx);
-                // Mark it as recently used so the LRU eviction loop won’t discard it
-                // until we actually need the space for other textures.
                 dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
             }
         }
