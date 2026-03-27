@@ -1,0 +1,5 @@
+--atlas
+-f etc1a4
+-z auto
+spr_spellbt_0.png
+spr_spellbt_1.png

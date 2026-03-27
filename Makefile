@@ -100,8 +100,9 @@ CPPFILES           := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)
 SFILES             := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 PICAFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.v.pica)))
 SHLISTFILES        := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
-GFXFILES           := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
-BINFILES           := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+# Recursively discover .t3s files under each GRAPHICS root, preserving subpaths.
+GFXFILES           := $(foreach dir,$(GRAPHICS),$(shell cd $(CURDIR)/$(dir) 2>/dev/null && find . -type f -name '*.t3s' -print | sed 's|^./||'))
+BINFILES           := $(foreach dir,$(DATA),$(shell cd $(CURDIR)/$(dir) 2>/dev/null && find . -type f -print | sed 's|^./||'))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -305,11 +306,13 @@ release : $(OUTPUT_FILE).zip cia 3ds
 %.bin.o	%_bin.h : %.bin
 #---------------------------------------------------------------------------------
 	@echo $(notdir $<)
+	@mkdir -p $(dir $@)
 	@$(bin2o)
 #---------------------------------------------------------------------------------
 .PRECIOUS : %.t3x
 %.t3x.o	%_t3x.h : %.t3x
 #---------------------------------------------------------------------------------
+	@mkdir -p $(dir $@)
 	@$(bin2o)
 
 #---------------------------------------------------------------------------------
@@ -339,10 +342,21 @@ endef
 	@$(call shader-as,$(foreach file,$(shell cat $<),$(dir $<)$(file)))
 
 #---------------------------------------------------------------------------------
-%.t3x %.h :  %.t3s
-#---------------------------------------------------------------------------------
-	@echo $(notdir $<)
-	@$(TEX3DS) -i $< -H $*.h -d $*.d -o $(TOPDIR)/$(GFXBUILD)/$*.t3x
+# Generate explicit tex3ds rules for every discovered .t3s file.
+# Explicit targets beat the generic %.t3x %.h : %.t3s rule from 3ds_rules.
+define make-gfx-rule
+$(1) $(1:.t3x=.h): $(1:.t3x=.t3s)
+	@echo $$(notdir $$<)
+	@mkdir -p $$(dir $(1:.t3x=.h)) $$(dir $(1:.t3x=.d)) $$(dir $$(TOPDIR)/$$(GFXBUILD)/$(1))
+	@$$(TEX3DS) -i $$< -H $(1:.t3x=.h) -d $(1:.t3x=.d) -o $$(TOPDIR)/$$(GFXBUILD)/$(1) || { \
+		echo "warning: tex3ds failed for $$< (likely oversized/unsupported); using runtime fallback"; \
+		: > $(1:.t3x=.h); \
+		: > $(1:.t3x=.d); \
+		: > $(1); \
+	}
+endef
+
+$(foreach f,$(T3XFILES),$(eval $(call make-gfx-rule,$(f))))
 
 -include $(DEPSDIR)/*.d
 

@@ -1,0 +1,7 @@
+--atlas
+-f etc1a4
+-z auto
+spr_dummybullet_shock_0.png
+spr_dummybullet_shock_1.png
+spr_dummybullet_shock_2.png
+spr_dummybullet_shock_3.png

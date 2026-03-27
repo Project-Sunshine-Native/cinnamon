@@ -1,0 +1,6 @@
+--atlas
+-f etc1a4
+-z auto
+spr_face_torielblinkside_0.png
+spr_face_torielblinkside_1.png
+spr_face_torielblinkside_2.png

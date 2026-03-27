@@ -1,0 +1,6 @@
+--atlas
+-f etc1a4
+-z auto
+spr_noise_0.png
+spr_noise_1.png
+spr_noise_2.png

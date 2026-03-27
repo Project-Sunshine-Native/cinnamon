@@ -1,0 +1,7 @@
+--atlas
+-f etc1a4
+-z auto
+spr_charad_0.png
+spr_charad_1.png
+spr_charad_2.png
+spr_charad_3.png

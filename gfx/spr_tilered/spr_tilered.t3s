@@ -1,0 +1,7 @@
+--atlas
+-f etc1a4
+-z auto
+spr_tilered_0.png
+spr_tilered_1.png
+spr_tilered_2.png
+spr_tilered_3.png

@@ -1,0 +1,5 @@
+--atlas
+-f etc1a4
+-z auto
+spr_spiderchair_0.png
+spr_spiderchair_1.png

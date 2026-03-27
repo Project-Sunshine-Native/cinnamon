@@ -1,0 +1,6 @@
+--atlas
+-f etc1a4
+-z auto
+spr_waterbul_0.png
+spr_waterbul_1.png
+spr_waterbul_2.png

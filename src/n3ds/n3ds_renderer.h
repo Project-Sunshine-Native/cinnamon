@@ -98,6 +98,17 @@ typedef struct {
     TexCachePage* pageCache;
     uint32_t      pageCacheCount;
     uint32_t       viewIndex;
+    // TPAG -> sprite/frame lookup and lazy-loaded sprite sheets from romfs:/gfx/
+    int32_t*        tpagToSpriteIndex; // length = dataWin->tpag.count, -1 when unmapped
+    int32_t*        tpagToFrameIndex;  // length = dataWin->tpag.count, -1 when unmapped
+    int32_t*        tpagToBackgroundIndex; // length = dataWin->tpag.count, -1 when unmapped
+    C2D_SpriteSheet* spriteSheets;     // length = dataWin->sprt.count, lazy loaded
+    uint8_t*         spriteSheetState; // 0=unseen, 1=loaded, 2=failed
+    C2D_SpriteSheet* backgroundSheets;     // length = dataWin->bgnd.count, lazy loaded
+    uint8_t*         backgroundSheetState; // 0=unseen, 1=loaded, 2=failed
+    uint8_t*         tpagFallbackLogged; // length = dataWin->tpag.count, log fallback reason once
+    uint32_t         spriteSheetCount;
+    uint32_t         backgroundSheetCount;
 } CRenderer3DS;
 
 Renderer *CRenderer3DS_create(void);

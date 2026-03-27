@@ -1,0 +1,10 @@
+--atlas
+-f etc1a4
+-z auto
+spr_coffin_open_0.png
+spr_coffin_open_1.png
+spr_coffin_open_2.png
+spr_coffin_open_3.png
+spr_coffin_open_4.png
+spr_coffin_open_5.png
+spr_coffin_open_6.png

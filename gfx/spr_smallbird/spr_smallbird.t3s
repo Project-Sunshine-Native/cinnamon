@@ -1,0 +1,5 @@
+--atlas
+-f etc1a4
+-z auto
+spr_smallbird_0.png
+spr_smallbird_1.png

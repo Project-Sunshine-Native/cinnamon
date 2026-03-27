@@ -738,7 +738,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
 // work - everything is demand-driven from drawRegion on first use.
 
 // Now passing blobOffset directly instead of the Texture* pointer
-static bool registerPage(TexCachePage* page, uint32_t blobOffset, uint32_t pageIdx) {
+static bool registerPage(DataWin* dw, TexCachePage* page, uint32_t blobOffset, uint32_t pageIdx) {
     if (blobOffset == 0) {
         printf("CRenderer3DS: page %lu has no blob (external texture), skipping\n",
                (unsigned long)pageIdx);
@@ -759,22 +759,19 @@ static bool registerPage(TexCachePage* page, uint32_t blobOffset, uint32_t pageI
     memset(hdr_buf, 0, sizeof(hdr_buf));
     uint8_t* hdr = (uint8_t*)hdr_buf;
     
-    FILE* f = fopen("sdmc:/cinnamon/data.win", "rb");
-    if (!f) {
-        LOG_ERR("CRenderer3DS: page %lu - failed to open data.win\n", (unsigned long)pageIdx);
+    if (!dw || !dw->file) {
+        LOG_ERR("CRenderer3DS: page %lu - data.win stream is unavailable\n", (unsigned long)pageIdx);
         page->loadFailed = true;
         return false;
     }
 
-    if (fseek(f, (long)blobOffset, SEEK_SET) != 0 ||
-        fread(hdr, 1, 33, f) != 33) {
+    if (fseek(dw->file, (long)blobOffset, SEEK_SET) != 0 ||
+        fread(hdr, 1, 33, dw->file) != 33) {
         LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header from data.win\n",
                 (unsigned long)pageIdx);
-        fclose(f);
         page->loadFailed = true;
         return false;
     }
-    fclose(f);
 
     // Provide a valid LodePNGState to prevent NULL pointer dereferences
     unsigned w = 0, h = 0;
@@ -1197,6 +1194,8 @@ static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
     logMemory("after SD cache precompute");
 }
 
+static void CBuildTpagToSpriteMapping(CRenderer3DS* C, DataWin* dw);
+
 
 
 static void CInit(Renderer* renderer, DataWin* dataWin) {
@@ -1220,6 +1219,28 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
     C->frameCounter    = 1;
     g_renderer         = C;
 
+    // Initialize TPAG->sprite/frame lookup and lazy sprite sheet cache.
+    uint32_t tpagCount = dataWin->tpag.count;
+    C->tpagToSpriteIndex = (int32_t*) safeCalloc(tpagCount, sizeof(int32_t));
+    C->tpagToFrameIndex  = (int32_t*) safeCalloc(tpagCount, sizeof(int32_t));
+    for (uint32_t i = 0; i < tpagCount; i++) {
+        C->tpagToSpriteIndex[i] = -1;
+        C->tpagToFrameIndex[i] = -1;
+    }
+    C->tpagToBackgroundIndex = (int32_t*) safeCalloc(tpagCount, sizeof(int32_t));
+    for (uint32_t i = 0; i < tpagCount; i++) {
+        C->tpagToBackgroundIndex[i] = -1;
+    }
+    C->tpagFallbackLogged = (uint8_t*) safeCalloc(tpagCount, sizeof(uint8_t));
+
+    C->spriteSheetCount = dataWin->sprt.count;
+    C->spriteSheets = (C2D_SpriteSheet*) safeCalloc(C->spriteSheetCount, sizeof(C2D_SpriteSheet));
+    C->spriteSheetState = (uint8_t*) safeCalloc(C->spriteSheetCount, sizeof(uint8_t));
+    C->backgroundSheetCount = dataWin->bgnd.count;
+    C->backgroundSheets = (C2D_SpriteSheet*) safeCalloc(C->backgroundSheetCount, sizeof(C2D_SpriteSheet));
+    C->backgroundSheetState = (uint8_t*) safeCalloc(C->backgroundSheetCount, sizeof(uint8_t));
+    CBuildTpagToSpriteMapping(C, dataWin);
+
     // Create the render target first so progress bars can be shown during init
     C->bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
@@ -1234,20 +1255,19 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
         uint32_t safeBlobOffset = 0;
         memcpy(&safeBlobOffset, &dataWin->txtr.textures[i].blobOffset, sizeof(uint32_t));
         
-        registerPage(&C->pageCache[i], safeBlobOffset, i);
+        registerPage(dataWin, &C->pageCache[i], safeBlobOffset, i);
         
         logMemory("during page registration, finished page");
         printf("during page registaration, finished page: %ld\n", i);
     }
     logMemory("after page registration");
 
-    // Precompute SD pixel caches for all pages.
-    // Done here at startup when the linear heap is fully clean (no GPU textures
-    // yet), giving lodepng the maximum contiguous space for large atlas decodes.
-    // After this call, ensurePageDecoded() will load from SD on every subsequent
-    // access and will never need to call lodepng during gameplay.
+    // Skip full SD cache precompute at startup.
+    // The lazy path in ensurePageDecoded()/savePageToSDCache() will build cache
+    // files on first use instead, which avoids multi-second startup stalls on
+    // first launch when every texture page is decoded up front.
     mkdir("sdmc:/cinnamon/cache", 0777); // idempotent, safe if already exists
-    CPrecomputeSDCaches(C, dataWin);
+    printf("CRenderer3DS: deferring SD cache generation until textures are first used\n");
 
     bool isNew3DS = false;
     if (APT_CheckNew3DS(&isNew3DS) == 0 && isNew3DS) {
@@ -1290,6 +1310,30 @@ static void CDestroy(Renderer* renderer) {
         free(page->regions);
     }
     free(C->pageCache);
+
+    if (C->spriteSheets) {
+        for (uint32_t i = 0; i < C->spriteSheetCount; i++) {
+            if (C->spriteSheets[i]) {
+                C2D_SpriteSheetFree(C->spriteSheets[i]);
+            }
+        }
+    }
+    free(C->spriteSheets);
+    free(C->spriteSheetState);
+    if (C->backgroundSheets) {
+        for (uint32_t i = 0; i < C->backgroundSheetCount; i++) {
+            if (C->backgroundSheets[i]) {
+                C2D_SpriteSheetFree(C->backgroundSheets[i]);
+            }
+        }
+    }
+    free(C->backgroundSheets);
+    free(C->backgroundSheetState);
+    free(C->tpagToSpriteIndex);
+    free(C->tpagToFrameIndex);
+    free(C->tpagToBackgroundIndex);
+    free(C->tpagFallbackLogged);
+
     free(C);
 }
 
@@ -1377,6 +1421,115 @@ static void CEndFrame(Renderer* renderer) {
 
 static void CEndView(Renderer* renderer) { /* no-op */ }
 
+static C2D_SpriteSheet CLoadSpriteSheet(const char* spriteName) {
+    if (!spriteName) return NULL;
+
+    char path[320];
+    snprintf(path, sizeof(path), "romfs:/gfx/%s/%s.t3x", spriteName, spriteName);
+    return C2D_SpriteSheetLoad(path);
+}
+
+static void CLogSpriteFallback(CRenderer3DS* C, int32_t tpagIndex,
+    const char* reason, const char* spriteName, int32_t frameIdx)
+{
+    if (!C || tpagIndex < 0 || !C->tpagFallbackLogged) return;
+    if (C->tpagFallbackLogged[tpagIndex]) return;
+
+    C->tpagFallbackLogged[tpagIndex] = 1;
+    printf("CRenderer3DS: romfs sprite fallback tpag=%d sprite=%s frame=%d reason=%s\n",
+           tpagIndex,
+           spriteName ? spriteName : "<unknown>",
+           frameIdx,
+           reason ? reason : "unspecified");
+}
+
+static C2D_SpriteSheet CEnsureSpriteSheetLoaded(CRenderer3DS* C, Sprite* sprite, int32_t spriteIdx) {
+    if (!C || !sprite || spriteIdx < 0 || (uint32_t)spriteIdx >= C->spriteSheetCount) {
+        return NULL;
+    }
+
+    if (C->spriteSheetState && C->spriteSheetState[spriteIdx] == 2) {
+        return NULL;
+    }
+
+    if (!C->spriteSheets[spriteIdx]) {
+        C->spriteSheets[spriteIdx] = CLoadSpriteSheet(sprite->name);
+        if (C->spriteSheets[spriteIdx]) {
+            if (C->spriteSheetState) C->spriteSheetState[spriteIdx] = 1;
+            printf("CRenderer3DS: loaded romfs sprite sheet %s\n", sprite->name ? sprite->name : "<unknown>");
+        } else {
+            if (C->spriteSheetState) C->spriteSheetState[spriteIdx] = 2;
+            LOG_ERR("CRenderer3DS: failed to load romfs sprite sheet for %s\n",
+                    sprite->name ? sprite->name : "<unknown>");
+        }
+    }
+
+    return C->spriteSheets[spriteIdx];
+}
+
+static void CBuildTpagToSpriteMapping(CRenderer3DS* C, DataWin* dw) {
+    if (!dw || !dw->sprt.sprites || !C->tpagToSpriteIndex || !C->tpagToFrameIndex) {
+        return;
+    }
+
+    uint32_t mapped = 0;
+    for (uint32_t spriteIdx = 0; spriteIdx < dw->sprt.count; spriteIdx++) {
+        Sprite* sprite = &dw->sprt.sprites[spriteIdx];
+        if (!sprite->textureOffsets || sprite->textureCount == 0) continue;
+
+        for (uint32_t frameIdx = 0; frameIdx < sprite->textureCount; frameIdx++) {
+            int32_t resolved = DataWin_resolveTPAG(dw, sprite->textureOffsets[frameIdx]);
+            if (resolved < 0 || (uint32_t)resolved >= dw->tpag.count) continue;
+
+            C->tpagToSpriteIndex[resolved] = (int32_t)spriteIdx;
+            C->tpagToFrameIndex[resolved] = (int32_t)frameIdx;
+            mapped++;
+        }
+    }
+
+    printf("CRenderer3DS: mapped %lu TPAG entries to sprites\n", (unsigned long)mapped);
+
+    if (dw->bgnd.backgrounds && C->tpagToBackgroundIndex) {
+        uint32_t bgMapped = 0;
+        for (uint32_t bgIdx = 0; bgIdx < dw->bgnd.count; bgIdx++) {
+            Background* bg = &dw->bgnd.backgrounds[bgIdx];
+            int32_t resolved = DataWin_resolveTPAG(dw, bg->textureOffset);
+            if (resolved < 0 || (uint32_t)resolved >= dw->tpag.count) continue;
+
+            // Prefer explicit sprite mapping when a TPAG entry is shared.
+            if (C->tpagToSpriteIndex[resolved] < 0) {
+                C->tpagToBackgroundIndex[resolved] = (int32_t)bgIdx;
+                bgMapped++;
+            }
+        }
+        printf("CRenderer3DS: mapped %lu TPAG entries to backgrounds\n", (unsigned long)bgMapped);
+    }
+}
+
+static C2D_SpriteSheet CEnsureBackgroundSheetLoaded(CRenderer3DS* C, Background* bg, int32_t bgIdx) {
+    if (!C || !bg || bgIdx < 0 || (uint32_t)bgIdx >= C->backgroundSheetCount) {
+        return NULL;
+    }
+
+    if (C->backgroundSheetState && C->backgroundSheetState[bgIdx] == 2) {
+        return NULL;
+    }
+
+    if (!C->backgroundSheets[bgIdx]) {
+        C->backgroundSheets[bgIdx] = CLoadSpriteSheet(bg->name);
+        if (C->backgroundSheets[bgIdx]) {
+            if (C->backgroundSheetState) C->backgroundSheetState[bgIdx] = 1;
+            printf("CRenderer3DS: loaded romfs background sheet %s\n", bg->name ? bg->name : "<unknown>");
+        } else {
+            if (C->backgroundSheetState) C->backgroundSheetState[bgIdx] = 2;
+            LOG_ERR("CRenderer3DS: failed to load romfs background sheet for %s\n",
+                    bg->name ? bg->name : "<unknown>");
+        }
+    }
+
+    return C->backgroundSheets[bgIdx];
+}
+
 static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     float x, float y, float originX, float originY,
     float xscale, float yscale, float angleDeg, uint32_t color, float alpha)
@@ -1394,20 +1547,95 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     }
 
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
-    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
 
     float dstX = (x + ((float)tpag->targetX - originX) * xscale - (float)C->viewX) * C->scaleX + C->offsetX;
     float dstY = (y + ((float)tpag->targetY - originY) * yscale - (float)C->viewY) * C->scaleY + C->offsetY;
     float dstW = (float)tpag->sourceWidth  * xscale * C->scaleX;
     float dstH = (float)tpag->sourceHeight * yscale * C->scaleY;
 
+    // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
+    if (C->tpagToSpriteIndex && C->tpagToFrameIndex && (uint32_t)tpagIndex < dw->tpag.count) {
+        int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
+        int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
+
+        if (spriteIdx < 0 || frameIdx < 0) {
+            int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
+            if (bgIdx >= 0 && (uint32_t)bgIdx < dw->bgnd.count) {
+                Background* bg = &dw->bgnd.backgrounds[bgIdx];
+                if (!bg->name) {
+                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, 0);
+                } else {
+                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
+                    if (sheet) {
+                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
+                        if (image.tex && image.tex->data) {
+                            C2D_ImageTint tint;
+                            C2D_PlainImageTint(&tint,
+                                C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                            (uint8_t)(alpha * 255.0f)),
+                                0.0f);
+
+                            C2D_DrawParams params = {
+                                .pos    = { dstX, dstY, dstW, dstH },
+                                .center = { 0.0f, 0.0f },
+                                .depth  = C->zCounter,
+                                .angle  = angleDeg * (float)(M_PI / 180.0),
+                            };
+
+                            C2D_DrawImage(image, &params, &tint);
+                            C->zCounter += 0.0001f;
+                            return;
+                        }
+                        CLogSpriteFallback(C, tpagIndex, "background sheet image/frame is invalid", bg->name, 0);
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, 0);
+                    }
+                }
+            } else {
+                CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
+            }
+        } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
+            CLogSpriteFallback(C, tpagIndex, "mapped sprite index is out of range", NULL, frameIdx);
+        } else {
+            Sprite* sprite = &dw->sprt.sprites[spriteIdx];
+            if (!sprite->name) {
+                CLogSpriteFallback(C, tpagIndex, "sprite has no name", NULL, frameIdx);
+            } else if ((uint32_t)spriteIdx >= C->spriteSheetCount) {
+                CLogSpriteFallback(C, tpagIndex, "sprite sheet cache index is out of range", sprite->name, frameIdx);
+            } else {
+                C2D_SpriteSheet sheet = CEnsureSpriteSheetLoaded(C, sprite, spriteIdx);
+                if (sheet) {
+                    C2D_Image image = C2D_SpriteSheetGetImage(sheet, frameIdx);
+                    if (image.tex && image.tex->data) {
+                        C2D_ImageTint tint;
+                        C2D_PlainImageTint(&tint,
+                            C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                        (uint8_t)(alpha * 255.0f)),
+                            0.0f);
+
+                        C2D_DrawParams params = {
+                            .pos    = { dstX, dstY, dstW, dstH },
+                            .center = { 0.0f, 0.0f },
+                            .depth  = C->zCounter,
+                            .angle  = angleDeg * (float)(M_PI / 180.0),
+                        };
+
+                        C2D_DrawImage(image, &params, &tint);
+                        C->zCounter += 0.0001f;
+                        return;
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "sprite sheet image/frame is invalid", sprite->name, frameIdx);
+                    }
+                } else {
+                    CLogSpriteFallback(C, tpagIndex, "sprite sheet failed to load from romfs", sprite->name, frameIdx);
+                }
+            }
+        }
+    }
+
+    // Fallback to legacy atlas cache path when a per-sprite sheet is missing.
+    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
     if (pageIdx < C->pageCacheCount) {
-        // blend=1.0f: GPU computes output_rgb = texture_rgb * tint_rgb/255.
-        // When the GML 'color' is c_white (0xFFFFFF), tint_rgb = (1,1,1) so the texture
-        // is unchanged - identical to blend=0.0.  When the GML code passes a non-white
-        // color (e.g., c_yellow for highlight effects), blend=1.0 correctly tints the
-        // sprite.  blend=0.0 would silently ignore the color parameter, which is why
-        // text highlights and colored sprite effects were broken.
         u32 tintColor = C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                      (uint8_t)(alpha * 255.0f));
         drawRegion(C, pageIdx,
@@ -1439,13 +1667,152 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
     }
 
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
-    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
 
     float dstX = (x - (float)C->viewX) * C->scaleX + C->offsetX;
     float dstY = (y - (float)C->viewY) * C->scaleY + C->offsetY;
     float dstW = (float)srcW * xscale * C->scaleX;
     float dstH = (float)srcH * yscale * C->scaleY;
 
+    // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
+    if (srcW > 0 && srcH > 0 && C->tpagToSpriteIndex && C->tpagToFrameIndex) {
+        int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
+        int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
+
+        if (spriteIdx < 0 || frameIdx < 0) {
+            int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
+            if (bgIdx >= 0 && (uint32_t)bgIdx < dw->bgnd.count) {
+                Background* bg = &dw->bgnd.backgrounds[bgIdx];
+                if (!bg->name) {
+                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, 0);
+                } else {
+                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
+                    if (sheet) {
+                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
+                        if (image.tex && image.tex->data && image.subtex) {
+                            float frameW = (float)image.subtex->width;
+                            float frameH = (float)image.subtex->height;
+                            if (frameW > 0.0f && frameH > 0.0f) {
+                                float partX0 = fmaxf(0.0f, (float)srcOffX);
+                                float partY0 = fmaxf(0.0f, (float)srcOffY);
+                                float partX1 = fminf(frameW, (float)(srcOffX + srcW));
+                                float partY1 = fminf(frameH, (float)(srcOffY + srcH));
+                                if (partX1 > partX0 && partY1 > partY0) {
+                                    Tex3DS_SubTexture partSubtex = *image.subtex;
+                                    float invW = 1.0f / frameW;
+                                    float invH = 1.0f / frameH;
+                                    float uSpan = image.subtex->right - image.subtex->left;
+                                    float vSpan = image.subtex->bottom - image.subtex->top;
+
+                                    partSubtex.width  = (uint16_t)(partX1 - partX0);
+                                    partSubtex.height = (uint16_t)(partY1 - partY0);
+                                    partSubtex.left   = image.subtex->left + uSpan * (partX0 * invW);
+                                    partSubtex.right  = image.subtex->left + uSpan * (partX1 * invW);
+                                    partSubtex.top    = image.subtex->top + vSpan * (partY0 * invH);
+                                    partSubtex.bottom = image.subtex->top + vSpan * (partY1 * invH);
+
+                                    C2D_Image partImage = { .tex = image.tex, .subtex = &partSubtex };
+                                    C2D_ImageTint tint;
+                                    C2D_PlainImageTint(&tint,
+                                        C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                                    (uint8_t)(alpha * 255.0f)),
+                                        0.0f);
+
+                                    C2D_DrawParams params = {
+                                        .pos    = { dstX, dstY, dstW, dstH },
+                                        .center = { 0.0f, 0.0f },
+                                        .depth  = C->zCounter,
+                                        .angle  = 0.0f,
+                                    };
+
+                                    C2D_DrawImage(partImage, &params, &tint);
+                                    C->zCounter += 0.0001f;
+                                    return;
+                                }
+                                CLogSpriteFallback(C, tpagIndex, "requested background part is fully outside frame bounds", bg->name, 0);
+                            } else {
+                                CLogSpriteFallback(C, tpagIndex, "background sheet frame has invalid dimensions", bg->name, 0);
+                            }
+                        } else {
+                            CLogSpriteFallback(C, tpagIndex, "background sheet image/frame is invalid", bg->name, 0);
+                        }
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, 0);
+                    }
+                }
+            } else {
+                CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
+            }
+        } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
+            CLogSpriteFallback(C, tpagIndex, "mapped sprite index is out of range", NULL, frameIdx);
+        } else {
+            Sprite* sprite = &dw->sprt.sprites[spriteIdx];
+            if (!sprite->name) {
+                CLogSpriteFallback(C, tpagIndex, "sprite has no name", NULL, frameIdx);
+            } else if ((uint32_t)spriteIdx >= C->spriteSheetCount) {
+                CLogSpriteFallback(C, tpagIndex, "sprite sheet cache index is out of range", sprite->name, frameIdx);
+            } else {
+                C2D_SpriteSheet sheet = CEnsureSpriteSheetLoaded(C, sprite, spriteIdx);
+                if (sheet) {
+                    C2D_Image image = C2D_SpriteSheetGetImage(sheet, frameIdx);
+                    if (image.tex && image.tex->data && image.subtex) {
+                        float frameW = (float)image.subtex->width;
+                        float frameH = (float)image.subtex->height;
+
+                        if (frameW > 0.0f && frameH > 0.0f) {
+                            float partX0 = fmaxf(0.0f, (float)srcOffX);
+                            float partY0 = fmaxf(0.0f, (float)srcOffY);
+                            float partX1 = fminf(frameW, (float)(srcOffX + srcW));
+                            float partY1 = fminf(frameH, (float)(srcOffY + srcH));
+
+                            if (partX1 > partX0 && partY1 > partY0) {
+                                Tex3DS_SubTexture partSubtex = *image.subtex;
+                                float invW = 1.0f / frameW;
+                                float invH = 1.0f / frameH;
+                                float uSpan = image.subtex->right - image.subtex->left;
+                                float vSpan = image.subtex->bottom - image.subtex->top;
+
+                                partSubtex.width  = (uint16_t)(partX1 - partX0);
+                                partSubtex.height = (uint16_t)(partY1 - partY0);
+                                partSubtex.left   = image.subtex->left + uSpan * (partX0 * invW);
+                                partSubtex.right  = image.subtex->left + uSpan * (partX1 * invW);
+                                partSubtex.top    = image.subtex->top + vSpan * (partY0 * invH);
+                                partSubtex.bottom = image.subtex->top + vSpan * (partY1 * invH);
+
+                                C2D_Image partImage = { .tex = image.tex, .subtex = &partSubtex };
+
+                                C2D_ImageTint tint;
+                                C2D_PlainImageTint(&tint,
+                                    C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                                (uint8_t)(alpha * 255.0f)),
+                                    0.0f);
+
+                                C2D_DrawParams params = {
+                                    .pos    = { dstX, dstY, dstW, dstH },
+                                    .center = { 0.0f, 0.0f },
+                                    .depth  = C->zCounter,
+                                    .angle  = 0.0f,
+                                };
+
+                                C2D_DrawImage(partImage, &params, &tint);
+                                C->zCounter += 0.0001f;
+                                return;
+                            }
+                            CLogSpriteFallback(C, tpagIndex, "requested sprite part is fully outside frame bounds", sprite->name, frameIdx);
+                        } else {
+                            CLogSpriteFallback(C, tpagIndex, "sprite sheet frame has invalid dimensions", sprite->name, frameIdx);
+                        }
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "sprite sheet image/frame is invalid", sprite->name, frameIdx);
+                    }
+                } else {
+                    CLogSpriteFallback(C, tpagIndex, "sprite sheet failed to load from romfs", sprite->name, frameIdx);
+                }
+            }
+        }
+    }
+
+    // Fallback to legacy atlas cache path when per-sprite sheet is missing.
+    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
     if (pageIdx < C->pageCacheCount) {
         drawRegion(C, pageIdx,
                    (float)(tpag->sourceX + srcOffX),
