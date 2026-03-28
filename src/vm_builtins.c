@@ -1492,6 +1492,70 @@ static AudioSystem* getAudioSystem(VMContext* ctx) {
 // Track the last music instance for legacy audio_play_music / audio_stop_music
 static int32_t lastMusicInstance = -1;
 
+static const char* basenameNoPath(const char* path) {
+    if (!path) return "";
+    const char* base = path;
+    const char* slash = strrchr(base, '/');
+    if (slash) base = slash + 1;
+    const char* bslash = strrchr(base, '\\');
+    if (bslash) base = bslash + 1;
+    return base;
+}
+
+static void stemFromPath(const char* path, char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    out[0] = '\0';
+    if (!path || path[0] == '\0') return;
+
+    const char* base = basenameNoPath(path);
+    size_t len = strlen(base);
+    if (len >= outSize) len = outSize - 1;
+    memcpy(out, base, len);
+    out[len] = '\0';
+
+    char* dot = strrchr(out, '.');
+    if (dot) *dot = '\0';
+}
+
+static int32_t resolveSoundIndexArg(AudioSystem* audio, RValue arg) {
+    if (!audio || !audio->dataWin) return -1;
+
+    // Numeric paths keep legacy behavior.
+    if (arg.type != RVALUE_STRING) {
+        return RValue_toInt32(arg);
+    }
+
+    const char* raw = arg.string ? arg.string : "";
+    if (raw[0] == '\0') return -1;
+
+    DataWin* dw = audio->dataWin;
+    char rawStem[256];
+    stemFromPath(raw, rawStem, sizeof(rawStem));
+
+    for (uint32_t i = 0; i < dw->sond.count; i++) {
+        Sound* s = &dw->sond.sounds[i];
+
+        if (s->name && (strcmp(s->name, raw) == 0 || (rawStem[0] != '\0' && strcmp(s->name, rawStem) == 0))) {
+            return (int32_t) i;
+        }
+
+        if (s->file) {
+            char fileStem[256];
+            stemFromPath(s->file, fileStem, sizeof(fileStem));
+            const char* fileBase = basenameNoPath(s->file);
+
+            if (strcmp(s->file, raw) == 0
+                    || strcmp(fileBase, raw) == 0
+                    || (rawStem[0] != '\0' && strcmp(fileStem, rawStem) == 0)
+                    || strcmp(fileStem, raw) == 0) {
+                return (int32_t) i;
+            }
+        }
+    }
+
+    return -1;
+}
+
 static RValue builtin_audioChannelNum(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeUndefined();
@@ -1503,7 +1567,13 @@ static RValue builtin_audioChannelNum(VMContext* ctx, RValue* args, [[maybe_unus
 static RValue builtin_audioPlaySound(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeReal(-1.0);
-    int32_t soundIndex = RValue_toInt32(args[0]);
+    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
+    if (soundIndex < 0) {
+        if (args[0].type == RVALUE_STRING) {
+            printf("audio_play_sound: could not resolve sound '%s'\n", args[0].string ? args[0].string : "<null>");
+        }
+        return RValue_makeReal(-1.0);
+    }
     int32_t priority = RValue_toInt32(args[1]);
     bool loop = RValue_toBool(args[2]);
     int32_t instanceId = audio->vtable->playSound(audio, soundIndex, priority, loop);
@@ -1596,9 +1666,28 @@ static RValue builtin_audioGroupIsLoaded(VMContext* ctx, RValue* args, [[maybe_u
 static RValue builtin_audioPlayMusic(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeReal(-1.0);
-    int32_t soundIndex = RValue_toInt32(args[0]);
+    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
     int32_t priority = RValue_toInt32(args[1]);
     bool loop = RValue_toBool(args[2]);
+
+    if (soundIndex < 0) {
+        if (args[0].type == RVALUE_STRING) {
+            printf("audio_play_music: could not resolve music '%s'\n", args[0].string ? args[0].string : "<null>");
+        } else {
+            printf("audio_play_music: invalid sound index %ld\n", (long) soundIndex);
+        }
+        lastMusicInstance = -1;
+        return RValue_makeReal(-1.0);
+    }
+
+    if (audio->dataWin && (uint32_t) soundIndex < audio->dataWin->sond.count) {
+        Sound* s = &audio->dataWin->sond.sounds[soundIndex];
+        printf("audio_play_music: resolved idx=%ld name='%s' file='%s'\n",
+               (long) soundIndex,
+               s->name ? s->name : "",
+               s->file ? s->file : "");
+    }
+
     int32_t instanceId = audio->vtable->playSound(audio, soundIndex, priority, loop);
     lastMusicInstance = instanceId;
     return RValue_makeReal((double) instanceId);

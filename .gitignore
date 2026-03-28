@@ -27,5 +27,15 @@
 *.lib
 
 # Build directories
-build-n3ds/
-.vscode/
+build-n3ds/**
+build/**
+gfx/**
+romfs/gfx/**
+romfs/audio/**
+sfx/**
+.vscode/**
+output/**
+build-n3ds-profile/**
+venv/**
+crash_dump_*.dmp
+crash_dump_*.dmp

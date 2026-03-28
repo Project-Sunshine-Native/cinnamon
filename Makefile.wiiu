@@ -14,7 +14,8 @@ TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/wut/share/wut_rules
 
 TARGET      := cinnamon
-BUILD       := build-wiiu
+PROFILE ?= 0
+BUILD       := build-wiiu$(if $(filter 0,$(PROFILE)),,-profile)
 SOURCES     := src src/wiiu
 INCLUDES    := include src src/wiiu
 OUTPUT      := output-wiiu
@@ -51,6 +52,18 @@ ASFLAGS     := $(MACHDEP)
 LDFLAGS     := $(RPXSPECS) -Wl,-Map,$(notdir $*.map),--gc-sections
 LIBS        := -lSDL2 -lwut -lm
 LIBDIRS     := $(PORTLIBS) $(WUT_ROOT)
+
+PROFILE_REPORT_EVERY ?= 120
+PROFILE_SPIKE_MS ?= 25.0
+
+ifneq ($(PROFILE),0)
+CFLAGS += -DCINNAMON_PROFILE=1 \
+		  -DCINNAMON_PROFILE_REPORT_EVERY=$(PROFILE_REPORT_EVERY) \
+		  -DCINNAMON_PROFILE_SPIKE_MS=$(PROFILE_SPIKE_MS)
+CXXFLAGS += -DCINNAMON_PROFILE=1 \
+		    -DCINNAMON_PROFILE_REPORT_EVERY=$(PROFILE_REPORT_EVERY) \
+		    -DCINNAMON_PROFILE_SPIKE_MS=$(PROFILE_SPIKE_MS)
+endif
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
