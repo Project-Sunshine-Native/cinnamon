@@ -623,44 +623,30 @@ static void initRoom(Runner* runner, int32_t roomIndex)
     // instances that are now active in this room.
     // -----------------------------------------------------------------    
     if (dataWin->txtr.count > 0) {
-        printf("[TXTR] scanning instances\n");
-
+#if defined(__3DS__)
+        // 3DS renderer now prefers romfs sprite/background sheets and only
+        // falls back to TPAG pages lazily when needed. Eager room-time page
+        // preloading here causes noisy logs and unnecessary cache churn.
+#else
         for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
             Instance* inst = runner->instances[i];
-            if (!inst->active) {
-                printf("[TXTR] inst %d skipped: inactive\n", i);
-                continue;
-            }
-            if (inst->spriteIndex < 0) {
-                printf("[TXTR] inst %d skipped: no sprite\n", i);
-                continue;
-            }
+            if (!inst->active || inst->spriteIndex < 0) continue;
 
             Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
-            printf("[TXTR] inst %d sprite %d texCount %u\n", i, inst->spriteIndex, spr->textureCount);
-
             for (uint32_t t = 0; t < spr->textureCount; ++t) {
                 uint32_t tpagOffset = spr->textureOffsets[t];
-                int32_t tpagIndex   = DataWin_resolveTPAG(dataWin, tpagOffset);
-                if (tpagIndex < 0) {
-                    printf("[TXTR]  t=%u invalid TPAG offset %u\n", t, tpagOffset);
-                    continue;
-                }
+                int32_t tpagIndex = DataWin_resolveTPAG(dataWin, tpagOffset);
+                if (tpagIndex < 0) continue;
 
                 TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
-                uint32_t texPageIdx = (uint32_t) tpagItem->texturePageId;
-                if (texPageIdx >= dataWin->txtr.count) {
-                    printf("[TXTR]  t=%u page %u out of range (count %u)\n",
-                        t, texPageIdx, dataWin->txtr.count);
-                    continue;
-                }
-
-                printf("[TXTR]  loading page %u (inst %d)\n", texPageIdx, i);
+                uint32_t texPageIdx = (uint32_t)tpagItem->texturePageId;
+                if (texPageIdx >= dataWin->txtr.count) continue;
 
                 DataWin_loadTexture(dataWin, texPageIdx);
                 dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
             }
         }
+#endif
     }
 }
 

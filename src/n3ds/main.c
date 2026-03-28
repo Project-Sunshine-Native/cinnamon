@@ -23,8 +23,10 @@
 #include "n3ds_renderer.h"
 
 #include "n3ds_file_system.h"
+#include "n3ds_audio_system.h"
 #include "stb_ds.h"
 #include "stb_image_write.h"
+#include "profiler.h"
 
 #include "utils.h"
 
@@ -125,6 +127,11 @@ static void cleanup(Runner* runner, VMContext* vm, DataWin* dataWin, Renderer* r
         if (inputRec->isRecording) InputRecording_save(inputRec);
         InputRecording_free(inputRec);
         inputRec = NULL;
+    }
+
+    if (runner && runner->audioSystem) {
+        runner->audioSystem->vtable->destroy(runner->audioSystem);
+        runner->audioSystem = NULL;
     }
 
     // Free game/app objects first
@@ -545,9 +552,14 @@ int main(int argc, char* argv[]) {
     // TODO: Replace with sdcard reads and writes
     N3DSFileSystem* n3dsFileSystem = N3DSFileSystem_create("sdmc:/cinnamon/data.win");
 
+    N3DSAudioSystem* n3dsAudio = N3DSAudioSystem_create();
+    AudioSystem* audioSystem = (AudioSystem*) n3dsAudio;
+    audioSystem->vtable->init(audioSystem, dataWin, (FileSystem*) n3dsFileSystem);
+
     // Initialize the runner
     LogToSD("LOADING RUNNER");
     Runner* runner = Runner_create(dataWin, vm, (FileSystem*) n3dsFileSystem);
+    runner->audioSystem = audioSystem;
     //runner->debugMode = args.debug;
     LogToSD("RUNNER OK");
     
@@ -670,8 +682,17 @@ int main(int argc, char* argv[]) {
 
     // Main loop
     bool debugPaused = false;
-    double lastFrameTime = svcGetSystemTick();
+    double lastFrameTimeMs = (double) osGetTime();
+    uint64_t lastAudioUpdateMs = (uint64_t) osGetTime();
+    // Lag profiling state machine: NORMAL(0) -> LAGGING(1) -> RECOVERING(2)
+    int lagState = 0;
+
+    CinnamonProfiler_init((uint32_t) CINNAMON_PROFILE_REPORT_EVERY, (double) CINNAMON_PROFILE_SPIKE_MS);
+
     while (aptMainLoop()) {
+        CinnamonProfiler_beginFrame((uint64_t) runner->frameCount);
+
+        CinnamonProfiler_beginSection(CINNAMON_PROFILE_INPUT);
         // Clear last frame's pressed/released state, then poll new input events
         RunnerKeyboard_beginFrame(runner->keyboard);
         hidScanInput(); // glfwPollEvents();
@@ -695,6 +716,7 @@ int main(int argc, char* argv[]) {
 
         // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)
         InputRecording_processFrame(globalInputRecording, runner->keyboard, runner->frameCount);
+        CinnamonProfiler_endSection(CINNAMON_PROFILE_INPUT);
 
         // Debug key bindings
         // TODO: Add these to buttons
@@ -783,7 +805,9 @@ int main(int argc, char* argv[]) {
             */
 
             // Run one game step (Begin Step, Keyboard, Alarms, Step, End Step, room transitions)
+            CinnamonProfiler_beginSection(CINNAMON_PROFILE_STEP);
             Runner_step(runner);
+            CinnamonProfiler_endSection(CINNAMON_PROFILE_STEP);
 
             /*
             // Dump full runner state if this frame was requested
@@ -814,6 +838,17 @@ int main(int argc, char* argv[]) {
             */
         }
 
+        if (runner->audioSystem != NULL) {
+            CinnamonProfiler_beginSection(CINNAMON_PROFILE_AUDIO);
+            uint64_t nowMs = (uint64_t) osGetTime();
+            float deltaTime = (float) (nowMs - lastAudioUpdateMs) / 1000.0f;
+            if (deltaTime < 0.0f) deltaTime = 0.0f;
+            if (deltaTime > 0.1f) deltaTime = 0.1f;
+            lastAudioUpdateMs = nowMs;
+            runner->audioSystem->vtable->update(runner->audioSystem, deltaTime);
+            CinnamonProfiler_endSection(CINNAMON_PROFILE_AUDIO);
+        }
+
         Room* activeRoom = runner->currentRoom;
 
         // Query actual framebuffer size (differs from window size on Wayland with fractional scaling)
@@ -835,6 +870,8 @@ int main(int argc, char* argv[]) {
 
         int32_t gameW = (int32_t) gen8->defaultWindowWidth;
         int32_t gameH = (int32_t) gen8->defaultWindowHeight;
+
+        CinnamonProfiler_beginSection(CINNAMON_PROFILE_RENDER);
 
         // Begin the frame via renderer vtable (if provided). This pairs with endFrame below
         if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->beginFrame != NULL) {
@@ -899,8 +936,7 @@ int main(int argc, char* argv[]) {
         // Reset view_current to 0 so non-Draw events (Step, Alarm, Create) see view_current = 0
         runner->viewCurrent = 0;
 
-        // TODO: Add renderer, see first comment about renderer
-        renderer->vtable->endFrame(renderer);
+        CinnamonProfiler_endSection(CINNAMON_PROFILE_RENDER);
 
         // Capture screenshot if this frame matches a requested frame
         /*
@@ -931,32 +967,69 @@ int main(int argc, char* argv[]) {
         // glfwSwapBuffers(window);
 
         // End the frame via renderer vtable when possible to avoid unmatched C3D_FrameEnd
+        CinnamonProfiler_beginSection(CINNAMON_PROFILE_PRESENT);
         if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->endFrame != NULL) {
             runner->renderer->vtable->endFrame(runner->renderer);
         } else {
             C3D_FrameEnd(0);
         }
+        CinnamonProfiler_endSection(CINNAMON_PROFILE_PRESENT);
 
         // Limit frame rate to room speed
+        CinnamonProfiler_beginSection(CINNAMON_PROFILE_THROTTLE);
         if (runner->currentRoom->speed > 0) {
-            double targetFrameTime = 1.0 / (runner->currentRoom->speed);
-            double nextFrameTime = lastFrameTime + targetFrameTime;
-            // Sleep for most of the remaining time, then spin-wait for precision
-            double remaining = nextFrameTime - svcGetSystemTick();
-            if (remaining > 0.002) {
+            // Pace game loop using millisecond wall clock to avoid double-pacing and
+            // unit mismatches with hardware ticks.
+            // Hard cap: never run faster than 30 fps regardless of room speed.
+            double rawTargetMs = 1000.0 / (double) runner->currentRoom->speed;
+            double targetFrameMs = rawTargetMs > (1000.0 / 30.0) ? rawTargetMs : (1000.0 / 30.0);
+            double nextFrameTimeMs = lastFrameTimeMs + targetFrameMs;
+            double nowMs = (double) osGetTime();
+            double remainingMs = nextFrameTimeMs - nowMs;
+
+            if (remainingMs > 1.5) {
                 struct timespec ts = {
                     .tv_sec = 0,
-                    .tv_nsec = (long) ((remaining - 0.001) * 1e9)
+                    .tv_nsec = (long) ((remainingMs - 0.5) * 1000000.0)
                 };
                 nanosleep(&ts, NULL);
             }
-            while (svcGetSystemTick() < nextFrameTime) {
-                // Spin-wait for the remaining sub-millisecond
+
+            while ((double) osGetTime() < nextFrameTimeMs) {
+                // Spin-wait for the final sub-millisecond slice.
             }
-            lastFrameTime = nextFrameTime;
+
+            // Lag state machine: enable per-function timing when fps < 27, stop when >= 30.
+            {
+                double totalFrameMs = (double) osGetTime() - lastFrameTimeMs;
+                // > 37.04ms => fps < 27;  < 33.33ms => fps >= 30
+                if (lagState == 0) {
+                    if (totalFrameMs > 37.04 && runner->renderer) {
+                        lagState = 1;
+                        CRenderer3DS_setLagMode(runner->renderer, true);
+                    }
+                } else if (lagState == 1) {
+                    if (totalFrameMs <= 33.33 && runner->renderer) {
+                        lagState = 2;
+                        CRenderer3DS_setLagMode(runner->renderer, false);
+                    }
+                } else { // recovering
+                    if (totalFrameMs > 37.04 && runner->renderer) {
+                        lagState = 1;
+                        CRenderer3DS_setLagMode(runner->renderer, true);
+                    } else if (totalFrameMs <= 33.33) {
+                        lagState = 0;
+                    }
+                }
+            }
+
+            lastFrameTimeMs = nextFrameTimeMs;
         } else {
-            lastFrameTime = svcGetSystemTick();
+            lastFrameTimeMs = (double) osGetTime();
         }
+        CinnamonProfiler_endSection(CINNAMON_PROFILE_THROTTLE);
+
+        CinnamonProfiler_endFrame();
     }
 
     // Save input recording if active, then free

@@ -34,6 +34,14 @@
 // 256 slots * worst-case 1024x1024x4 = 1 GB theoretical max, but in practice
 // slots are small sprite frames so the total stays well within linear RAM.
 #define REGION_CACHE_MAX 256u
+#define RECT_CMD_BUFFER_MAX 512u
+
+typedef struct {
+    float x1, y1, x2, y2;
+    float z;
+    u32   color;
+    bool  outline;
+} RectDrawCmd;
 
 typedef struct {
     uint16_t srcX, srcY;   // top-left of the source rect in atlas pixel space (cache key)
@@ -98,6 +106,47 @@ typedef struct {
     TexCachePage* pageCache;
     uint32_t      pageCacheCount;
     uint32_t       viewIndex;
+    // TPAG -> sprite/frame lookup and lazy-loaded sprite sheets from romfs:/gfx/
+    int32_t*        tpagToSpriteIndex; // length = dataWin->tpag.count, -1 when unmapped
+    int32_t*        tpagToFrameIndex;  // length = dataWin->tpag.count, -1 when unmapped
+    int32_t*        tpagToBackgroundIndex; // length = dataWin->tpag.count, -1 when unmapped
+    C2D_SpriteSheet* spriteSheets;     // length = dataWin->sprt.count, lazy loaded
+    uint8_t*         spriteSheetState; // 0=unseen, 1=loaded, 2=failed
+    C2D_SpriteSheet* backgroundSheets;     // length = dataWin->bgnd.count, lazy loaded
+    uint8_t*         backgroundSheetState; // 0=unseen, 1=loaded, 2=failed
+    uint8_t*         tpagFallbackLogged; // length = dataWin->tpag.count, log fallback reason once
+    uint32_t         spriteSheetCount;
+    uint32_t         backgroundSheetCount;
+
+    // Lag profiling — enabled by main loop when fps < 27.
+    // Captures per-function CPU ticks for one frame at a time.
+    bool     lagMode;
+    u64      lagSpriteTicks;
+    u64      lagSpritePartTicks;
+    u64      lagTextTicks;
+    u64      lagRectTicks;
+    u64      lagLineTicks;
+    u64      lagRegionTicks;
+    uint32_t lagSpriteN;
+    uint32_t lagSpritePartN;
+    uint32_t lagTextN;
+    uint32_t lagRectN;
+    uint32_t lagLineN;
+    uint32_t lagRegionN;
+
+    // Virtual command buffer for rectangle draws.
+    RectDrawCmd rectCmds[RECT_CMD_BUFFER_MAX];
+    uint16_t    rectCmdCount;
+    uint32_t    rectCmdMerged;
+
+    // Per-frame target state so beginView can switch between top/bottom safely.
+    u32   frameClearColor;
+    bool  topClearedThisFrame;
+    bool  bottomClearedThisFrame;
+    int8_t activeScreen; // -1 none, 0 top, 1 bottom
 } CRenderer3DS;
+
+// Enable or disable lag profiling on the renderer.
+void CRenderer3DS_setLagMode(Renderer* renderer, bool enabled);
 
 Renderer *CRenderer3DS_create(void);
