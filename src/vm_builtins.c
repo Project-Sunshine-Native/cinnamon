@@ -3089,6 +3089,41 @@ static RValue builtin_drawTextTransformed(VMContext* ctx, RValue* args, [[maybe_
 }
 STUB_RETURN_UNDEFINED(draw_text_ext)
 STUB_RETURN_UNDEFINED(draw_text_ext_transformed)
+STUB_RETURN_UNDEFINED(draw_text_ext_color)
+STUB_RETURN_UNDEFINED(draw_text_ext_colour)
+
+// draw_text_color(x, y, str, c1, c2, c3, c4, alpha)
+// GML draws text with four corner colors; we use the average of all four.
+static RValue builtin_drawTextColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || argCount < 8) return RValue_makeUndefined();
+
+    float x   = (float) RValue_toReal(args[0]);
+    float y   = (float) RValue_toReal(args[1]);
+    char* str = RValue_toString(args[2]);
+    uint32_t c1 = (uint32_t) RValue_toInt32(args[3]);
+    uint32_t c2 = (uint32_t) RValue_toInt32(args[4]);
+    uint32_t c3 = (uint32_t) RValue_toInt32(args[5]);
+    uint32_t c4 = (uint32_t) RValue_toInt32(args[6]);
+    float alpha = (float) RValue_toReal(args[7]);
+
+    // Average the four corner colors (each in GML BGR format: 0x00BBGGRR)
+    uint32_t avgR = ((c1 & 0xFF) + (c2 & 0xFF) + (c3 & 0xFF) + (c4 & 0xFF)) / 4;
+    uint32_t avgG = (((c1 >> 8) & 0xFF) + ((c2 >> 8) & 0xFF) + ((c3 >> 8) & 0xFF) + ((c4 >> 8) & 0xFF)) / 4;
+    uint32_t avgB = (((c1 >> 16) & 0xFF) + ((c2 >> 16) & 0xFF) + ((c3 >> 16) & 0xFF) + ((c4 >> 16) & 0xFF)) / 4;
+    uint32_t avgColor = avgR | (avgG << 8) | (avgB << 16);
+
+    uint32_t savedColor = runner->renderer->drawColor;
+    float    savedAlpha = runner->renderer->drawAlpha;
+    runner->renderer->drawColor = avgColor;
+    runner->renderer->drawAlpha = alpha;
+    runner->renderer->vtable->drawText(runner->renderer, str, x, y, 1.0f, 1.0f, 0.0f);
+    runner->renderer->drawColor = savedColor;
+    runner->renderer->drawAlpha = savedAlpha;
+    free(str);
+    return RValue_makeUndefined();
+}
+
 STUB_RETURN_UNDEFINED(draw_surface)
 STUB_RETURN_UNDEFINED(draw_surface_ext)
 static RValue builtin_drawBackground(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
@@ -4174,8 +4209,12 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("draw_set_valign", builtin_drawSetValign);
     registerBuiltin("draw_text", builtin_drawText);
     registerBuiltin("draw_text_transformed", builtin_drawTextTransformed);
+    registerBuiltin("draw_text_color", builtin_drawTextColor);
+    registerBuiltin("draw_text_colour", builtin_drawTextColor);
     registerBuiltin("draw_text_ext", builtin_draw_text_ext);
     registerBuiltin("draw_text_ext_transformed", builtin_draw_text_ext_transformed);
+    registerBuiltin("draw_text_ext_color", builtin_draw_text_ext_color);
+    registerBuiltin("draw_text_ext_colour", builtin_draw_text_ext_colour);
     registerBuiltin("draw_surface", builtin_draw_surface);
     registerBuiltin("draw_surface_ext", builtin_draw_surface_ext);
     registerBuiltin("draw_background", builtin_drawBackground);

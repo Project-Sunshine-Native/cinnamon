@@ -7,7 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PCM_BYTES_PER_FRAME 4
+#define PCM_BYTES_PER_FRAME_STEREO 4
+#define PCM_BYTES_PER_FRAME_MONO   2
+#define N3DS_DEFAULT_SAMPLE_RATE 44100
 #define N3DS_DEFAULT_CHANNEL_COUNT 12
 
 #define AUDIO_LOG(...) do { fprintf(stderr, __VA_ARGS__); printf(__VA_ARGS__); } while(0)
@@ -49,7 +51,8 @@ static void updateChannelMix(N3DSAudioSystem* n3ds, N3DSSoundInstance* inst) {
 static void updateChannelRate(N3DSSoundInstance* inst) {
     if (!inst || inst->channel < 0 || inst->channel >= N3DS_MAX_AUDIO_CHANNELS) return;
 
-    float rate = 44100.0f * inst->pitch * inst->sondPitch;
+    float baseRate = (inst->sampleRate > 0) ? (float)inst->sampleRate : (float)N3DS_DEFAULT_SAMPLE_RATE;
+    float rate = baseRate * inst->pitch * inst->sondPitch;
     if (rate < 1000.0f) rate = 1000.0f;
     if (rate > 96000.0f) rate = 96000.0f;
     ndspChnSetRate((u32) inst->channel, rate);
@@ -116,7 +119,8 @@ static N3DSSoundInstance* allocateInstanceSlot(N3DSAudioSystem* n3ds, int32_t pr
 
 // Lazy-load a small sound into regular heap RAM so subsequent plays use
 // memcpy instead of fopen+fread without consuming scarce linear RAM.
-static N3DSSoundCacheEntry* findOrAddSfxCache(N3DSAudioSystem* n3ds, int32_t soundIndex, FILE* f, uint32_t bytes) {
+static N3DSSoundCacheEntry* findOrAddSfxCache(N3DSAudioSystem* n3ds, int32_t soundIndex, FILE* f, uint32_t bytes,
+                                              uint32_t sampleRate, uint8_t channels, uint8_t bytesPerFrame) {
     for (int32_t i = 0; i < n3ds->sfxCacheCount; i++) {
         if (n3ds->sfxCache[i].soundIndex == soundIndex) return &n3ds->sfxCache[i];
     }
@@ -135,6 +139,9 @@ static N3DSSoundCacheEntry* findOrAddSfxCache(N3DSAudioSystem* n3ds, int32_t sou
     entry->soundIndex = soundIndex;
     entry->data       = buf;
     entry->byteSize   = bytes;
+    entry->sampleRate = sampleRate;
+    entry->channels = channels;
+    entry->bytesPerFrame = bytesPerFrame;
     AUDIO_LOG("N3DSAudio: cached SFX idx=%d size=%lu B\n", (int)soundIndex, (unsigned long)bytes);
     return entry;
 }
@@ -145,7 +152,8 @@ static bool fillAndQueueBuffer(N3DSSoundInstance* inst, int32_t bufferIndex) {
     ndspWaveBuf* wb = &inst->waveBufs[bufferIndex];
     if (isBufferQueued(wb)) return true;
 
-    size_t want = (size_t) N3DS_STREAM_BUFFER_FRAMES * PCM_BYTES_PER_FRAME;
+    uint32_t bytesPerFrame = (inst->bytesPerFrame > 0) ? inst->bytesPerFrame : PCM_BYTES_PER_FRAME_STEREO;
+    size_t want = (size_t)N3DS_STREAM_BUFFER_FRAMES * bytesPerFrame;
     size_t got;
 
     if (inst->cacheData) {
@@ -158,7 +166,7 @@ static bool fillAndQueueBuffer(N3DSSoundInstance* inst, int32_t bufferIndex) {
             got = (remaining >= want) ? want : (size_t)remaining;
         }
         if (got == 0) { inst->endOfStream = true; return false; }
-        got -= got % PCM_BYTES_PER_FRAME;
+        got -= got % bytesPerFrame;
         if (got == 0) { inst->endOfStream = true; return false; }
         memcpy(inst->buffers[bufferIndex], (const uint8_t*)inst->cacheData + inst->cachePosByte, got);
         inst->cachePosByte += (uint32_t)got;
@@ -170,13 +178,13 @@ static bool fillAndQueueBuffer(N3DSSoundInstance* inst, int32_t bufferIndex) {
             got = fread(inst->buffers[bufferIndex], 1, want, inst->file);
         }
         if (got == 0) { inst->endOfStream = true; return false; }
-        got -= got % PCM_BYTES_PER_FRAME;
+        got -= got % bytesPerFrame;
         if (got == 0) { inst->endOfStream = true; return false; }
     }
 
     memset(wb, 0, sizeof(*wb));
     wb->data_pcm16 = inst->buffers[bufferIndex];
-    wb->nsamples = (u32) (got / PCM_BYTES_PER_FRAME);
+    wb->nsamples = (u32)(got / bytesPerFrame);
     DSP_FlushDataCache(inst->buffers[bufferIndex], (u32) got);
     ndspChnWaveBufAdd((u32) inst->channel, wb);
     return true;
@@ -185,10 +193,11 @@ static bool fillAndQueueBuffer(N3DSSoundInstance* inst, int32_t bufferIndex) {
 static bool seekAndPrime(N3DSSoundInstance* inst, uint32_t framePos) {
     if (!inst || (!inst->file && !inst->cacheData)) return false;
 
+    uint32_t bytesPerFrame = (inst->bytesPerFrame > 0) ? inst->bytesPerFrame : PCM_BYTES_PER_FRAME_STEREO;
     if (inst->cacheData) {
-        inst->cachePosByte = framePos * (uint32_t)PCM_BYTES_PER_FRAME;
+        inst->cachePosByte = framePos * bytesPerFrame;
     } else {
-        if (fseek(inst->file, (long)((uint64_t)framePos * PCM_BYTES_PER_FRAME), SEEK_SET) != 0) return false;
+        if (fseek(inst->file, (long)((uint64_t)framePos * bytesPerFrame), SEEK_SET) != 0) return false;
     }
 
     inst->playedFrames = framePos;
@@ -230,6 +239,39 @@ static bool buildPcmPathFromFile(const Sound* sound, char* outPath, size_t outSi
     return n > 0 && (size_t) n < outSize;
 }
 
+static bool readPcmMetaByPcmPath(const char* pcmPath, uint32_t* outSampleRate, uint8_t* outChannels) {
+    if (!pcmPath || !outSampleRate || !outChannels) return false;
+
+    *outSampleRate = N3DS_DEFAULT_SAMPLE_RATE;
+    *outChannels = 2;
+
+    char metaPath[512];
+    size_t n = strlen(pcmPath);
+    if (n + 1 >= sizeof(metaPath)) return false;
+    memcpy(metaPath, pcmPath, n + 1);
+
+    char* dot = strrchr(metaPath, '.');
+    if (!dot) return false;
+    strcpy(dot, ".meta");
+
+    FILE* f = fopen(metaPath, "rb");
+    if (!f) return false;
+
+    char line[128];
+    while (fgets(line, (int)sizeof(line), f)) {
+        unsigned sr = 0;
+        unsigned ch = 0;
+        if (sscanf(line, "sample_rate=%u", &sr) == 1) {
+            if (sr >= 8000 && sr <= 96000) *outSampleRate = sr;
+        } else if (sscanf(line, "channels=%u", &ch) == 1) {
+            if (ch == 1 || ch == 2) *outChannels = (uint8_t)ch;
+        }
+    }
+
+    fclose(f);
+    return true;
+}
+
 static void n3dsInit(AudioSystem* audio, DataWin* dataWin, FileSystem* fileSystem) {
     N3DSAudioSystem* n3ds = (N3DSAudioSystem*) audio;
     n3ds->base.dataWin = dataWin;
@@ -251,7 +293,7 @@ static void n3dsInit(AudioSystem* audio, DataWin* dataWin, FileSystem* fileSyste
         ndspChnReset((u32) i);
         ndspChnSetInterp((u32) i, NDSP_INTERP_LINEAR);
         ndspChnSetFormat((u32) i, NDSP_FORMAT_STEREO_PCM16);
-        ndspChnSetRate((u32) i, 44100.0f);
+        ndspChnSetRate((u32) i, (float)N3DS_DEFAULT_SAMPLE_RATE);
     }
 
     // Mark all software instance slots as free.
@@ -264,7 +306,7 @@ static void n3dsInit(AudioSystem* audio, DataWin* dataWin, FileSystem* fileSyste
 
     // Pre-allocate one pair of streaming buffers per instance slot to avoid
     // linearAlloc/linearFree on every audio_play_sound call.
-    size_t poolBytes = (size_t)N3DS_MAX_SOUND_INSTANCES * 2 * N3DS_STREAM_BUFFER_FRAMES * PCM_BYTES_PER_FRAME;
+    size_t poolBytes = (size_t)N3DS_MAX_SOUND_INSTANCES * 2 * N3DS_STREAM_BUFFER_FRAMES * PCM_BYTES_PER_FRAME_STEREO;
     n3ds->streamBufPool = linearAlloc(poolBytes);
     if (!n3ds->streamBufPool) {
         AUDIO_ERR("N3DSAudio: failed to alloc stream buffer pool (%lu KB)\n", (unsigned long)(poolBytes / 1024));
@@ -427,6 +469,9 @@ static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t pri
 
     FILE* file = NULL;
     long bytes = 0;
+    uint32_t sampleRate = N3DS_DEFAULT_SAMPLE_RATE;
+    uint8_t channels = 2;
+    uint8_t bytesPerFrame = PCM_BYTES_PER_FRAME_STEREO;
 
     if (!cachedEntry) {
         // Resolve romfs PCM using only the file stem from data.win metadata.
@@ -443,6 +488,10 @@ static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t pri
                     sound->file ? sound->file : "<null>");
             return -1;
         }
+
+        (void)readPcmMetaByPcmPath(filePath, &sampleRate, &channels);
+        bytesPerFrame = (channels == 1) ? PCM_BYTES_PER_FRAME_MONO : PCM_BYTES_PER_FRAME_STEREO;
+
         if (fseek(file, 0, SEEK_END) != 0 || (bytes = ftell(file)) <= 0
                 || fseek(file, 0, SEEK_SET) != 0) {
             AUDIO_DBG_PLAY("N3DSAudio[play]: file size/seek failed path='%s'\n", filePath);
@@ -453,13 +502,17 @@ static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t pri
 
         // Cache if small enough — subsequent plays will skip fopen entirely
         if (bytes <= N3DS_SFX_CACHE_SIZE_LIMIT) {
-            cachedEntry = findOrAddSfxCache(n3ds, soundIndex, file, (uint32_t)bytes);
+            cachedEntry = findOrAddSfxCache(n3ds, soundIndex, file, (uint32_t)bytes, sampleRate, channels, bytesPerFrame);
             if (cachedEntry) {
                 AUDIO_DBG_PLAY("N3DSAudio[play]: promoted to cache idx=%ld\n", (long) soundIndex);
                 fclose(file);
                 file = NULL;
             }
         }
+    } else {
+        sampleRate = cachedEntry->sampleRate > 0 ? cachedEntry->sampleRate : N3DS_DEFAULT_SAMPLE_RATE;
+        channels = (cachedEntry->channels == 1) ? 1 : 2;
+        bytesPerFrame = (cachedEntry->bytesPerFrame == PCM_BYTES_PER_FRAME_MONO) ? PCM_BYTES_PER_FRAME_MONO : PCM_BYTES_PER_FRAME_STEREO;
     }
 
     // Populate runtime playback state for this instance.
@@ -476,6 +529,9 @@ static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t pri
     if (inst->sondPitch <= 0.0f) inst->sondPitch = 1.0f;
     inst->currentGain = sound->volume;
     inst->targetGain  = sound->volume;
+    inst->sampleRate  = sampleRate;
+    inst->channels    = channels;
+    inst->bytesPerFrame = bytesPerFrame;
 
     // Assign pre-allocated streaming buffers from pool (no linearAlloc per call)
     size_t slotIdx = (size_t)(inst - n3ds->instances);
@@ -487,17 +543,17 @@ static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t pri
         inst->cacheData        = cachedEntry->data;
         inst->cacheTotalBytes  = cachedEntry->byteSize;
         inst->cachePosByte     = 0;
-        inst->totalFrames      = cachedEntry->byteSize / PCM_BYTES_PER_FRAME;
+        inst->totalFrames      = cachedEntry->byteSize / bytesPerFrame;
     } else {
         inst->file        = file;
-        inst->totalFrames = (uint32_t)((uint64_t)bytes / PCM_BYTES_PER_FRAME);
+        inst->totalFrames = (uint32_t)((uint64_t)bytes / bytesPerFrame);
     }
 
     n3ds->channelOwner[channel] = (int32_t)(inst - n3ds->instances);
 
     ndspChnReset((u32)channel);
     ndspChnSetInterp((u32)channel, NDSP_INTERP_LINEAR);
-    ndspChnSetFormat((u32)channel, NDSP_FORMAT_STEREO_PCM16);
+    ndspChnSetFormat((u32)channel, (channels == 1) ? NDSP_FORMAT_MONO_PCM16 : NDSP_FORMAT_STEREO_PCM16);
     ndspChnSetPaused((u32)channel, false);
 
     // Apply initial per-sound pitch/gain and enqueue the first two stream buffers.
@@ -730,7 +786,8 @@ static float n3dsGetTrackPosition(AudioSystem* audio, int32_t soundOrInstance) {
     }
 
     if (!inst) return 0.0f;
-    return (float) inst->playedFrames / 44100.0f;
+    uint32_t rate = inst->sampleRate > 0 ? inst->sampleRate : N3DS_DEFAULT_SAMPLE_RATE;
+    return (float)inst->playedFrames / (float)rate;
 }
 
 static void n3dsSetTrackPosition(AudioSystem* audio, int32_t soundOrInstance, float positionSeconds) {
@@ -751,7 +808,8 @@ static void n3dsSetTrackPosition(AudioSystem* audio, int32_t soundOrInstance, fl
     if (!inst || !inst->file || inst->totalFrames == 0) return;
 
     if (positionSeconds < 0.0f) positionSeconds = 0.0f;
-    uint32_t framePos = (uint32_t) (positionSeconds * 44100.0f);
+    uint32_t rate = inst->sampleRate > 0 ? inst->sampleRate : N3DS_DEFAULT_SAMPLE_RATE;
+    uint32_t framePos = (uint32_t)(positionSeconds * (float)rate);
     if (framePos >= inst->totalFrames) {
         framePos = inst->loop ? (framePos % inst->totalFrames) : (inst->totalFrames - 1);
     }

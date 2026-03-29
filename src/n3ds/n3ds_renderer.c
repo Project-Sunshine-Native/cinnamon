@@ -1844,17 +1844,15 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                                             (uint8_t)(alpha * 255.0f)),
                                 0.0f);
 
+                            // Backgrounds in romfs are stored at bounding-box size (bndW x bndH)
+                            // with content pasted at (targetX, targetY) — same as sprites.
+                            // Use sheetDstX/Y/W/H so the position has no redundant targetX/Y
+                            // shift and the draw rect covers the full bounding box.
+                            // GML draw_background_ext rotates around (x,y) = the image TL,
+                            // so keep center at {0,0} regardless of angle.
                             C2D_DrawParams params = {
-                                .pos    = {
-                                    dstX + (angleDeg != 0.0f ? dstW * 0.5f : 0.0f),
-                                    dstY + (angleDeg != 0.0f ? dstH * 0.5f : 0.0f),
-                                    dstW,
-                                    dstH
-                                },
-                                .center = {
-                                    (angleDeg != 0.0f ? dstW * 0.5f : 0.0f),
-                                    (angleDeg != 0.0f ? dstH * 0.5f : 0.0f)
-                                },
+                                .pos    = { sheetDstX, sheetDstY, sheetDstW, sheetDstH },
+                                .center = { 0.0f, 0.0f },
                                 .depth  = C->zCounter,
                                 .angle  = angleRad,
                             };
@@ -1989,28 +1987,34 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                 if (sheet) {
                     C2D_Image image = C2D_SpriteSheetGetImage(sheet, frameIdx);
                     if (image.tex && image.tex->data && image.subtex) {
-                        float frameW = (float)image.subtex->width;
-                        float frameH = (float)image.subtex->height;
+                        // The romfs t3x frame is stored at bounding-box size (bndW x bndH).
+                        // Content starts at (targetX, targetY) within the image.
+                        // srcOffX/Y are in content-space (renderer.h already subtracted targetX/Y).
+                        // To reach image-space pixel coords: add targetX/Y back.
+                        float bndW = (float)image.subtex->width;
+                        float bndH = (float)image.subtex->height;
 
-                        if (frameW > 0.0f && frameH > 0.0f) {
-                            float partX0 = fmaxf(0.0f, (float)srcOffX);
-                            float partY0 = fmaxf(0.0f, (float)srcOffY);
-                            float partX1 = fminf(frameW, (float)(srcOffX + srcW));
-                            float partY1 = fminf(frameH, (float)(srcOffY + srcH));
+                        if (bndW > 0.0f && bndH > 0.0f) {
+                            float invBndW = 1.0f / bndW;
+                            float invBndH = 1.0f / bndH;
+                            float uSpan   = image.subtex->right - image.subtex->left;
+                            float vSpan   = image.subtex->bottom - image.subtex->top;
 
-                            if (partX1 > partX0 && partY1 > partY0) {
+                            // Convert content-space part to image-space pixel coords.
+                            float imgX0 = fmaxf(0.0f, (float)srcOffX + (float)tpag->targetX);
+                            float imgY0 = fmaxf(0.0f, (float)srcOffY + (float)tpag->targetY);
+                            float imgX1 = fminf(bndW, imgX0 + (float)srcW);
+                            float imgY1 = fminf(bndH, imgY0 + (float)srcH);
+
+                            if (imgX1 > imgX0 && imgY1 > imgY0) {
                                 Tex3DS_SubTexture partSubtex = *image.subtex;
-                                float invW = 1.0f / frameW;
-                                float invH = 1.0f / frameH;
-                                float uSpan = image.subtex->right - image.subtex->left;
-                                float vSpan = image.subtex->bottom - image.subtex->top;
 
-                                partSubtex.width  = (uint16_t)(partX1 - partX0);
-                                partSubtex.height = (uint16_t)(partY1 - partY0);
-                                partSubtex.left   = image.subtex->left + uSpan * (partX0 * invW);
-                                partSubtex.right  = image.subtex->left + uSpan * (partX1 * invW);
-                                partSubtex.top    = image.subtex->top + vSpan * (partY0 * invH);
-                                partSubtex.bottom = image.subtex->top + vSpan * (partY1 * invH);
+                                partSubtex.width  = (uint16_t)fmaxf(1.0f, imgX1 - imgX0);
+                                partSubtex.height = (uint16_t)fmaxf(1.0f, imgY1 - imgY0);
+                                partSubtex.left   = image.subtex->left + uSpan * (imgX0 * invBndW);
+                                partSubtex.right  = image.subtex->left + uSpan * (imgX1 * invBndW);
+                                partSubtex.top    = image.subtex->top  + vSpan * (imgY0 * invBndH);
+                                partSubtex.bottom = image.subtex->top  + vSpan * (imgY1 * invBndH);
 
                                 C2D_Image partImage = { .tex = image.tex, .subtex = &partSubtex };
 

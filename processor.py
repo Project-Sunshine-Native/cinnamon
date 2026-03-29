@@ -183,12 +183,76 @@ class TextureExtractor:
         print(f"\n\033[32mOK Extracted {sprite_count} sprites\033[0m")
 
     def extract_audio(self):
-        """Extract all sounds to romfs/audio/<name>.pcm via ffmpeg (44.1 kHz, 16-bit, stereo)"""
+        """Extract sounds to romfs/audio/<name>.pcm with optimized sample rate/channels.
+
+        Output format remains signed 16-bit PCM for runtime simplicity, but each file gets
+        a sidecar metadata file (<name>.meta) describing sample_rate/channels.
+        """
         sounds = self.dw.sond.sounds
         entries = self.dw.audo.entries
         data_win_dir = self.data_win_path.parent
         project_root = Path.cwd()
         sfx_root = project_root / "sfx"
+
+        dsp_encoder = shutil.which("dspadpcm")
+        if not dsp_encoder:
+            print("  WARN: DSP ADPCM encoder not found in PATH; using optimized PCM16 output.")
+
+        def choose_audio_profile(name: str, sound_file: str) -> Tuple[int, int, str]:
+            name_l = (name or "").lower()
+            file_l = (sound_file or "").lower()
+            is_music = name_l.startswith("mus_") or "/mus" in file_l or "\\mus" in file_l or file_l.startswith("mus_")
+            if is_music:
+                return 32000, 2, "music"
+            return 22050, 1, "sfx"
+
+        def nearest_supported_rate(rate: int) -> int:
+            supported = [8000, 11025, 16000, 22050, 32000, 44100]
+            if rate <= supported[0]:
+                return supported[0]
+            if rate >= supported[-1]:
+                return supported[-1]
+            best = supported[0]
+            for s in supported:
+                if s <= rate:
+                    best = s
+            return best
+
+        def probe_media(path: Path) -> Optional[Tuple[int, int]]:
+            try:
+                result = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v", "error",
+                        "-select_streams", "a:0",
+                        "-show_entries", "stream=sample_rate,channels",
+                        "-of", "default=nokey=1:noprint_wrappers=1",
+                        str(path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    return None
+                lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+                if len(lines) < 2:
+                    return None
+                sr = int(lines[0])
+                ch = int(lines[1])
+                if sr <= 0 or ch <= 0:
+                    return None
+                return sr, ch
+            except Exception:
+                return None
+
+        def write_meta(meta_path: Path, sample_rate: int, channels: int, profile: str):
+            meta_path.write_text(
+                f"sample_rate={sample_rate}\n"
+                f"channels={channels}\n"
+                "format=pcm16le\n"
+                f"profile={profile}\n",
+                encoding="ascii",
+            )
 
         def resolve_external_audio(sound_file: str) -> Optional[Path]:
             if not sound_file:
@@ -239,18 +303,27 @@ class TextureExtractor:
 
                 try:
                     out_path = audio_dir / f"{name}.pcm"
+                    meta_path = audio_dir / f"{name}.meta"
+
+                    target_sr, target_ch, profile = choose_audio_profile(name, sound.file)
 
                     # Prefer original external file path (e.g., mus/*.ogg) when available.
                     # Some games map many music resources to a shared AUDO entry placeholder.
                     ext_src = resolve_external_audio(sound.file)
                     if ext_src is not None:
+                        probed = probe_media(ext_src)
+                        if probed is not None:
+                            src_sr, src_ch = probed
+                            target_sr = min(target_sr, nearest_supported_rate(src_sr))
+                            target_ch = 1 if src_ch <= 1 else target_ch
+
                         result = subprocess.run(
                             [
                                 "ffmpeg", "-y",
                                 "-i", str(ext_src),
                                 "-f", "s16le",
-                                "-ar", "44100",
-                                "-ac", "2",
+                                "-ar", str(target_sr),
+                                "-ac", str(target_ch),
                                 str(out_path),
                             ],
                             capture_output=True,
@@ -279,8 +352,8 @@ class TextureExtractor:
                                 "ffmpeg", "-y",
                                 "-i", "pipe:0",
                                 "-f", "s16le",
-                                "-ar", "44100",
-                                "-ac", "2",
+                                "-ar", str(target_sr),
+                                "-ac", str(target_ch),
                                 str(out_path),
                             ],
                             input=raw_data,
@@ -290,6 +363,8 @@ class TextureExtractor:
                     if result.returncode != 0:
                         print(f"    \033[31mFAILED: ffmpeg error: {result.stderr.decode(errors='replace').splitlines()[-1]}\033[0m")
                     else:
+                        write_meta(meta_path, target_sr, target_ch, profile)
+
                         # Also emit file-stem alias when it differs from the SOND name.
                         if sound.file:
                             file_stem = Path(sound.file).stem
@@ -297,6 +372,8 @@ class TextureExtractor:
                                 alias_path = audio_dir / f"{file_stem}.pcm"
                                 if alias_path != out_path:
                                     shutil.copyfile(out_path, alias_path)
+                                    alias_meta = audio_dir / f"{file_stem}.meta"
+                                    shutil.copyfile(meta_path, alias_meta)
                         print(f"    \033[32mOK\033[0m")
                         success_count += 1
 

@@ -20,6 +20,9 @@ typedef struct {
     int32_t  soundIndex;   // -1 = empty slot
     int16_t* data;         // heap-allocated full PCM content
     uint32_t byteSize;
+    uint32_t sampleRate;
+    uint8_t  channels;
+    uint8_t  bytesPerFrame;
 } N3DSSoundCacheEntry;
 
 typedef struct {
@@ -40,6 +43,9 @@ typedef struct {
     const int16_t* cacheData;
     uint32_t       cacheTotalBytes;
     uint32_t       cachePosByte;
+    uint32_t       sampleRate;
+    uint8_t        channels;
+    uint8_t        bytesPerFrame;
 
     uint32_t totalFrames;
     uint32_t playedFrames;
