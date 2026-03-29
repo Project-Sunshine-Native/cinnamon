@@ -1542,8 +1542,9 @@ static void CBeginView(Renderer* renderer,
 //static u64 lastframetime = 0;
 
 void CRenderer3DS_setLagMode(Renderer* renderer, bool enabled) {
+    (void) enabled;
     CRenderer3DS* C = (CRenderer3DS*) renderer;
-    C->lagMode = enabled;
+    C->lagMode = false;
     C->lagWindowSpriteTicks = C->lagWindowSpritePartTicks = C->lagWindowTextTicks = 0;
     C->lagWindowRectTicks = C->lagWindowLineTicks = C->lagWindowRegionTicks = 0;
     C->lagWindowSpriteN = C->lagWindowSpritePartN = C->lagWindowTextN = 0;
@@ -1806,6 +1807,10 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     float checkH = (sheetDstH > 0.0f) ? sheetDstH : dstH;
     float checkX = (sheetDstW > 0.0f) ? sheetDstX : dstX;
     float checkY = (sheetDstH > 0.0f) ? sheetDstY : dstY;
+
+    // Normalize for flipped sprites before rotated culling.
+    if (checkW < 0.0f) { checkX += checkW; checkW = -checkW; }
+    if (checkH < 0.0f) { checkY += checkH; checkH = -checkH; }
 
     if (isRotatedRectOffscreen(C, checkX, checkY, checkW, checkH, angleRad)) {
         return;

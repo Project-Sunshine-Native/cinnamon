@@ -248,8 +248,11 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
         if (bg->stretch) {
             // Stretch to fill room dimensions
             TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
-            float xscale = roomW / (float) tpag->boundingWidth;
-            float yscale = roomH / (float) tpag->boundingHeight;
+            float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
+            float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
+            if (baseW <= 0.0f || baseH <= 0.0f) continue;
+            float xscale = roomW / baseW;
+            float yscale = roomH / baseH;
             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, bg->alpha);
         } else if (bg->tileX || bg->tileY) {
             Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, roomW, roomH, bg->alpha);
