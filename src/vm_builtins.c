@@ -1648,6 +1648,25 @@ static RValue builtin_audioStopAll([[maybe_unused]] VMContext* ctx, [[maybe_unus
     return RValue_makeUndefined();
 }
 
+// Legacy GML sound functions
+static RValue builtin_soundPlay(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
+    if (soundIndex < 0) return RValue_makeUndefined();
+    audio->vtable->playSound(audio, soundIndex, 0, false);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_soundStop(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    AudioSystem* audio = getAudioSystem(ctx);
+    if (audio == nullptr) return RValue_makeUndefined();
+    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
+    if (soundIndex < 0) return RValue_makeUndefined();
+    audio->vtable->stopSound(audio, soundIndex);
+    return RValue_makeUndefined();
+}
+
 static RValue builtin_audioIsPlaying(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeBool(false);
@@ -3900,6 +3919,8 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("audio_sound_pitch", builtin_audioSoundPitch);
     registerBuiltin("audio_sound_get_gain", builtin_audioSoundGetGain);
     registerBuiltin("audio_sound_get_pitch", builtin_audioSoundGetPitch);
+    registerBuiltin("sound_play", builtin_soundPlay);
+    registerBuiltin("sound_stop", builtin_soundStop);
     registerBuiltin("audio_master_gain", builtin_audioMasterGain);
     registerBuiltin("audio_group_load", builtin_audioGroupLoad);
     registerBuiltin("audio_group_is_loaded", builtin_audioGroupIsLoaded);
