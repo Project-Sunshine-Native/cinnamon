@@ -2290,6 +2290,15 @@ static RValue builtinKeyboardClear(VMContext* ctx, RValue* args, int32_t argCoun
     return RValue_makeUndefined();
 }
 
+static RValue builtinKeyboardSetMap(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (2 > argCount) return RValue_makeUndefined();
+    Runner* runner = (Runner*) ctx->runner;
+    int32_t fromKey = RValue_toInt32(args[0]);
+    int32_t toKey = RValue_toInt32(args[1]);
+    RunnerKeyboard_setMap(runner->keyboard, fromKey, toKey);
+    return RValue_makeUndefined();
+}
+
 // Joystick stubs
 STUB_RETURN_ZERO(joystick_exists)
 STUB_RETURN_ZERO(joystick_xpos)
@@ -3950,6 +3959,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("keyboard_key_press", builtinKeyboardKeyPress);
     registerBuiltin("keyboard_key_release", builtinKeyboardKeyRelease);
     registerBuiltin("keyboard_clear", builtinKeyboardClear);
+    registerBuiltin("keyboard_set_map", builtinKeyboardSetMap);
 
     // Joystick
     registerBuiltin("joystick_exists", builtin_joystick_exists);
