@@ -3019,6 +3019,36 @@ static RValue builtin_drawRectangle(VMContext* ctx, RValue* args, [[maybe_unused
     return RValue_makeUndefined();
 }
 
+// draw_rectangle_color(x1, y1, x2, y2, c1, c2, c3, c4, outline)
+// The renderer API only supports a flat rectangle color today. For Undertale's
+// UI boxes this is typically enough because all four colors usually match.
+static RValue builtin_drawRectangleColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || argCount < 9) return RValue_makeUndefined();
+
+    float x1 = (float) RValue_toReal(args[0]);
+    float y1 = (float) RValue_toReal(args[1]);
+    float x2 = (float) RValue_toReal(args[2]);
+    float y2 = (float) RValue_toReal(args[3]);
+    uint32_t c1 = (uint32_t) RValue_toInt32(args[4]);
+    uint32_t c2 = (uint32_t) RValue_toInt32(args[5]);
+    uint32_t c3 = (uint32_t) RValue_toInt32(args[6]);
+    uint32_t c4 = (uint32_t) RValue_toInt32(args[7]);
+    bool outline = RValue_toBool(args[8]);
+
+    // TODO: true 4-corner gradient rectangles. For now, use c1 directly rather
+    // than averaging, which keeps saturated UI borders crisp.
+    (void)c2;
+    (void)c3;
+    (void)c4;
+    runner->renderer->vtable->drawRectangle(runner->renderer, x1, y1, x2, y2, c1, runner->renderer->drawAlpha, outline);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_drawRectangleColour(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    return builtin_drawRectangleColor(ctx, args, argCount);
+}
+
 static RValue builtin_drawSetColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
     if (runner->renderer != nullptr) {
@@ -3089,8 +3119,73 @@ static RValue builtin_drawTextTransformed(VMContext* ctx, RValue* args, [[maybe_
 }
 STUB_RETURN_UNDEFINED(draw_text_ext)
 STUB_RETURN_UNDEFINED(draw_text_ext_transformed)
-STUB_RETURN_UNDEFINED(draw_text_ext_color)
-STUB_RETURN_UNDEFINED(draw_text_ext_colour)
+
+static uint32_t pickTextColor(uint32_t c1, uint32_t c2, uint32_t c3, uint32_t c4) {
+    if (c1 == c2 && c1 == c3 && c1 == c4) return c1;
+
+    uint32_t corners[4] = { c1, c2, c3, c4 };
+    int bestIdx = 0;
+    int bestSat = -1;
+    int bestVal = -1;
+
+    for (int i = 0; i < 4; i++) {
+        int r = (int)(corners[i] & 0xFF);
+        int g = (int)((corners[i] >> 8) & 0xFF);
+        int b = (int)((corners[i] >> 16) & 0xFF);
+
+        int maxc = r;
+        if (g > maxc) maxc = g;
+        if (b > maxc) maxc = b;
+
+        int minc = r;
+        if (g < minc) minc = g;
+        if (b < minc) minc = b;
+
+        int sat = maxc - minc;
+        int val = maxc;
+        if (sat > bestSat || (sat == bestSat && val > bestVal)) {
+            bestSat = sat;
+            bestVal = val;
+            bestIdx = i;
+        }
+    }
+
+    return corners[bestIdx];
+}
+
+// draw_text_ext_color(x, y, str, sep, w, c1, c2, c3, c4, alpha)
+// We currently ignore sep/w wrapping but preserve color + alpha behavior.
+static RValue builtin_draw_text_ext_color(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    if (runner->renderer == nullptr || argCount < 10) return RValue_makeUndefined();
+
+    float x   = (float) RValue_toReal(args[0]);
+    float y   = (float) RValue_toReal(args[1]);
+    char* str = RValue_toString(args[2]);
+    uint32_t c1 = (uint32_t) RValue_toInt32(args[5]);
+    uint32_t c2 = (uint32_t) RValue_toInt32(args[6]);
+    uint32_t c3 = (uint32_t) RValue_toInt32(args[7]);
+    uint32_t c4 = (uint32_t) RValue_toInt32(args[8]);
+    float alpha = (float) RValue_toReal(args[9]);
+
+    // TODO: true 4-corner gradient text tint.
+    // Until then, choose a representative corner color that preserves vivid hues.
+    uint32_t avgColor = pickTextColor(c1, c2, c3, c4);
+
+    uint32_t savedColor = runner->renderer->drawColor;
+    float    savedAlpha = runner->renderer->drawAlpha;
+    runner->renderer->drawColor = avgColor;
+    runner->renderer->drawAlpha = alpha;
+    runner->renderer->vtable->drawText(runner->renderer, str, x, y, 1.0f, 1.0f, 0.0f);
+    runner->renderer->drawColor = savedColor;
+    runner->renderer->drawAlpha = savedAlpha;
+    free(str);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_draw_text_ext_colour(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    return builtin_draw_text_ext_color(ctx, args, argCount);
+}
 
 // draw_text_color(x, y, str, c1, c2, c3, c4, alpha)
 // GML draws text with four corner colors; we use the average of all four.
@@ -3107,11 +3202,9 @@ static RValue builtin_drawTextColor(VMContext* ctx, RValue* args, [[maybe_unused
     uint32_t c4 = (uint32_t) RValue_toInt32(args[6]);
     float alpha = (float) RValue_toReal(args[7]);
 
-    // Average the four corner colors (each in GML BGR format: 0x00BBGGRR)
-    uint32_t avgR = ((c1 & 0xFF) + (c2 & 0xFF) + (c3 & 0xFF) + (c4 & 0xFF)) / 4;
-    uint32_t avgG = (((c1 >> 8) & 0xFF) + ((c2 >> 8) & 0xFF) + ((c3 >> 8) & 0xFF) + ((c4 >> 8) & 0xFF)) / 4;
-    uint32_t avgB = (((c1 >> 16) & 0xFF) + ((c2 >> 16) & 0xFF) + ((c3 >> 16) & 0xFF) + ((c4 >> 16) & 0xFF)) / 4;
-    uint32_t avgColor = avgR | (avgG << 8) | (avgB << 16);
+    // TODO: true 4-corner gradient text tint.
+    // Until then, choose a representative corner color that preserves vivid hues.
+    uint32_t avgColor = pickTextColor(c1, c2, c3, c4);
 
     uint32_t savedColor = runner->renderer->drawColor;
     float    savedAlpha = runner->renderer->drawAlpha;
@@ -4202,6 +4295,8 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("draw_sprite_part", builtin_drawSpritePart);
     registerBuiltin("draw_sprite_part_ext", builtin_drawSpritePartExt);
     registerBuiltin("draw_rectangle", builtin_drawRectangle);
+    registerBuiltin("draw_rectangle_color", builtin_drawRectangleColor);
+    registerBuiltin("draw_rectangle_colour", builtin_drawRectangleColour);
     registerBuiltin("draw_set_color", builtin_drawSetColor);
     registerBuiltin("draw_set_alpha", builtin_drawSetAlpha);
     registerBuiltin("draw_set_font", builtin_drawSetFont);
