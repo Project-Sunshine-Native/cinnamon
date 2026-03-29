@@ -133,6 +133,20 @@ typedef struct {
     uint32_t lagRectN;
     uint32_t lagLineN;
     uint32_t lagRegionN;
+    u64      lagWindowSpriteTicks;
+    u64      lagWindowSpritePartTicks;
+    u64      lagWindowTextTicks;
+    u64      lagWindowRectTicks;
+    u64      lagWindowLineTicks;
+    u64      lagWindowRegionTicks;
+    uint32_t lagWindowSpriteN;
+    uint32_t lagWindowSpritePartN;
+    uint32_t lagWindowTextN;
+    uint32_t lagWindowRectN;
+    uint32_t lagWindowLineN;
+    uint32_t lagWindowRegionN;
+    uint32_t lagWindowRectCmdMerged;
+    uint32_t lagWindowFrameCount;
 
     // Virtual command buffer for rectangle draws.
     RectDrawCmd rectCmds[RECT_CMD_BUFFER_MAX];

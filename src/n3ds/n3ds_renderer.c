@@ -28,6 +28,10 @@
 #  define DBG_LOG(...) ((void)0)
 #endif
 
+enum {
+    CINNAMON_LAG_REPORT_EVERY_FRAMES = 10,
+};
+
 // TODO: update this comment, its outdated
 // ===[ Linear-backed lodepng allocator ]===
 //
@@ -662,8 +666,8 @@ static bool loadPageFromSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t b
     }
     fclose(f);
 
-    printf("CRenderer3DS: page %lu loaded from SD cache (%lux%lu)\n",
-           pageIdx, page->atlasW, page->atlasH);
+        DBG_LOG("CRenderer3DS: page %lu loaded from SD cache (%lux%lu)\n",
+            pageIdx, page->atlasW, page->atlasH);
     return true;
 }
 
@@ -675,7 +679,7 @@ static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blo
 
     FILE* f = fopen(path, "wb");
     if (!f) {
-        printf("CRenderer3DS: WARNING, could not write cache for page %lu\n", (unsigned long)pageIdx);
+        DBG_LOG("CRenderer3DS: WARNING, could not write cache for page %lu\n", (unsigned long)pageIdx);
         return;
     }
 
@@ -694,9 +698,9 @@ static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blo
     fwrite(pixels, 1, (size_t)w * h * 4, f); 
     fclose(f);
 
-    printf("CRenderer3DS: page %lu saved to SD cache (%lux%lu, %lu KB)\n",
-           (unsigned long)pageIdx, (unsigned long)w, (unsigned long)h, 
-           (unsigned long)((size_t)w * h * 4 / 1024));
+        DBG_LOG("CRenderer3DS: page %lu saved to SD cache (%lux%lu, %lu KB)\n",
+            (unsigned long)pageIdx, (unsigned long)w, (unsigned long)h,
+            (unsigned long)((size_t)w * h * 4 / 1024));
 }
 
 static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
@@ -948,6 +952,17 @@ static void drawRegion(CRenderer3DS* C,
                         float angle, u32 color,
                         float blend)
 {
+    bool flipX = dstW < 0.0f;
+    bool flipY = dstH < 0.0f;
+    if (flipX) {
+        dstX += dstW;
+        dstW = -dstW;
+    }
+    if (flipY) {
+        dstY += dstH;
+        dstH = -dstH;
+    }
+
     if (isRotatedRectOffscreen(C, dstX, dstY, dstW, dstH, angle)) return;
 
     CFlushQueuedRects(C);
@@ -1037,8 +1052,10 @@ static void drawRegion(CRenderer3DS* C,
                 Tex3DS_SubTexture subtex = {
                     .width  = iSrcW,
                     .height = iSrcH,
-                    .left   = 0.0f, .right  = scaleW,
-                    .top    = 1.0f, .bottom = 1.0f - scaleH,
+                    .left   = flipX ? scaleW : 0.0f,
+                    .right  = flipX ? 0.0f : scaleW,
+                    .top    = flipY ? (1.0f - scaleH) : 1.0f,
+                    .bottom = flipY ? 1.0f : (1.0f - scaleH),
                 };
 
                 if (entry->tex.data == NULL) goto next_chunk;
@@ -1048,8 +1065,12 @@ static void drawRegion(CRenderer3DS* C,
                 C2D_ImageTint tint;
                 C2D_PlainImageTint(&tint, color, blend);
 
-                float chunkDestX = dstX + (chunkX - srcX) * pixScaleX;
-                float chunkDestY = dstY + (chunkY - srcY) * pixScaleY;
+                float chunkDestX = flipX
+                    ? dstX + (srcX + srcW - (chunkX + chunkW)) * pixScaleX
+                    : dstX + (chunkX - srcX) * pixScaleX;
+                float chunkDestY = flipY
+                    ? dstY + (srcY + srcH - (chunkY + chunkH)) * pixScaleY
+                    : dstY + (chunkY - srcY) * pixScaleY;
                 float chunkDestW = chunkW * pixScaleX;
                 float chunkDestH = chunkH * pixScaleY;
 
@@ -1523,6 +1544,12 @@ static void CBeginView(Renderer* renderer,
 void CRenderer3DS_setLagMode(Renderer* renderer, bool enabled) {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->lagMode = enabled;
+    C->lagWindowSpriteTicks = C->lagWindowSpritePartTicks = C->lagWindowTextTicks = 0;
+    C->lagWindowRectTicks = C->lagWindowLineTicks = C->lagWindowRegionTicks = 0;
+    C->lagWindowSpriteN = C->lagWindowSpritePartN = C->lagWindowTextN = 0;
+    C->lagWindowRectN = C->lagWindowLineN = C->lagWindowRegionN = 0;
+    C->lagWindowRectCmdMerged = 0;
+    C->lagWindowFrameCount = 0;
 }
 
 static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
@@ -1581,18 +1608,44 @@ static void CEndFrame(Renderer* renderer) {
     //C2D_DrawImageAt(C->border, 0, 0, 0.5f, NULL, 1.0f, 1.0f);
 
     if (C->lagMode) {
-        // Convert ARM11 ticks to ms: SYSCLOCK_ARM11 = 268111856 Hz
-        double tpms = 1000.0 / 268111856.0;
-        fprintf(stderr,
-            "[LAG] Sprite=%.2fms(%u) SpritePart=%.2fms(%u) "
-            "Text=%.2fms(%u) Rect=%.2fms(%u) Line=%.2fms(%u) Region=%.2fms(%u) RectMerge=%lu\n",
-            (double)C->lagSpriteTicks     * tpms, C->lagSpriteN,
-            (double)C->lagSpritePartTicks * tpms, C->lagSpritePartN,
-            (double)C->lagTextTicks       * tpms, C->lagTextN,
-            (double)C->lagRectTicks       * tpms, C->lagRectN,
-            (double)C->lagLineTicks       * tpms, C->lagLineN,
-            (double)C->lagRegionTicks     * tpms, C->lagRegionN,
-            (unsigned long)C->rectCmdMerged);
+        C->lagWindowSpriteTicks += C->lagSpriteTicks;
+        C->lagWindowSpritePartTicks += C->lagSpritePartTicks;
+        C->lagWindowTextTicks += C->lagTextTicks;
+        C->lagWindowRectTicks += C->lagRectTicks;
+        C->lagWindowLineTicks += C->lagLineTicks;
+        C->lagWindowRegionTicks += C->lagRegionTicks;
+        C->lagWindowSpriteN += C->lagSpriteN;
+        C->lagWindowSpritePartN += C->lagSpritePartN;
+        C->lagWindowTextN += C->lagTextN;
+        C->lagWindowRectN += C->lagRectN;
+        C->lagWindowLineN += C->lagLineN;
+        C->lagWindowRegionN += C->lagRegionN;
+        C->lagWindowRectCmdMerged += C->rectCmdMerged;
+        C->lagWindowFrameCount++;
+
+        if (C->lagWindowFrameCount >= CINNAMON_LAG_REPORT_EVERY_FRAMES) {
+            // Convert ARM11 ticks to ms: SYSCLOCK_ARM11 = 268111856 Hz
+            double tpms = 1000.0 / 268111856.0;
+            double invFrames = 1.0 / (double)C->lagWindowFrameCount;
+            fprintf(stderr,
+                "[LAG/%u] Sprite=%.2fms(%u) SpritePart=%.2fms(%u) "
+                "Text=%.2fms(%u) Rect=%.2fms(%u) Line=%.2fms(%u) Region=%.2fms(%u) RectMerge=%lu\n",
+                C->lagWindowFrameCount,
+                (double)C->lagWindowSpriteTicks     * tpms * invFrames, C->lagWindowSpriteN,
+                (double)C->lagWindowSpritePartTicks * tpms * invFrames, C->lagWindowSpritePartN,
+                (double)C->lagWindowTextTicks       * tpms * invFrames, C->lagWindowTextN,
+                (double)C->lagWindowRectTicks       * tpms * invFrames, C->lagWindowRectN,
+                (double)C->lagWindowLineTicks       * tpms * invFrames, C->lagWindowLineN,
+                (double)C->lagWindowRegionTicks     * tpms * invFrames, C->lagWindowRegionN,
+                (unsigned long)(C->lagWindowRectCmdMerged / C->lagWindowFrameCount));
+
+            C->lagWindowSpriteTicks = C->lagWindowSpritePartTicks = C->lagWindowTextTicks = 0;
+            C->lagWindowRectTicks = C->lagWindowLineTicks = C->lagWindowRegionTicks = 0;
+            C->lagWindowSpriteN = C->lagWindowSpritePartN = C->lagWindowTextN = 0;
+            C->lagWindowRectN = C->lagWindowLineN = C->lagWindowRegionN = 0;
+            C->lagWindowRectCmdMerged = 0;
+            C->lagWindowFrameCount = 0;
+        }
     }
     C->frameCounter++;
     C3D_FrameEnd(0);
@@ -1614,12 +1667,12 @@ static void CLogSpriteFallback(CRenderer3DS* C, int32_t tpagIndex,
     if (!C || tpagIndex < 0 || !C->tpagFallbackLogged) return;
     if (C->tpagFallbackLogged[tpagIndex]) return;
 
-    C->tpagFallbackLogged[tpagIndex] = 1;
-    printf("CRenderer3DS: romfs sprite fallback tpag=%d sprite=%s frame=%d reason=%s\n",
-           tpagIndex,
-           spriteName ? spriteName : "<unknown>",
-           frameIdx,
-           reason ? reason : "unspecified");
+        C->tpagFallbackLogged[tpagIndex] = 1;
+        DBG_LOG("CRenderer3DS: romfs sprite fallback tpag=%d sprite=%s frame=%d reason=%s\n",
+            tpagIndex,
+            spriteName ? spriteName : "<unknown>",
+            frameIdx,
+            reason ? reason : "unspecified");
 }
 
 static C2D_SpriteSheet CEnsureSpriteSheetLoaded(CRenderer3DS* C, Sprite* sprite, int32_t spriteIdx) {
@@ -1635,7 +1688,7 @@ static C2D_SpriteSheet CEnsureSpriteSheetLoaded(CRenderer3DS* C, Sprite* sprite,
         C->spriteSheets[spriteIdx] = CLoadSpriteSheet(sprite->name);
         if (C->spriteSheets[spriteIdx]) {
             if (C->spriteSheetState) C->spriteSheetState[spriteIdx] = 1;
-            printf("CRenderer3DS: loaded romfs sprite sheet %s\n", sprite->name ? sprite->name : "<unknown>");
+            DBG_LOG("CRenderer3DS: loaded romfs sprite sheet %s\n", sprite->name ? sprite->name : "<unknown>");
         } else {
             if (C->spriteSheetState) C->spriteSheetState[spriteIdx] = 2;
             LOG_ERR("CRenderer3DS: failed to load romfs sprite sheet for %s\n",
@@ -1698,7 +1751,7 @@ static C2D_SpriteSheet CEnsureBackgroundSheetLoaded(CRenderer3DS* C, Background*
         C->backgroundSheets[bgIdx] = CLoadSpriteSheet(bg->name);
         if (C->backgroundSheets[bgIdx]) {
             if (C->backgroundSheetState) C->backgroundSheetState[bgIdx] = 1;
-            printf("CRenderer3DS: loaded romfs background sheet %s\n", bg->name ? bg->name : "<unknown>");
+            DBG_LOG("CRenderer3DS: loaded romfs background sheet %s\n", bg->name ? bg->name : "<unknown>");
         } else {
             if (C->backgroundSheetState) C->backgroundSheetState[bgIdx] = 2;
             LOG_ERR("CRenderer3DS: failed to load romfs background sheet for %s\n",
@@ -1750,53 +1803,13 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     u64 _lagST0 = C->lagMode ? svcGetSystemTick() : 0;
 
     // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
-    if (C->tpagToSpriteIndex && C->tpagToFrameIndex && (uint32_t)tpagIndex < dw->tpag.count) {
+    if (xscale > 0.0f && yscale > 0.0f && C->tpagToSpriteIndex && C->tpagToFrameIndex && (uint32_t)tpagIndex < dw->tpag.count) {
         int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
         int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
 
         if (spriteIdx < 0 || frameIdx < 0) {
             int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
-            if (bgIdx >= 0 && (uint32_t)bgIdx < dw->bgnd.count) {
-                Background* bg = &dw->bgnd.backgrounds[bgIdx];
-                if (!bg->name) {
-                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, 0);
-                } else {
-                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
-                    if (sheet) {
-                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
-                        if (image.tex && image.tex->data) {
-                            C2D_ImageTint tint;
-                            C2D_PlainImageTint(&tint,
-                                C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
-                                            (uint8_t)(alpha * 255.0f)),
-                                0.0f);
-
-                            C2D_DrawParams params = {
-                                .pos    = {
-                                    sheetDstX + (angleDeg != 0.0f ? sheetDstW * 0.5f : 0.0f),
-                                    sheetDstY + (angleDeg != 0.0f ? sheetDstH * 0.5f : 0.0f),
-                                    sheetDstW,
-                                    sheetDstH
-                                },
-                                .center = {
-                                    (angleDeg != 0.0f ? sheetDstW * 0.5f : 0.0f),
-                                    (angleDeg != 0.0f ? sheetDstH * 0.5f : 0.0f)
-                                },
-                                .depth  = C->zCounter,
-                                .angle  = angleRad,
-                            };
-
-                            C2D_DrawImage(image, &params, &tint);
-                            C->zCounter += 0.0001f;
-                            if (C->lagMode) { C->lagSpriteTicks += svcGetSystemTick() - _lagST0; C->lagSpriteN++; }
-                            return;
-                        }
-                        CLogSpriteFallback(C, tpagIndex, "background sheet image/frame is invalid", bg->name, 0);
-                    } else {
-                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, 0);
-                    }
-                }
-            } else {
+            if (bgIdx < 0 || (uint32_t)bgIdx >= dw->bgnd.count) {
                 CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
             }
         } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
@@ -1811,12 +1824,12 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                 C2D_SpriteSheet sheet = CEnsureSpriteSheetLoaded(C, sprite, spriteIdx);
                 if (sheet) {
                     C2D_Image image = C2D_SpriteSheetGetImage(sheet, frameIdx);
-                    if (image.tex && image.tex->data) {
+                    if (image.tex && image.tex->data && image.subtex) {
                         C2D_ImageTint tint;
                         C2D_PlainImageTint(&tint,
                             C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                         (uint8_t)(alpha * 255.0f)),
-                            0.0f);
+                            1.0f);
 
                         C2D_DrawParams params = {
                             .pos    = {
@@ -1856,7 +1869,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                    (float)tpag->sourceX,    (float)tpag->sourceY,
                    (float)tpag->sourceWidth, (float)tpag->sourceHeight,
                    dstX, dstY, dstW, dstH,
-                   angleRad, tintColor, 0.0f);
+                   angleRad, tintColor, 1.0f);
     } else {
         DBG_LOG("CDrawSprite: ERROR - pageIdx %lu out of range (count %lu)\n",
                 (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
@@ -1896,73 +1909,13 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
     u64 _lagSPT0 = C->lagMode ? svcGetSystemTick() : 0;
 
     // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
-    if (srcW > 0 && srcH > 0 && C->tpagToSpriteIndex && C->tpagToFrameIndex) {
+    if (srcW > 0 && srcH > 0 && xscale > 0.0f && yscale > 0.0f && C->tpagToSpriteIndex && C->tpagToFrameIndex) {
         int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
         int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
 
         if (spriteIdx < 0 || frameIdx < 0) {
             int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
-            if (bgIdx >= 0 && (uint32_t)bgIdx < dw->bgnd.count) {
-                Background* bg = &dw->bgnd.backgrounds[bgIdx];
-                if (!bg->name) {
-                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, 0);
-                } else {
-                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
-                    if (sheet) {
-                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
-                        if (image.tex && image.tex->data && image.subtex) {
-                            float frameW = (float)image.subtex->width;
-                            float frameH = (float)image.subtex->height;
-                            if (frameW > 0.0f && frameH > 0.0f) {
-                                float partX0 = fmaxf(0.0f, (float)srcOffX);
-                                float partY0 = fmaxf(0.0f, (float)srcOffY);
-                                float partX1 = fminf(frameW, (float)(srcOffX + srcW));
-                                float partY1 = fminf(frameH, (float)(srcOffY + srcH));
-                                if (partX1 > partX0 && partY1 > partY0) {
-                                    Tex3DS_SubTexture partSubtex = *image.subtex;
-                                    float invW = 1.0f / frameW;
-                                    float invH = 1.0f / frameH;
-                                    float uSpan = image.subtex->right - image.subtex->left;
-                                    float vSpan = image.subtex->bottom - image.subtex->top;
-
-                                    partSubtex.width  = (uint16_t)(partX1 - partX0);
-                                    partSubtex.height = (uint16_t)(partY1 - partY0);
-                                    partSubtex.left   = image.subtex->left + uSpan * (partX0 * invW);
-                                    partSubtex.right  = image.subtex->left + uSpan * (partX1 * invW);
-                                    partSubtex.top    = image.subtex->top + vSpan * (partY0 * invH);
-                                    partSubtex.bottom = image.subtex->top + vSpan * (partY1 * invH);
-
-                                    C2D_Image partImage = { .tex = image.tex, .subtex = &partSubtex };
-                                    C2D_ImageTint tint;
-                                    C2D_PlainImageTint(&tint,
-                                        C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
-                                                    (uint8_t)(alpha * 255.0f)),
-                                        0.0f);
-
-                                    C2D_DrawParams params = {
-                                        .pos    = { dstX, dstY, dstW, dstH },
-                                        .center = { 0.0f, 0.0f },
-                                        .depth  = C->zCounter,
-                                        .angle  = 0.0f,
-                                    };
-
-                                    C2D_DrawImage(partImage, &params, &tint);
-                                    C->zCounter += 0.0001f;
-                                    if (C->lagMode) { C->lagSpritePartTicks += svcGetSystemTick() - _lagSPT0; C->lagSpritePartN++; }
-                                    return;
-                                }
-                                CLogSpriteFallback(C, tpagIndex, "requested background part is fully outside frame bounds", bg->name, 0);
-                            } else {
-                                CLogSpriteFallback(C, tpagIndex, "background sheet frame has invalid dimensions", bg->name, 0);
-                            }
-                        } else {
-                            CLogSpriteFallback(C, tpagIndex, "background sheet image/frame is invalid", bg->name, 0);
-                        }
-                    } else {
-                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, 0);
-                    }
-                }
-            } else {
+            if (bgIdx < 0 || (uint32_t)bgIdx >= dw->bgnd.count) {
                 CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
             }
         } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
@@ -2007,7 +1960,7 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                                 C2D_PlainImageTint(&tint,
                                     C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                                 (uint8_t)(alpha * 255.0f)),
-                                    0.0f);
+                                    1.0f);
 
                                 C2D_DrawParams params = {
                                     .pos    = { dstX, dstY, dstW, dstH },
@@ -2064,14 +2017,11 @@ static void CDrawRectangle(Renderer* renderer,
     uint8_t a = (uint8_t)(alpha * 255.0f);
     u32 col = C2D_Color32(r, g, b, a);
 
-    // Normalize the rectangle in view space    
-    float left   = fminf(x1, x2);
-    float right  = fmaxf(x1, x2);
-    float bottom    = fminf(y1, y2);
-    float top = fmaxf(y1, y2);
-
-    right  += 1.0f;
-    bottom += 1.0f;
+    // Normalize the rectangle in view space.
+    float left = fminf(x1, x2);
+    float right = fmaxf(x1, x2) + 1.0f;
+    float top = fminf(y1, y2);
+    float bottom = fmaxf(y1, y2) + 1.0f;
 
     // Transform to screen space
     float sx1 = (left   - (float)C->viewX) * C->scaleX + C->offsetX;
@@ -2268,8 +2218,8 @@ static void COnRoomEnd(Renderer* renderer) {
         page->regionCount = 0;
     }
 
-    printf("CRenderer3DS: room end - evicted %lu sprite textures, font glyphs retained\n",
-           totalEvicted);
+    DBG_LOG("CRenderer3DS: room end - evicted %lu sprite textures, font glyphs retained\n",
+            totalEvicted);
     logMemory("after room eviction");
 }
 

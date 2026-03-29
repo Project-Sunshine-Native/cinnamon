@@ -38,6 +38,7 @@
 typedef struct {
     u32 hwKey;   // 3DS button
     int gmlKey;  // GML keycode
+    bool held;   // currently held this frame
 } KeyMap;
 
 // ===[ COMMAND LINE ARGUMENTS ]===
@@ -677,6 +678,8 @@ int main(int argc, char* argv[]) {
         { KEY_A,     VK_Z },     // A button triggers Z (confirm)
         { KEY_B,     VK_X },     // B button triggers X (cancel)
         { KEY_X,     VK_C },     // X button triggers C (menu)
+        { KEY_ZL,    VK_SHIFT }, // L button triggers Left Shift
+        { KEY_ZR,    VK_CONTROL }, // R button triggers Right Shift
     };
 
 
@@ -699,20 +702,88 @@ int main(int argc, char* argv[]) {
 
         u32 kDown = hidKeysDown();
         u32 kUp   = hidKeysUp();
+        u32 kHeld = hidKeysHeld();
 
-        // on key down
-        for (int i = 0; i < sizeof(keymap)/sizeof(keymap[0]); i++) {
+            bool shiftHeld = (kHeld & KEY_ZL) != 0;
+            u32 debugMask = KEY_RIGHT | KEY_LEFT | KEY_X | KEY_A | KEY_B;
+
+            // update held state + fire key events
+        for (int i = 0; i < (int)(sizeof(keymap)/sizeof(keymap[0])); i++) {
+            keymap[i].held = (kHeld & keymap[i].hwKey) != 0;
+
+                if (shiftHeld && (keymap[i].hwKey & debugMask)) continue;
+
             if (kDown & keymap[i].hwKey) {
                 RunnerKeyboard_onKeyDown(runner->keyboard, keymap[i].gmlKey);
             }
-        }
-
-        // on key up
-        for (int i = 0; i < sizeof(keymap)/sizeof(keymap[0]); i++) {
             if (kUp & keymap[i].hwKey) {
                 RunnerKeyboard_onKeyUp(runner->keyboard, keymap[i].gmlKey);
             }
         }
+
+            if (shiftHeld) {
+                DataWin* dw = runner->dataWin;
+
+                if (kDown & KEY_RIGHT) {
+                    int32_t nextPos = runner->currentRoomOrderPosition + 1;
+                    if ((int32_t)dw->gen8.roomOrderCount > nextPos) {
+                        runner->pendingRoom = dw->gen8.roomOrder[nextPos];
+                        printf("Debug: next room -> %s\n", dw->room.rooms[runner->pendingRoom].name);
+                    } else {
+                        printf("Debug: already at last room\n");
+                    }
+                }
+
+                if (kDown & KEY_LEFT) {
+                    int32_t prevPos = runner->currentRoomOrderPosition - 1;
+                    if (prevPos >= 0) {
+                        runner->pendingRoom = dw->gen8.roomOrder[prevPos];
+                        printf("Debug: prev room -> %s\n", dw->room.rooms[runner->pendingRoom].name);
+                    } else {
+                        printf("Debug: already at first room\n");
+                    }
+                }
+
+                if (kDown & KEY_X) {
+                    int interactVarIndex = shgeti(runner->vmContext->globalVarNameMap, "interact");
+                    if (interactVarIndex >= 0) {
+                        int32_t interactVarId = runner->vmContext->globalVarNameMap[interactVarIndex].value;
+                        runner->vmContext->globalVars[interactVarId] = RValue_makeInt32(0);
+                        printf("Debug: global.interact = 0\n");
+                    } else {
+                        printf("Debug: global.interact not found\n");
+                    }
+                }
+
+                if (kDown & KEY_A) {
+                    int32_t battleObjectIndex = -1;
+                    for (int32_t objectIndex = 0; objectIndex < (int32_t)dw->objt.count; objectIndex++) {
+                        if (strcmp(dw->objt.objects[objectIndex].name, "obj_battleblcon") == 0) {
+                            battleObjectIndex = objectIndex;
+                            break;
+                        }
+                    }
+
+                    if (battleObjectIndex >= 0) {
+                        Runner_createInstance(runner, 0.0, 0.0, battleObjectIndex);
+                        printf("Debug: created obj_battleblcon\n");
+                    } else {
+                        printf("Debug: obj_battleblcon not found\n");
+                    }
+                }
+
+                if (kDown & KEY_B) {
+                    int phasingVarIndex = shgeti(runner->vmContext->globalVarNameMap, "phasing");
+                    if (phasingVarIndex >= 0) {
+                        int32_t phasingVarId = runner->vmContext->globalVarNameMap[phasingVarIndex].value;
+                        int32_t newPhasingValue = RValue_toInt32(runner->vmContext->globalVars[phasingVarId]) ? 0 : 1;
+                        runner->vmContext->globalVars[phasingVarId] = RValue_makeInt32(newPhasingValue);
+                        printf("Debug: global.phasing = %d\n", newPhasingValue);
+                    } else {
+                        printf("Debug: global.phasing not found\n");
+                    }
+                }
+            }
 
         // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)
         InputRecording_processFrame(globalInputRecording, runner->keyboard, runner->frameCount);
@@ -978,12 +1049,11 @@ int main(int argc, char* argv[]) {
         // Limit frame rate to room speed
         CinnamonProfiler_beginSection(CINNAMON_PROFILE_THROTTLE);
         if (runner->currentRoom->speed > 0) {
-            // Pace game loop using millisecond wall clock to avoid double-pacing and
-            // unit mismatches with hardware ticks.
-            // Hard cap: never run faster than 30 fps regardless of room speed.
-            double rawTargetMs = 1000.0 / (double) runner->currentRoom->speed;
-            double targetFrameMs = rawTargetMs > (1000.0 / 30.0) ? rawTargetMs : (1000.0 / 30.0);
-            double nextFrameTimeMs = lastFrameTimeMs + targetFrameMs;
+            // Pace using the room's target speed only. If we overrun the budget,
+            // don't accumulate delay debt across future frames.
+            double frameStartMs = lastFrameTimeMs;
+            double targetFrameMs = 1000.0 / (double) runner->currentRoom->speed;
+            double nextFrameTimeMs = frameStartMs + targetFrameMs;
             double nowMs = (double) osGetTime();
             double remainingMs = nextFrameTimeMs - nowMs;
 
@@ -999,9 +1069,21 @@ int main(int argc, char* argv[]) {
                 // Spin-wait for the final sub-millisecond slice.
             }
 
+            nowMs = (double) osGetTime();
+
             // Lag state machine: enable per-function timing when fps < 27, stop when >= 30.
             {
-                double totalFrameMs = (double) osGetTime() - lastFrameTimeMs;
+                double totalFrameMs = nowMs - frameStartMs;
+                double decimateThresholdMs = targetFrameMs / 0.8;
+
+                if (totalFrameMs > decimateThresholdMs) {
+                    runner->drawSpriteDecimationEnabled = true;
+                    runner->drawSpriteDecimationPhase ^= 1u;
+                } else {
+                    runner->drawSpriteDecimationEnabled = false;
+                    runner->drawSpriteDecimationPhase = 0;
+                }
+
                 // > 37.04ms => fps < 27;  < 33.33ms => fps >= 30
                 if (lagState == 0) {
                     if (totalFrameMs > 37.04 && runner->renderer) {
@@ -1023,7 +1105,7 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            lastFrameTimeMs = nextFrameTimeMs;
+            lastFrameTimeMs = nowMs > nextFrameTimeMs ? nowMs : nextFrameTimeMs;
         } else {
             lastFrameTimeMs = (double) osGetTime();
         }

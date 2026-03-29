@@ -39,6 +39,10 @@ typedef struct {
 
 static ProfileState gProfile;
 
+enum {
+    CINNAMON_PROFILE_SPIKE_LOG_EVERY_FRAMES = 10,
+};
+
 static double profilerNowMs(void) {
 #if defined(__3DS__)
     return (double) osGetTime();
@@ -55,6 +59,10 @@ static void resetFrameSections(void) {
         gProfile.sections[i].startMs = 0.0;
         gProfile.sections[i].frameMs = 0.0;
     }
+}
+
+static bool shouldEmitSpikeLog(uint64_t frameIndex) {
+    return (frameIndex % CINNAMON_PROFILE_SPIKE_LOG_EVERY_FRAMES) == 0;
 }
 
 static void ensureInitialized(void) {
@@ -121,6 +129,7 @@ void CinnamonProfiler_endSection(CinnamonProfileSection section) {
 
 static void printSpikeIfNeeded(void) {
     if (gProfile.frameDurationMs < gProfile.spikeFrameMs) return;
+    if (!shouldEmitSpikeLog(gProfile.frameIndex)) return;
 
     fprintf(stderr,
             "Profiler: frame=%llu spike=%.2fms",

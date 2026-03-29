@@ -401,6 +401,12 @@ void Runner_draw(Runner* runner) {
             if (codeId >= 0) {
                 Runner_executeEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL);
             } else if (runner->renderer != nullptr) {
+                if (runner->drawSpriteDecimationEnabled && inst->spriteIndex >= 0) {
+                    uint8_t spriteHalf = (uint8_t)(inst->instanceId & 1u);
+                    if (spriteHalf != runner->drawSpriteDecimationPhase) {
+                        continue;
+                    }
+                }
                 Renderer_drawSelf(runner->renderer, inst);
             }
         }
