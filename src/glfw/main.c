@@ -684,7 +684,14 @@ int main(int argc, char* argv[]) {
         int32_t gameW = (int32_t) gen8->defaultWindowWidth;
         int32_t gameH = (int32_t) gen8->defaultWindowHeight;
 
-        renderer->vtable->beginFrame(renderer, gameW, gameH, fbWidth, fbHeight);
+        uint32_t frameClearColor = runner->drawBackgroundColor
+            ? ((uint32_t)BGR_R(runner->backgroundColor)
+             | ((uint32_t)BGR_G(runner->backgroundColor) << 8)
+             | ((uint32_t)BGR_B(runner->backgroundColor) << 16)
+             | (0xFFu << 24))
+            : (0xFFu << 24);
+        uint32_t frameSpeed = (runner->currentRoom != nullptr) ? (uint32_t)runner->currentRoom->speed : 0;
+        renderer->vtable->beginFrame(renderer, frameClearColor, frameSpeed, gameW, gameH, fbWidth, fbHeight);
 
         // Clear FBO with room background color
         if (runner->drawBackgroundColor) {
@@ -716,7 +723,9 @@ int main(int argc, char* argv[]) {
                 float viewAngle = runner->viewAngles[vi];
 
                 runner->viewCurrent = vi;
-                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
+                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH,
+                                            portX, portY, portW, portH,
+                                            viewAngle, (uint32_t)vi);
 
                 Runner_draw(runner);
 
@@ -728,7 +737,9 @@ int main(int argc, char* argv[]) {
         if (!anyViewRendered) {
             // No views enabled or views disabled: render with default full-screen view
             runner->viewCurrent = 0;
-            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH,
+                                        0, 0, gameW, gameH,
+                                        0.0f, 0);
             Runner_draw(runner);
             renderer->vtable->endView(renderer);
         }

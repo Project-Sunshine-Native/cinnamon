@@ -164,7 +164,17 @@ static void glInit(Renderer* renderer, DataWin* dataWin) {
     for (uint32_t i = 0; gl->textureCount > i; i++) {
         Texture* txtr = &dataWin->txtr.textures[i];
         uint8_t* pngData = txtr->blobData;
+        if (pngData == nullptr) {
+            pngData = DataWin_loadTexture(dataWin, i);
+        }
         uint32_t pngSize = txtr->blobSize;
+
+        if (pngData == nullptr || pngSize == 0) {
+            fprintf(stderr, "GL: Missing TXTR page %u blob data\n", i);
+            gl->textureWidths[i] = 0;
+            gl->textureHeights[i] = 0;
+            continue;
+        }
 
         int w, h, channels;
         uint8_t* pixels = stbi_load_from_memory(pngData, (int) pngSize, &w, &h, &channels, 4);
@@ -238,7 +248,9 @@ static void glDestroy(Renderer* renderer) {
     free(gl);
 }
 
-static void glBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
+static void glBeginFrame(Renderer* renderer, uint32_t clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
+    (void)clearColor;
+    (void)speed;
     GLRenderer* gl = (GLRenderer*) renderer;
 
     gl->quadCount = 0;
@@ -276,7 +288,8 @@ static void glBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32
     glViewport(0, 0, gameW, gameH);
 }
 
-static void glBeginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle) {
+static void glBeginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle, uint32_t viewIndex) {
+    (void)viewIndex;
     GLRenderer* gl = (GLRenderer*) renderer;
 
     gl->quadCount = 0;
@@ -943,6 +956,14 @@ static void glDeleteSprite(Renderer* renderer, int32_t spriteIndex) {
     fprintf(stderr, "GL: Deleted sprite %d\n", spriteIndex);
 }
 
+static void glOnRoomEnd(Renderer* renderer) {
+    (void)renderer;
+}
+
+static void glOnRoomStart(Renderer* renderer) {
+    (void)renderer;
+}
+
 // ===[ Vtable ]===
 
 static RendererVtable glVtable = {
@@ -962,6 +983,8 @@ static RendererVtable glVtable = {
     .createSpriteFromSurface = glCreateSpriteFromSurface,
     .deleteSprite = glDeleteSprite,
     .drawTile = nullptr,
+    .onRoomEnd = glOnRoomEnd,
+    .onRoomStart = glOnRoomStart,
 };
 
 // ===[ Public API ]===
