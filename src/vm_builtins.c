@@ -1219,6 +1219,58 @@ static RValue builtinVariableGlobalSet(VMContext* ctx, RValue* args, int32_t arg
     return RValue_makeUndefined();
 }
 
+static RValue builtinVariableInstanceExists(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (2 > argCount || args[1].type != RVALUE_STRING) return RValue_makeBool(false);
+    const char* varName = args[1].string;
+    Runner* runner = (Runner*) ctx->runner;
+
+    // Resolve target instance
+    Instance* inst = nullptr;
+    int32_t id = RValue_toInt32(args[0]);
+    if (id == INSTANCE_SELF) {
+        inst = (Instance*) ctx->currentInstance;
+    } else if (id == INSTANCE_OTHER) {
+        inst = (Instance*) ctx->otherInstance;
+    } else {
+        int32_t instanceCount = (int32_t) arrlen(runner->instances);
+        if (id >= 100000) {
+            // Instance ID
+            repeat(instanceCount, i) {
+                Instance* candidate = runner->instances[i];
+                if (candidate->active && (int32_t) candidate->instanceId == id) {
+                    inst = candidate;
+                    break;
+                }
+            }
+        } else if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
+            // Object index: first active instance of that type
+            repeat(instanceCount, i) {
+                Instance* candidate = runner->instances[i];
+                if (candidate->active && VM_isObjectOrDescendant(ctx->dataWin, candidate->objectIndex, id)) {
+                    inst = candidate;
+                    break;
+                }
+            }
+        }
+    }
+    if (inst == nullptr) return RValue_makeBool(false);
+
+    // Check VARI table for a matching variable name
+    DataWin* dw = ctx->dataWin;
+    repeat(dw->vari.variableCount, i) {
+        Variable* var = &dw->vari.variables[i];
+        if (strcmp(var->name, varName) != 0) continue;
+        if (var->varID == -6) {
+            // Built-in variable: exists on all instances
+            return RValue_makeBool(true);
+        }
+        if (var->instanceType == INSTANCE_SELF && var->varID >= 0) {
+            return RValue_makeBool(hmgeti(inst->selfVars, var->varID) >= 0);
+        }
+    }
+    return RValue_makeBool(false);
+}
+
 // ===[ SCRIPT EXECUTE ]===
 
 static RValue builtinScriptExecute(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -3791,6 +3843,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("variable_global_exists", builtinVariableGlobalExists);
     registerBuiltin("variable_global_get", builtinVariableGlobalGet);
     registerBuiltin("variable_global_set", builtinVariableGlobalSet);
+    registerBuiltin("variable_instance_exists", builtinVariableInstanceExists);
 
     // Script
     registerBuiltin("script_execute", builtinScriptExecute);
