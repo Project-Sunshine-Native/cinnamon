@@ -219,8 +219,8 @@ static void Renderer_drawBackgroundTiled(Renderer* renderer, int32_t tpagIndex, 
     if (0 > tpagIndex || (uint32_t) tpagIndex >= dw->tpag.count) return;
 
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
-    float bgW = (float) tpag->boundingWidth;
-    float bgH = (float) tpag->boundingHeight;
+    float bgW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
+    float bgH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
     if (0 >= bgW || 0 >= bgH) return;
 
     // Compute start/end for each axis

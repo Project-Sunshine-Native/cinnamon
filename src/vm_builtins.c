@@ -2623,6 +2623,116 @@ static RValue builtinActionSetRelative(VMContext* ctx, [[maybe_unused]] RValue* 
     return RValue_makeUndefined();
 }
 
+static RValue actionResolveNamedVariable(VMContext* ctx, const char* varName) {
+    if (varName == nullptr || varName[0] == '\0') return RValue_makeUndefined();
+
+    DataWin* dw = ctx->dataWin;
+    Instance* inst = (Instance*) ctx->currentInstance;
+
+    repeat(dw->vari.variableCount, i) {
+        Variable* var = &dw->vari.variables[i];
+        if (strcmp(var->name, varName) != 0) continue;
+
+        if (var->varID == -6) {
+            return VMBuiltins_getVariable(ctx, varName, -1);
+        }
+
+        if (var->instanceType == INSTANCE_SELF && inst != nullptr && var->varID >= 0) {
+            return Instance_getSelfVar(inst, var->varID);
+        }
+
+        if (var->instanceType == INSTANCE_GLOBAL && var->varID >= 0 && (uint32_t) var->varID < ctx->globalVarCount) {
+            RValue val = ctx->globalVars[var->varID];
+            val.ownsString = false;
+            return val;
+        }
+    }
+
+    if (strcmp(varName, "true") == 0 || strcmp(varName, "false") == 0 || strcmp(varName, "pi") == 0 || strcmp(varName, "undefined") == 0) {
+        return VMBuiltins_getVariable(ctx, varName, -1);
+    }
+
+    return RValue_makeUndefined();
+}
+
+static bool actionCompareRValues(RValue lhs, RValue rhs, int cmpKind) {
+    if (lhs.type == RVALUE_STRING && rhs.type == RVALUE_STRING) {
+        int cmp = strcmp(lhs.string != nullptr ? lhs.string : "", rhs.string != nullptr ? rhs.string : "");
+        switch (cmpKind) {
+            case CMP_LT:  return cmp < 0;
+            case CMP_LTE: return cmp <= 0;
+            case CMP_EQ:  return cmp == 0;
+            case CMP_NEQ: return cmp != 0;
+            case CMP_GTE: return cmp >= 0;
+            case CMP_GT:  return cmp > 0;
+            default:      return false;
+        }
+    }
+
+    double da = RValue_toReal(lhs);
+    double db = RValue_toReal(rhs);
+    double diff = da - db;
+    int cmp = fabs(diff) <= GML_MATH_EPSILON ? 0 : (diff < 0 ? -1 : 1);
+    switch (cmpKind) {
+        case CMP_LT:  return cmp < 0;
+        case CMP_LTE: return cmp <= 0;
+        case CMP_EQ:  return cmp == 0;
+        case CMP_NEQ: return cmp != 0;
+        case CMP_GTE: return cmp >= 0;
+        case CMP_GT:  return cmp > 0;
+        default:      return false;
+    }
+}
+
+static int actionParseComparisonKind(RValue opArg) {
+    if (opArg.type == RVALUE_STRING) {
+        const char* op = opArg.string != nullptr ? opArg.string : "";
+        if (strcmp(op, "<") == 0) return CMP_LT;
+        if (strcmp(op, "<=") == 0) return CMP_LTE;
+        if (strcmp(op, "=") == 0 || strcmp(op, "==") == 0) return CMP_EQ;
+        if (strcmp(op, "<>") == 0 || strcmp(op, "!=") == 0) return CMP_NEQ;
+        if (strcmp(op, ">=") == 0) return CMP_GTE;
+        if (strcmp(op, ">") == 0) return CMP_GT;
+        if (strcasecmp(op, "lt") == 0) return CMP_LT;
+        if (strcasecmp(op, "lte") == 0 || strcasecmp(op, "le") == 0) return CMP_LTE;
+        if (strcasecmp(op, "eq") == 0) return CMP_EQ;
+        if (strcasecmp(op, "neq") == 0 || strcasecmp(op, "ne") == 0) return CMP_NEQ;
+        if (strcasecmp(op, "gte") == 0 || strcasecmp(op, "ge") == 0) return CMP_GTE;
+        if (strcasecmp(op, "gt") == 0) return CMP_GT;
+        return CMP_EQ;
+    }
+
+    int op = RValue_toInt32(opArg);
+    if (op >= CMP_LT && op <= CMP_GT) return op;
+    switch (op) {
+        case 0: return CMP_EQ;
+        case 1: return CMP_LT;
+        case 2: return CMP_LTE;
+        case 3: return CMP_GT;
+        case 4: return CMP_GTE;
+        case 5: return CMP_NEQ;
+        default:
+            return CMP_EQ;
+    }
+}
+
+static RValue builtinActionIfVariable(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (argCount <= 0) return RValue_makeBool(false);
+
+    char* varName = RValue_toString(args[0]);
+    RValue lhs = actionResolveNamedVariable(ctx, varName);
+    free(varName);
+
+    if (argCount == 1) {
+        bool result = RValue_toBool(lhs);
+        return RValue_makeBool(result);
+    }
+
+    int cmpKind = (argCount >= 3) ? actionParseComparisonKind(args[2]) : CMP_EQ;
+    bool result = actionCompareRValues(lhs, args[1], cmpKind);
+    return RValue_makeBool(result);
+}
+
 static RValue builtinActionMove(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
     // action_move(direction_string, speed)
     // Direction string is 9 chars of '0'/'1' encoding a 3x3 direction grid:
@@ -3030,8 +3140,11 @@ static RValue builtin_drawBackgroundStretched(VMContext* ctx, RValue* args, [[ma
     if (0 > tpagIndex) return RValue_makeUndefined();
 
     TexturePageItem* tpag = &runner->dataWin->tpag.items[tpagIndex];
-    float xscale = w / (float) tpag->boundingWidth;
-    float yscale = h / (float) tpag->boundingHeight;
+    float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
+    float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
+    if (baseW <= 0.0f || baseH <= 0.0f) return RValue_makeUndefined();
+    float xscale = w / baseW;
+    float yscale = h / baseH;
 
     runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, x, y, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, runner->renderer->drawAlpha);
     return RValue_makeUndefined();
@@ -3069,7 +3182,8 @@ static RValue builtinBackgroundGetWidth(VMContext* ctx, RValue* args, [[maybe_un
     int32_t bgIndex = RValue_toInt32(args[0]);
     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
     if (0 > tpagIndex) return RValue_makeReal(0.0);
-    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingWidth);
+    TexturePageItem* tpag = &ctx->dataWin->tpag.items[tpagIndex];
+    return RValue_makeReal((double) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth));
 }
 
 static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
@@ -3077,7 +3191,8 @@ static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_u
     int32_t bgIndex = RValue_toInt32(args[0]);
     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
     if (0 > tpagIndex) return RValue_makeReal(0.0);
-    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingHeight);
+    TexturePageItem* tpag = &ctx->dataWin->tpag.items[tpagIndex];
+    return RValue_makeReal((double) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight));
 }
 
 static RValue builtin_draw_self(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
@@ -4018,6 +4133,7 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("action_kill_object", builtinActionKillObject);
     registerBuiltin("action_create_object", builtinActionCreateObject);
     registerBuiltin("action_set_relative", builtinActionSetRelative);
+    registerBuiltin("action_if_variable", builtinActionIfVariable);
     registerBuiltin("action_move", builtinActionMove);
     registerBuiltin("action_move_to", builtinActionMoveTo);
     registerBuiltin("action_set_friction", builtinActionSetFriction);

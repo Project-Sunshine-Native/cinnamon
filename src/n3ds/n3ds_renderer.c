@@ -206,8 +206,8 @@ static void CFlushQueuedRects(CRenderer3DS* C) {
     for (uint16_t i = 0; i < C->rectCmdCount; i++) {
         const RectDrawCmd* cmd = &C->rectCmds[i];
         if (cmd->outline) {
-            float pw = 1.0f * C->scaleX;
-            float ph = 1.0f * C->scaleY;
+            float pw = fmaxf(C->scaleX, 1.0f);
+            float ph = fmaxf(C->scaleY, 1.0f);
             C2D_DrawLine(cmd->x1, cmd->y1, cmd->color, cmd->x2, cmd->y1, cmd->color, ph, cmd->z);
             C2D_DrawLine(cmd->x1, cmd->y2, cmd->color, cmd->x2, cmd->y2, cmd->color, ph, cmd->z);
             C2D_DrawLine(cmd->x1, cmd->y1, cmd->color, cmd->x1, cmd->y2, cmd->color, pw, cmd->z);
@@ -1063,7 +1063,7 @@ static void drawRegion(CRenderer3DS* C,
                 C2D_Image image = { .tex = &entry->tex, .subtex = &subtex };
 
                 C2D_ImageTint tint;
-                C2D_PlainImageTint(&tint, color, 0.0f);
+                C2D_PlainImageTint(&tint, color, blend);
 
                 float chunkDestX = flipX
                     ? dstX + (srcX + srcW - (chunkX + chunkW)) * pixScaleX
@@ -1813,15 +1813,57 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
 
     u64 _lagST0 = C->lagMode ? svcGetSystemTick() : 0;
 
-    // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
+    // New path: load per-sprite/background sheet from romfs:/gfx/<name>/<name>.t3x
     if (xscale > 0.0f && yscale > 0.0f && C->tpagToSpriteIndex && C->tpagToFrameIndex && (uint32_t)tpagIndex < dw->tpag.count) {
         int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
         int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
+        int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
 
         if (spriteIdx < 0 || frameIdx < 0) {
-            int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
             if (bgIdx < 0 || (uint32_t)bgIdx >= dw->bgnd.count) {
                 CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
+            } else {
+                Background* bg = &dw->bgnd.backgrounds[bgIdx];
+                if (!bg->name) {
+                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, frameIdx);
+                } else if ((uint32_t)bgIdx >= C->backgroundSheetCount) {
+                    CLogSpriteFallback(C, tpagIndex, "background sheet cache index is out of range", bg->name, frameIdx);
+                } else {
+                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
+                    if (sheet) {
+                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
+                        if (image.tex && image.tex->data && image.subtex) {
+                            C2D_ImageTint tint;
+                            C2D_PlainImageTint(&tint,
+                                C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                            (uint8_t)(alpha * 255.0f)),
+                                0.0f);
+
+                            C2D_DrawParams params = {
+                                .pos    = {
+                                    dstX + (angleDeg != 0.0f ? dstW * 0.5f : 0.0f),
+                                    dstY + (angleDeg != 0.0f ? dstH * 0.5f : 0.0f),
+                                    dstW,
+                                    dstH
+                                },
+                                .center = {
+                                    (angleDeg != 0.0f ? dstW * 0.5f : 0.0f),
+                                    (angleDeg != 0.0f ? dstH * 0.5f : 0.0f)
+                                },
+                                .depth  = C->zCounter,
+                                .angle  = angleRad,
+                            };
+
+                            C2D_DrawImage(image, &params, &tint);
+                            C->zCounter += 0.0001f;
+                            if (C->lagMode) { C->lagSpriteTicks += svcGetSystemTick() - _lagST0; C->lagSpriteN++; }
+                            return;
+                        }
+                        CLogSpriteFallback(C, tpagIndex, "background sheet image is invalid", bg->name, frameIdx);
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, frameIdx);
+                    }
+                }
             }
         } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
             CLogSpriteFallback(C, tpagIndex, "mapped sprite index is out of range", NULL, frameIdx);
@@ -1880,7 +1922,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                    (float)tpag->sourceX,    (float)tpag->sourceY,
                    (float)tpag->sourceWidth, (float)tpag->sourceHeight,
                    dstX, dstY, dstW, dstH,
-                   angleRad, tintColor, 1.0f);
+                   angleRad, tintColor, 0.0f);
     } else {
         DBG_LOG("CDrawSprite: ERROR - pageIdx %lu out of range (count %lu)\n",
                 (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
@@ -2009,7 +2051,7 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                    dstX, dstY, dstW, dstH, 0.0f,
                    C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                (uint8_t)(alpha * 255.0f)),
-                   1.0f); // blend=1: multiply texture by tint (c_white = no change)
+                   0.0f);
     } else {
         DBG_LOG("CDrawSpritePart: ERROR - Page %lu out of range\n", (unsigned long)pageIdx);
         C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH, C2D_Color32(255, 0, 0, 255));
@@ -2063,11 +2105,13 @@ static void CDrawLine(Renderer* renderer,
     u64 _lagLT0 = C->lagMode ? svcGetSystemTick() : 0;
     uint8_t r = BGR_R(color), g = BGR_G(color), b = BGR_B(color);
     uint8_t a = (uint8_t)(alpha * 255.0f);
+    float scaledWidth = width * fmaxf(C->scaleX, C->scaleY);
+    if (scaledWidth < 1.0f) scaledWidth = 1.0f;
     C2D_DrawLine((x1 - C->viewX) * C->scaleX + C->offsetX,
                  (y1 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r, g, b, a),
                  (x2 - C->viewX) * C->scaleX + C->offsetX,
                  (y2 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r, g, b, a),
-                 width, C->zCounter);
+                 scaledWidth, C->zCounter);
     C->zCounter += 0.0001f;
     if (C->lagMode) { C->lagLineTicks += svcGetSystemTick() - _lagLT0; C->lagLineN++; }
 }
