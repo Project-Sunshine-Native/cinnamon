@@ -1523,19 +1523,40 @@ static void CBeginView(Renderer* renderer,
     C->viewIndex = viewIndex;
     CSelectRenderTargetForView(C, viewIndex);
 
+    int32_t effectivePortX = portX;
+    int32_t effectivePortY = portY;
+    int32_t effectivePortW = portW;
+    int32_t effectivePortH = portH;
+
+    // The top-screen border art has a transparent inner opening at 67,13 (266x214).
+    // Constrain only the top view to this inner viewport so gameplay sits inside the frame.
+    if (viewIndex == 0) {
+        const int32_t borderInsetX = 67;
+        const int32_t borderInsetY = 13;
+        const int32_t borderInnerW = 266;
+        const int32_t borderInnerH = 214;
+
+        if (portW >= (borderInsetX + borderInnerW) && portH >= (borderInsetY + borderInnerH)) {
+            effectivePortX += borderInsetX;
+            effectivePortY += borderInsetY;
+            effectivePortW = borderInnerW;
+            effectivePortH = borderInnerH;
+        }
+    }
+
     if (viewW > 0 && viewH > 0 && portW > 0 && portH > 0) {
         // Scale the view to fit the port, preserving aspect ratio (letterbox/pillarbox)
-        float scale = fminf((float)portW / (float)viewW, (float)portH / (float)viewH);
+        float scale = fminf((float)effectivePortW / (float)viewW, (float)effectivePortH / (float)viewH);
         C->scaleX  = scale;
         C->scaleY  = scale;
         // Center within the port, then offset by the port's own origin
-        C->offsetX = (float)portX + ((float)portW - (float)viewW * scale) * 0.5f;
-        C->offsetY = (float)portY + ((float)portH - (float)viewH * scale) * 0.5f;
+        C->offsetX = (float)effectivePortX + ((float)effectivePortW - (float)viewW * scale) * 0.5f;
+        C->offsetY = (float)effectivePortY + ((float)effectivePortH - (float)viewH * scale) * 0.5f;
     } else {
         C->scaleX  = 1.0f;
         C->scaleY  = 1.0f;
-        C->offsetX = (float)portX;
-        C->offsetY = (float)portY;
+        C->offsetX = (float)effectivePortX;
+        C->offsetY = (float)effectivePortY;
     }
 }
 
@@ -1610,7 +1631,10 @@ static void CEndFrame(Renderer* renderer) {
         //}
     //}
 
-    //C2D_DrawImageAt(C->border, 0, 0, 0.5f, NULL, 1.0f, 1.0f);
+    if (C->border.tex && C->border.subtex) {
+        CSelectRenderTargetForView(C, 0);
+        C2D_DrawImageAt(C->border, 0, 0, 0.99f, NULL, 1.0f, 1.0f);
+    }
 
     if (C->lagMode) {
         C->lagWindowSpriteTicks += C->lagSpriteTicks;
@@ -1844,14 +1868,15 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                                             (uint8_t)(alpha * 255.0f)),
                                 0.0f);
 
-                            // Backgrounds in romfs are stored at bounding-box size (bndW x bndH)
-                            // with content pasted at (targetX, targetY) — same as sprites.
-                            // Use sheetDstX/Y/W/H so the position has no redundant targetX/Y
-                            // shift and the draw rect covers the full bounding box.
+                            // Backgrounds have no bounding-box concept, so tpag->boundingWidth/Height
+                            // is 0 and sheetDstW/H would be 0 too. Use the actual subtex dimensions
+                            // instead so C2D_DrawImage receives a non-zero draw rect.
                             // GML draw_background_ext rotates around (x,y) = the image TL,
                             // so keep center at {0,0} regardless of angle.
+                            float bgW = (float)image.subtex->width  * xscale * C->scaleX;
+                            float bgH = (float)image.subtex->height * yscale * C->scaleY;
                             C2D_DrawParams params = {
-                                .pos    = { sheetDstX, sheetDstY, sheetDstW, sheetDstH },
+                                .pos    = { sheetDstX, sheetDstY, bgW, bgH },
                                 .center = { 0.0f, 0.0f },
                                 .depth  = C->zCounter,
                                 .angle  = angleRad,
@@ -2292,6 +2317,28 @@ static void COnRoomEnd(Renderer* renderer) {
     DBG_LOG("CRenderer3DS: room end - evicted %lu sprite textures, font glyphs retained\n",
             totalEvicted);
     logMemory("after room eviction");
+
+    // Evict background sheets to reclaim linear RAM on room boundaries.
+    // On Old 3DS the linear heap is very limited; without eviction, sheets from
+    // every visited room accumulate until C2D_SpriteSheetLoad fails.  Freeing
+    // them here lets the next room reload only the sheets it actually needs.
+    // backgroundSheetState is reset to 0 (unseen) so they can be reloaded.
+    if (C->backgroundSheets) {
+        uint32_t bgEvicted = 0;
+        for (uint32_t i = 0; i < C->backgroundSheetCount; i++) {
+            if (C->backgroundSheets[i]) {
+                C2D_SpriteSheetFree(C->backgroundSheets[i]);
+                C->backgroundSheets[i] = NULL;
+                if (C->backgroundSheetState) C->backgroundSheetState[i] = 0;
+                bgEvicted++;
+            }
+        }
+        if (bgEvicted > 0) {
+            printf("CRenderer3DS: room end - evicted %lu background sheets\n",
+                   (unsigned long)bgEvicted);
+            logMemory("after bg sheet eviction");
+        }
+    }
 }
 
 static void COnRoomStart(Renderer* renderer) { /* no-op */ }

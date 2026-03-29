@@ -250,8 +250,8 @@ ifeq ($(OS),Windows_NT)
 	SMDHTOOL = smdhtool.exe
 	TEX3DS = tex3ds.exe
 else
-	MAKEROM = makerom
-	BANNERTOOL = bannertool
+	MAKEROM = $(TOPDIR)/tools/makerom
+	BANNERTOOL = $(TOPDIR)/tools/bannertool
 	CITRA = citra
 	_3DSXTOOL = 3dsxtool
 	SMDHTOOL = smdhtool

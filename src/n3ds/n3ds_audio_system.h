@@ -49,6 +49,8 @@ typedef struct {
 
     uint32_t totalFrames;
     uint32_t playedFrames;
+    uint32_t dataOffset;      // byte offset in file to first audio sample (BCWAV: after header)
+    uint32_t loopStartSample; // sample frame to loop back to (from BCWAV loopStart field)
 
     float currentGain;
     float targetGain;

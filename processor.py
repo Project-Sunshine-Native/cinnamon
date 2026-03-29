@@ -10,6 +10,7 @@ Usage:
 """
 
 import sys
+import os
 import io
 import struct
 import subprocess
@@ -183,10 +184,10 @@ class TextureExtractor:
         print(f"\n\033[32mOK Extracted {sprite_count} sprites\033[0m")
 
     def extract_audio(self):
-        """Extract sounds to romfs/audio/<name>.pcm with optimized sample rate/channels.
+        """Extract sounds to romfs/audio/<name>.cwav using bannertool makecwav.
 
-        Output format remains signed 16-bit PCM for runtime simplicity, but each file gets
-        a sidecar metadata file (<name>.meta) describing sample_rate/channels.
+        Produces BCWAV files (PCM16, mono) with sample rate and loop info embedded.
+        No sidecar .meta file is needed — all metadata lives in the CWAV header.
         """
         sounds = self.dw.sond.sounds
         entries = self.dw.audo.entries
@@ -194,16 +195,20 @@ class TextureExtractor:
         project_root = Path.cwd()
         sfx_root = project_root / "sfx"
 
-        dsp_encoder = shutil.which("dspadpcm")
-        if not dsp_encoder:
-            print("  WARN: DSP ADPCM encoder not found in PATH; using optimized PCM16 output.")
+        bannertool = Path(__file__).parent / "tools" / "bannertool"
+        if not bannertool.exists():
+            print(f"  WARN: bannertool not found at {bannertool}; skipping audio extraction.")
+            return
+        if not os.access(str(bannertool), os.X_OK):
+            bannertool.chmod(bannertool.stat().st_mode | 0o111)
 
         def choose_audio_profile(name: str, sound_file: str) -> Tuple[int, int, str]:
             name_l = (name or "").lower()
             file_l = (sound_file or "").lower()
             is_music = name_l.startswith("mus_") or "/mus" in file_l or "\\mus" in file_l or file_l.startswith("mus_")
             if is_music:
-                return 32000, 2, "music"
+                # Force mono: BCWAV sequential stereo is not compatible with NDSP stereo interleave
+                return 32000, 1, "music"
             return 22050, 1, "sfx"
 
         def nearest_supported_rate(rate: int) -> int:
@@ -245,14 +250,13 @@ class TextureExtractor:
             except Exception:
                 return None
 
-        def write_meta(meta_path: Path, sample_rate: int, channels: int, profile: str):
-            meta_path.write_text(
-                f"sample_rate={sample_rate}\n"
-                f"channels={channels}\n"
-                "format=pcm16le\n"
-                f"profile={profile}\n",
-                encoding="ascii",
-            )
+        def make_cwav(wav_path: Path, cwav_path: Path, is_music: bool) -> bool:
+            """Convert a WAV to BCWAV via bannertool makecwav. Returns True on success."""
+            cmd = [str(bannertool), "makecwav", "-i", str(wav_path), "-o", str(cwav_path)]
+            if is_music:
+                cmd += ["-l", "true"]
+            result = subprocess.run(cmd, capture_output=True)
+            return result.returncode == 0
 
         def resolve_external_audio(sound_file: str) -> Optional[Path]:
             if not sound_file:
@@ -302,8 +306,8 @@ class TextureExtractor:
                 print(f"  {name}...", end=" ", flush=True)
 
                 try:
-                    out_path = audio_dir / f"{name}.pcm"
-                    meta_path = audio_dir / f"{name}.meta"
+                    out_path = audio_dir / f"{name}.cwav"
+                    tmp_wav = audio_dir / f"{name}_tmp.wav"
 
                     target_sr, target_ch, profile = choose_audio_profile(name, sound.file)
 
@@ -315,16 +319,14 @@ class TextureExtractor:
                         if probed is not None:
                             src_sr, src_ch = probed
                             target_sr = min(target_sr, nearest_supported_rate(src_sr))
-                            target_ch = 1 if src_ch <= 1 else target_ch
 
-                        result = subprocess.run(
+                        ffmpeg_result = subprocess.run(
                             [
                                 "ffmpeg", "-y",
                                 "-i", str(ext_src),
-                                "-f", "s16le",
                                 "-ar", str(target_sr),
-                                "-ac", str(target_ch),
-                                str(out_path),
+                                "-ac", "1",
+                                str(tmp_wav),
                             ],
                             capture_output=True,
                         )
@@ -347,35 +349,35 @@ class TextureExtractor:
                         f.seek(entry.data_offset)
                         raw_data = f.read(entry.data_size)
 
-                        result = subprocess.run(
+                        ffmpeg_result = subprocess.run(
                             [
                                 "ffmpeg", "-y",
                                 "-i", "pipe:0",
-                                "-f", "s16le",
                                 "-ar", str(target_sr),
-                                "-ac", str(target_ch),
-                                str(out_path),
+                                "-ac", "1",
+                                str(tmp_wav),
                             ],
                             input=raw_data,
                             capture_output=True,
                         )
 
-                    if result.returncode != 0:
-                        print(f"    \033[31mFAILED: ffmpeg error: {result.stderr.decode(errors='replace').splitlines()[-1]}\033[0m")
+                    if ffmpeg_result.returncode != 0:
+                        print(f"    \033[31mFAILED: ffmpeg error: {ffmpeg_result.stderr.decode(errors='replace').splitlines()[-1]}\033[0m")
+                    elif not make_cwav(tmp_wav, out_path, profile == "music"):
+                        print(f"    \033[31mFAILED: bannertool makecwav failed\033[0m")
                     else:
-                        write_meta(meta_path, target_sr, target_ch, profile)
-
                         # Also emit file-stem alias when it differs from the SOND name.
                         if sound.file:
                             file_stem = Path(sound.file).stem
                             if file_stem and file_stem != name:
-                                alias_path = audio_dir / f"{file_stem}.pcm"
+                                alias_path = audio_dir / f"{file_stem}.cwav"
                                 if alias_path != out_path:
                                     shutil.copyfile(out_path, alias_path)
-                                    alias_meta = audio_dir / f"{file_stem}.meta"
-                                    shutil.copyfile(meta_path, alias_meta)
                         print(f"    \033[32mOK\033[0m")
                         success_count += 1
+
+                    if tmp_wav.exists():
+                        tmp_wav.unlink()
 
                 except Exception as e:
                     print(f"    \033[31mFAILED: {e}\033[0m  ")
