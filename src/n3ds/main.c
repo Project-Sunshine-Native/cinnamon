@@ -1,4 +1,4 @@
-#define NULL ((void*)0)
+#define NULL ((void *)0)
 
 // src/n3ds/main.c
 
@@ -35,37 +35,40 @@
 #include <string.h>
 #include <stdio.h>
 
-typedef struct {
-    u32 hwKey;   // 3DS button
-    int gmlKey;  // GML keycode
-    bool held;   // currently held this frame
+typedef struct
+{
+    u32 hwKey;  // 3DS button
+    int gmlKey; // GML keycode
+    bool held;  // currently held this frame
 } KeyMap;
 
 // ===[ COMMAND LINE ARGUMENTS ]===
-typedef struct {
+typedef struct
+{
     int key;
     // We need this dummy value, think that the ds_map is like a Java HashMap NOT a HashSet
     // (Which is funny, because in Java HashSets are backed by HashMaps lol)
     bool value;
 } FrameSetEntry;
 
-typedef struct {
-    const char* dataWinPath;
-    const char* screenshotPattern;
-    FrameSetEntry* screenshotFrames;
-    FrameSetEntry* dumpFrames;
-    FrameSetEntry* dumpJsonFrames;
-    const char* dumpJsonFilePattern;
-    StringBooleanEntry* varReadsToBeTraced;
-    StringBooleanEntry* varWritesToBeTraced;
-    StringBooleanEntry* functionCallsToBeTraced;
-    StringBooleanEntry* alarmsToBeTraced;
-    StringBooleanEntry* instanceLifecyclesToBeTraced;
-    StringBooleanEntry* eventsToBeTraced;
-    StringBooleanEntry* opcodesToBeTraced;
-    StringBooleanEntry* stackToBeTraced;
-    StringBooleanEntry* disassemble;
-    StringBooleanEntry* tilesToBeTraced;
+typedef struct
+{
+    const char *dataWinPath;
+    const char *screenshotPattern;
+    FrameSetEntry *screenshotFrames;
+    FrameSetEntry *dumpFrames;
+    FrameSetEntry *dumpJsonFrames;
+    const char *dumpJsonFilePattern;
+    StringBooleanEntry *varReadsToBeTraced;
+    StringBooleanEntry *varWritesToBeTraced;
+    StringBooleanEntry *functionCallsToBeTraced;
+    StringBooleanEntry *alarmsToBeTraced;
+    StringBooleanEntry *instanceLifecyclesToBeTraced;
+    StringBooleanEntry *eventsToBeTraced;
+    StringBooleanEntry *opcodesToBeTraced;
+    StringBooleanEntry *stackToBeTraced;
+    StringBooleanEntry *disassemble;
+    StringBooleanEntry *tilesToBeTraced;
     bool headless;
     bool traceFrames;
     bool printRooms;
@@ -76,11 +79,12 @@ typedef struct {
     bool hasSeed;
     bool debug;
     bool traceEventInherited;
-    const char* recordInputsPath;
-    const char* playbackInputsPath;
+    const char *recordInputsPath;
+    const char *playbackInputsPath;
 } CommandLineArgs;
 
-static void freeCommandLineArgs(CommandLineArgs* args) {
+static void freeCommandLineArgs(CommandLineArgs *args)
+{
     hmfree(args->screenshotFrames);
     hmfree(args->dumpFrames);
     hmfree(args->dumpJsonFrames);
@@ -121,27 +125,34 @@ static void captureScreenshot(const char* filenamePattern, int frameNumber, int 
 }
 */
 
-static void cleanup(Runner* runner, VMContext* vm, DataWin* dataWin, Renderer* renderer, InputRecording* inputRec)
+static void cleanup(Runner *runner, VMContext *vm, DataWin *dataWin, Renderer *renderer, InputRecording *inputRec)
 {
     // Save & free input recording if active
-    if (inputRec) {
-        if (inputRec->isRecording) InputRecording_save(inputRec);
+    if (inputRec)
+    {
+        if (inputRec->isRecording)
+            InputRecording_save(inputRec);
         InputRecording_free(inputRec);
         inputRec = NULL;
     }
 
-    if (runner && runner->audioSystem) {
+    if (runner && runner->audioSystem)
+    {
         runner->audioSystem->vtable->destroy(runner->audioSystem);
         runner->audioSystem = NULL;
     }
 
     // Free game/app objects first
-    if (runner) Runner_free(runner);
-    if (vm) VM_free(vm);
-    if (dataWin) DataWin_free(dataWin);
+    if (runner)
+        Runner_free(runner);
+    if (vm)
+        VM_free(vm);
+    if (dataWin)
+        DataWin_free(dataWin);
 
     // Destroy renderer last, before shutting down C2D/C3D
-    if (renderer && renderer->vtable) renderer->vtable->destroy(renderer);
+    if (renderer && renderer->vtable)
+        renderer->vtable->destroy(renderer);
 
     // Shut down libraries
     C2D_Fini();
@@ -152,7 +163,8 @@ static void cleanup(Runner* runner, VMContext* vm, DataWin* dataWin, Renderer* r
 
 // ===[ KEYBOARD INPUT ]===
 
-static int32_t glfwKeyToGml(int glfwKey) {
+static int32_t glfwKeyToGml(int glfwKey)
+{
     // TODO: Replace with Citro2d input handling
 
     /*
@@ -202,7 +214,7 @@ static int32_t glfwKeyToGml(int glfwKey) {
     return -1;
 }
 
-static InputRecording* globalInputRecording = NULL;
+static InputRecording *globalInputRecording = NULL;
 
 /*
 static void keyCallback(C3D_RenderTarget* window, int key, int scancode, int action, int mods) {
@@ -218,16 +230,18 @@ static void keyCallback(C3D_RenderTarget* window, int key, int scancode, int act
 }
 */
 
-static void LogToSD(const char* text) {
+static void LogToSD(const char *text)
+{
     // Open file in append mode on SD card
     FILE *f = fopen("sdmc:/cinnamon/log.txt", "a");
-    if (f) {
+    if (f)
+    {
         fprintf(f, "%s\n", text);
         fclose(f);
     }
 }
 
-void ShowErrorAndExit(const char* msg)
+void ShowErrorAndExit(const char *msg)
 {
     // Flush log to SD card before touching the display — if gfx is already
     // initialised this is a no-op at the driver level but keeps our log intact.
@@ -241,7 +255,7 @@ void ShowErrorAndExit(const char* msg)
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
 
-    C3D_RenderTarget* top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    C3D_RenderTarget *top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 
     C2D_TextBuf buf = C2D_TextBufNew(4096);
     C2D_Text text;
@@ -251,19 +265,19 @@ void ShowErrorAndExit(const char* msg)
     while (aptMainLoop())
     {
         hidScanInput();
-        if (hidKeysDown() & KEY_START) break;
+        if (hidKeysDown() & KEY_START)
+            break;
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-        C2D_TargetClear(top, C2D_Color32(0,0,0,255));
+        C2D_TargetClear(top, C2D_Color32(0, 0, 0, 255));
         C2D_SceneBegin(top);
 
         C2D_DrawText(&text,
-            C2D_WithColor,
-            8.0f, 8.0f,
-            0.0f,
-            0.5f, 0.5f,
-            C2D_Color32(255,255,255,255)
-        );
+                     C2D_WithColor,
+                     8.0f, 8.0f,
+                     0.0f,
+                     0.5f, 0.5f,
+                     C2D_Color32(255, 255, 255, 255));
 
         C3D_FrameEnd(0);
     }
@@ -279,12 +293,13 @@ void ShowErrorAndExit(const char* msg)
     exit(0);
 }
 
-void list(const char* path, int depth)
+void list(const char *path, int depth)
 {
-    DIR* dir = opendir(path);
-    if (!dir) return;
+    DIR *dir = opendir(path);
+    if (!dir)
+        return;
 
-    struct dirent* entry;
+    struct dirent *entry;
 
     while ((entry = readdir(dir)))
     {
@@ -319,20 +334,23 @@ void list(const char* path, int depth)
 // non-executable, so a nested function callback would fault immediately on real
 // hardware.  Using a file-scope static + void* userData avoids the trampoline.
 
-typedef struct {
-    C3D_RenderTarget* top;
-    C2D_TextBuf       textBuf;
-    C2D_Text*         text;
-    int               lastChunkIndex;
+typedef struct
+{
+    C3D_RenderTarget *top;
+    C2D_TextBuf textBuf;
+    C2D_Text *text;
+    int lastChunkIndex;
 } LoadingBarState;
 
-static void progressCb(const char* chunkName, int chunkIndex, int totalChunks,
-                        DataWin* dw, void* userData) {
+static void progressCb(const char *chunkName, int chunkIndex, int totalChunks,
+                       DataWin *dw, void *userData)
+{
     (void)dw;
-    LoadingBarState* s = (LoadingBarState*)userData;
+    LoadingBarState *s = (LoadingBarState *)userData;
 
     // Skip duplicate index — DataWin_parse calls once per chunk
-    if (chunkIndex == s->lastChunkIndex) return;
+    if (chunkIndex == s->lastChunkIndex)
+        return;
     s->lastChunkIndex = chunkIndex;
 
     char label[64];
@@ -353,8 +371,10 @@ static void progressCb(const char* chunkName, int chunkIndex, int totalChunks,
     C2D_DrawRectSolid(barX, barY, 0.5f, barW, barH, C2D_Color32(60, 60, 80, 255));
     // Fill
     float progress = (totalChunks > 0)
-        ? (float)(chunkIndex + 1) / (float)totalChunks : 0.0f;
-    if (progress > 1.0f) progress = 1.0f;
+                         ? (float)(chunkIndex + 1) / (float)totalChunks
+                         : 0.0f;
+    if (progress > 1.0f)
+        progress = 1.0f;
     C2D_DrawRectSolid(barX, barY, 0.6f, barW * progress, barH, C2D_Color32(80, 160, 255, 255));
     // Label above bar
     C2D_DrawText(s->text, C2D_WithColor, barX, barY - 18.0f, 0.7f,
@@ -364,7 +384,8 @@ static void progressCb(const char* chunkName, int chunkIndex, int totalChunks,
 }
 
 // ===[ MAIN ]===
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[])
+{
     fsInit();
     romfsInit();
     gfxInitDefault();
@@ -379,18 +400,21 @@ int main(int argc, char* argv[]) {
     list("sdmc:/cinnamon", 0);
 
     LogToSD("Application Started");
-    //args.dataWinPath = "sdmc:/cinnamon/data.win";
-    //parseCommandLineArgs(&args, argc, argv);
+    // args.dataWinPath = "sdmc:/cinnamon/data.win";
+    // parseCommandLineArgs(&args, argc, argv);
 
     printf("Checking if %s exists...\n", "romfs:/cinnamon/data.win");
 
     LogToSD("Loading data.win...");
 
-    FILE* f = fopen("romfs:/cinnamon/data.win", "rb");
-    if (f) {
+    FILE *f = fopen("romfs:/cinnamon/data.win", "rb");
+    if (f)
+    {
         printf("File %s found.\n", "romfs:/cinnamon/data.win");
         fclose(f);
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "Error: data.win not found at romfs:/cinnamon/data.win\n");
         LogToSD("Error: data.win not found at romfs:/cinnamon/data.win");
         ShowErrorAndExit("An error has occurred.\nPlease make sure data.win is located at: cinnamon/data.win\non your SD card!\nPress START to exit.");
@@ -402,26 +426,26 @@ int main(int argc, char* argv[]) {
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
     gfxSet3D(true);
-    //consoleInit(GFX_BOTTOM, NULL);
+    // consoleInit(GFX_BOTTOM, NULL);
 
     LogToSD("Initialized 3DS libraries (pre-parse)");
 
-    C3D_RenderTarget* top  = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-    C2D_TextBuf       loadingTextBuf = C2D_TextBufNew(256);
-    C2D_Text          loadingText;
+    C3D_RenderTarget *top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    C2D_TextBuf loadingTextBuf = C2D_TextBufNew(256);
+    C2D_Text loadingText;
 
     LoadingBarState lbState = {
-        .top            = top,
-        .textBuf        = loadingTextBuf,
-        .text           = &loadingText,
+        .top = top,
+        .textBuf = loadingTextBuf,
+        .text = &loadingText,
         .lastChunkIndex = -1,
     };
 
     printf("Loading %s...\n", "romfs:/cinnamon/data.win");
 
-    DataWin* dataWin = DataWin_parse(
+    DataWin *dataWin = DataWin_parse(
         "romfs:/cinnamon/data.win",
-        (DataWinParserOptions) {
+        (DataWinParserOptions){
             .parseGen8 = true,
             .parseOptn = true,
             .parseLang = true,
@@ -446,27 +470,26 @@ int main(int argc, char* argv[]) {
             .parseTxtr = true,
             .parseAudo = true,
             .skipLoadingPreciseMasksForNonPreciseSprites = true,
-            .progressCallback     = progressCb,
+            .progressCallback = progressCb,
             .progressCallbackUserData = &lbState,
-        }
-    );
+        });
 
     // Loading bar resources are no longer needed
     C2D_TextBufDelete(loadingTextBuf);
 
-    Gen8* gen8 = &dataWin->gen8;
-	printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
+    Gen8 *gen8 = &dataWin->gen8;
+    printf("Loaded \"%s\" (%d) successfully!\n", gen8->name, gen8->gameID);
     LogToSD("Loaded data.win successfully!");
 
     // TODO: Replace with N3DS compatible print.
-/*
-#ifdef __linux__
-	{
-		struct mallinfo2 mi = mallinfo2();
-		printf("Memory after data.win parsing: used=%zu bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f);
-	}
-#endif
-*/
+    /*
+    #ifdef __linux__
+        {
+            struct mallinfo2 mi = mallinfo2();
+            printf("Memory after data.win parsing: used=%zu bytes (%.1f KB)\n", mi.uordblks, mi.uordblks / 1024.0f);
+        }
+    #endif
+    */
 
     // TODO: Find a use for the display name? It might not actually be useful since there is no "window"
     // in the traditional sense on the 3DS, but maybe it could be used for something cool, streetpass?
@@ -479,7 +502,7 @@ int main(int argc, char* argv[]) {
     LogToSD("LOADING VM...");
 
     // Initialize VM
-    VMContext* vm = VM_create(dataWin);
+    VMContext *vm = VM_create(dataWin);
 
     LogToSD("VM OK");
 
@@ -551,19 +574,19 @@ int main(int argc, char* argv[]) {
 
     // Initialize the file system
     // TODO: Replace with sdcard reads and writes
-    N3DSFileSystem* n3dsFileSystem = N3DSFileSystem_create("sdmc:/cinnamon/data.win");
+    N3DSFileSystem *n3dsFileSystem = N3DSFileSystem_create("sdmc:/cinnamon/data.win");
 
-    N3DSAudioSystem* n3dsAudio = N3DSAudioSystem_create();
-    AudioSystem* audioSystem = (AudioSystem*) n3dsAudio;
-    audioSystem->vtable->init(audioSystem, dataWin, (FileSystem*) n3dsFileSystem);
+    N3DSAudioSystem *n3dsAudio = N3DSAudioSystem_create();
+    AudioSystem *audioSystem = (AudioSystem *)n3dsAudio;
+    audioSystem->vtable->init(audioSystem, dataWin, (FileSystem *)n3dsFileSystem);
 
     // Initialize the runner
     LogToSD("LOADING RUNNER");
-    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) n3dsFileSystem);
+    Runner *runner = Runner_create(dataWin, vm, (FileSystem *)n3dsFileSystem);
     runner->audioSystem = audioSystem;
-    //runner->debugMode = args.debug;
+    // runner->debugMode = args.debug;
     LogToSD("RUNNER OK");
-    
+
     // Set up input recording/playback (both can be active: playback then continue recording)
     /*
     if (args.playbackInputsPath != NULL) {
@@ -655,11 +678,11 @@ int main(int argc, char* argv[]) {
     */
 
     // Initialize the renderer
-    Renderer* renderer = CRenderer3DS_create();
+    Renderer *renderer = CRenderer3DS_create();
     renderer->vtable->init(renderer, dataWin);
     runner->renderer = renderer;
 
-    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CRenderer3DS *C = (CRenderer3DS *)renderer;
 
     C->top = top;
 
@@ -671,29 +694,29 @@ int main(int argc, char* argv[]) {
     LogToSD("First room loaded!");
 
     KeyMap keymap[] = {
-        { KEY_UP,    VK_UP },    // Move up
-        { KEY_DOWN,  VK_DOWN },  // Move down
-        { KEY_LEFT,  VK_LEFT },  // Move left
-        { KEY_RIGHT, VK_RIGHT }, // Move right
-        { KEY_A,     VK_Z },     // A button triggers Z (confirm)
-        { KEY_B,     VK_X },     // B button triggers X (cancel)
-        { KEY_X,     VK_C },     // X button triggers C (menu)
-        { KEY_ZL,    VK_SHIFT }, // L button triggers Left Shift
-        { KEY_ZR,    VK_CONTROL }, // R button triggers Right Shift
+        {KEY_UP, VK_UP},       // Move up
+        {KEY_DOWN, VK_DOWN},   // Move down
+        {KEY_LEFT, VK_LEFT},   // Move left
+        {KEY_RIGHT, VK_RIGHT}, // Move right
+        {KEY_A, VK_Z},         // A button triggers Z (confirm)
+        {KEY_B, VK_X},         // B button triggers X (cancel)
+        {KEY_X, VK_C},         // X button triggers C (menu)
+        {KEY_ZL, VK_SHIFT},    // L button triggers Left Shift
+        {KEY_ZR, VK_CONTROL},  // R button triggers Right Shift
     };
-
 
     // Main loop
     bool debugPaused = false;
-    double lastFrameTimeMs = (double) osGetTime();
-    uint64_t lastAudioUpdateMs = (uint64_t) osGetTime();
+    double lastFrameTimeMs = (double)osGetTime();
+    uint64_t lastAudioUpdateMs = (uint64_t)osGetTime();
     // Lag profiling state machine: NORMAL(0) -> LAGGING(1) -> RECOVERING(2)
     int lagState = 0;
 
-    CinnamonProfiler_init((uint32_t) CINNAMON_PROFILE_REPORT_EVERY, (double) CINNAMON_PROFILE_SPIKE_MS);
+    CinnamonProfiler_init((uint32_t)CINNAMON_PROFILE_REPORT_EVERY, (double)CINNAMON_PROFILE_SPIKE_MS);
 
-    while (aptMainLoop()) {
-        CinnamonProfiler_beginFrame((uint64_t) runner->frameCount);
+    while (aptMainLoop())
+    {
+        CinnamonProfiler_beginFrame((uint64_t)runner->frameCount);
 
         CinnamonProfiler_beginSection(CINNAMON_PROFILE_INPUT);
         // Clear last frame's pressed/released state, then poll new input events
@@ -701,89 +724,116 @@ int main(int argc, char* argv[]) {
         hidScanInput(); // glfwPollEvents();
 
         u32 kDown = hidKeysDown();
-        u32 kUp   = hidKeysUp();
+        u32 kUp = hidKeysUp();
         u32 kHeld = hidKeysHeld();
 
-            bool shiftHeld = (kHeld & KEY_ZL) != 0;
-            u32 debugMask = KEY_RIGHT | KEY_LEFT | KEY_X | KEY_A | KEY_B;
+        bool shiftHeld = (kHeld & KEY_L) != 0;
+        u32 debugMask = KEY_RIGHT | KEY_LEFT | KEY_X | KEY_A | KEY_B | KEY_L;
 
-            // update held state + fire key events
-        for (int i = 0; i < (int)(sizeof(keymap)/sizeof(keymap[0])); i++) {
+        // update held state + fire key events
+        for (int i = 0; i < (int)(sizeof(keymap) / sizeof(keymap[0])); i++)
+        {
             keymap[i].held = (kHeld & keymap[i].hwKey) != 0;
 
-                if (shiftHeld && (keymap[i].hwKey & debugMask)) continue;
+            if (shiftHeld && (keymap[i].hwKey & debugMask))
+                continue;
 
-            if (kDown & keymap[i].hwKey) {
+            if (kDown & keymap[i].hwKey)
+            {
                 RunnerKeyboard_onKeyDown(runner->keyboard, keymap[i].gmlKey);
             }
-            if (kUp & keymap[i].hwKey) {
+            if (kUp & keymap[i].hwKey)
+            {
                 RunnerKeyboard_onKeyUp(runner->keyboard, keymap[i].gmlKey);
             }
         }
 
-            if (shiftHeld) {
-                DataWin* dw = runner->dataWin;
+        if (shiftHeld)
+        {
+            DataWin *dw = runner->dataWin;
 
-                if (kDown & KEY_RIGHT) {
-                    int32_t nextPos = runner->currentRoomOrderPosition + 1;
-                    if ((int32_t)dw->gen8.roomOrderCount > nextPos) {
-                        runner->pendingRoom = dw->gen8.roomOrder[nextPos];
-                        printf("Debug: next room -> %s\n", dw->room.rooms[runner->pendingRoom].name);
-                    } else {
-                        printf("Debug: already at last room\n");
-                    }
+            if (kDown & KEY_RIGHT)
+            {
+                int32_t nextPos = runner->currentRoomOrderPosition + 1;
+                if ((int32_t)dw->gen8.roomOrderCount > nextPos)
+                {
+                    runner->pendingRoom = dw->gen8.roomOrder[nextPos];
+                    printf("Debug: next room -> %s\n", dw->room.rooms[runner->pendingRoom].name);
                 }
-
-                if (kDown & KEY_LEFT) {
-                    int32_t prevPos = runner->currentRoomOrderPosition - 1;
-                    if (prevPos >= 0) {
-                        runner->pendingRoom = dw->gen8.roomOrder[prevPos];
-                        printf("Debug: prev room -> %s\n", dw->room.rooms[runner->pendingRoom].name);
-                    } else {
-                        printf("Debug: already at first room\n");
-                    }
-                }
-
-                if (kDown & KEY_X) {
-                    int interactVarIndex = shgeti(runner->vmContext->globalVarNameMap, "interact");
-                    if (interactVarIndex >= 0) {
-                        int32_t interactVarId = runner->vmContext->globalVarNameMap[interactVarIndex].value;
-                        runner->vmContext->globalVars[interactVarId] = RValue_makeInt32(0);
-                        printf("Debug: global.interact = 0\n");
-                    } else {
-                        printf("Debug: global.interact not found\n");
-                    }
-                }
-
-                if (kDown & KEY_A) {
-                    int32_t battleObjectIndex = -1;
-                    for (int32_t objectIndex = 0; objectIndex < (int32_t)dw->objt.count; objectIndex++) {
-                        if (strcmp(dw->objt.objects[objectIndex].name, "obj_battleblcon") == 0) {
-                            battleObjectIndex = objectIndex;
-                            break;
-                        }
-                    }
-
-                    if (battleObjectIndex >= 0) {
-                        Runner_createInstance(runner, 0.0, 0.0, battleObjectIndex);
-                        printf("Debug: created obj_battleblcon\n");
-                    } else {
-                        printf("Debug: obj_battleblcon not found\n");
-                    }
-                }
-
-                if (kDown & KEY_B) {
-                    int phasingVarIndex = shgeti(runner->vmContext->globalVarNameMap, "phasing");
-                    if (phasingVarIndex >= 0) {
-                        int32_t phasingVarId = runner->vmContext->globalVarNameMap[phasingVarIndex].value;
-                        int32_t newPhasingValue = RValue_toInt32(runner->vmContext->globalVars[phasingVarId]) ? 0 : 1;
-                        runner->vmContext->globalVars[phasingVarId] = RValue_makeInt32(newPhasingValue);
-                        printf("Debug: global.phasing = %d\n", newPhasingValue);
-                    } else {
-                        printf("Debug: global.phasing not found\n");
-                    }
+                else
+                {
+                    printf("Debug: already at last room\n");
                 }
             }
+
+            if (kDown & KEY_LEFT)
+            {
+                int32_t prevPos = runner->currentRoomOrderPosition - 1;
+                if (prevPos >= 0)
+                {
+                    runner->pendingRoom = dw->gen8.roomOrder[prevPos];
+                    printf("Debug: prev room -> %s\n", dw->room.rooms[runner->pendingRoom].name);
+                }
+                else
+                {
+                    printf("Debug: already at first room\n");
+                }
+            }
+
+            if (kDown & KEY_X)
+            {
+                int interactVarIndex = shgeti(runner->vmContext->globalVarNameMap, "interact");
+                if (interactVarIndex >= 0)
+                {
+                    int32_t interactVarId = runner->vmContext->globalVarNameMap[interactVarIndex].value;
+                    runner->vmContext->globalVars[interactVarId] = RValue_makeInt32(0);
+                    printf("Debug: global.interact = 0\n");
+                }
+                else
+                {
+                    printf("Debug: global.interact not found\n");
+                }
+            }
+
+            if (kDown & KEY_A)
+            {
+                int32_t battleObjectIndex = -1;
+                for (int32_t objectIndex = 0; objectIndex < (int32_t)dw->objt.count; objectIndex++)
+                {
+                    if (strcmp(dw->objt.objects[objectIndex].name, "obj_battleblcon") == 0)
+                    {
+                        battleObjectIndex = objectIndex;
+                        break;
+                    }
+                }
+
+                if (battleObjectIndex >= 0)
+                {
+                    Runner_createInstance(runner, 0.0, 0.0, battleObjectIndex);
+                    printf("Debug: created obj_battleblcon\n");
+                }
+                else
+                {
+                    printf("Debug: obj_battleblcon not found\n");
+                }
+            }
+
+            if (kDown & KEY_B)
+            {
+                int phasingVarIndex = shgeti(runner->vmContext->globalVarNameMap, "phasing");
+                if (phasingVarIndex >= 0)
+                {
+                    int32_t phasingVarId = runner->vmContext->globalVarNameMap[phasingVarIndex].value;
+                    int32_t newPhasingValue = RValue_toInt32(runner->vmContext->globalVars[phasingVarId]) ? 0 : 1;
+                    runner->vmContext->globalVars[phasingVarId] = RValue_makeInt32(newPhasingValue);
+                    printf("Debug: global.phasing = %d\n", newPhasingValue);
+                }
+                else
+                {
+                    printf("Debug: global.phasing not found\n");
+                }
+            }
+        }
 
         // Process input recording/playback (must happen after glfwPollEvents, before Runner_step)
         InputRecording_processFrame(globalInputRecording, runner->keyboard, runner->frameCount);
@@ -860,14 +910,17 @@ int main(int argc, char* argv[]) {
 
         // Run the game step if the game is paused
         bool shouldStep = true;
-        if (runner->debugMode && debugPaused) {
+        if (runner->debugMode && debugPaused)
+        {
             shouldStep = RunnerKeyboard_checkPressed(runner->keyboard, 'O');
-            if (shouldStep) fprintf(stderr, "Debug: Frame advance (frame %d)\n", runner->frameCount);
+            if (shouldStep)
+                fprintf(stderr, "Debug: Frame advance (frame %d)\n", runner->frameCount);
         }
 
         double frameStartTime = 0;
 
-        if (shouldStep) {
+        if (shouldStep)
+        {
             /*
             if (args.traceFrames) {
                 frameStartTime = svcGetSystemTick();
@@ -909,43 +962,47 @@ int main(int argc, char* argv[]) {
             */
         }
 
-        if (runner->audioSystem != NULL) {
+        if (runner->audioSystem != NULL)
+        {
             CinnamonProfiler_beginSection(CINNAMON_PROFILE_AUDIO);
-            uint64_t nowMs = (uint64_t) osGetTime();
-            float deltaTime = (float) (nowMs - lastAudioUpdateMs) / 1000.0f;
-            if (deltaTime < 0.0f) deltaTime = 0.0f;
-            if (deltaTime > 0.1f) deltaTime = 0.1f;
+            uint64_t nowMs = (uint64_t)osGetTime();
+            float deltaTime = (float)(nowMs - lastAudioUpdateMs) / 1000.0f;
+            if (deltaTime < 0.0f)
+                deltaTime = 0.0f;
+            if (deltaTime > 0.1f)
+                deltaTime = 0.1f;
             lastAudioUpdateMs = nowMs;
             runner->audioSystem->vtable->update(runner->audioSystem, deltaTime);
             CinnamonProfiler_endSection(CINNAMON_PROFILE_AUDIO);
         }
 
-        Room* activeRoom = runner->currentRoom;
+        Room *activeRoom = runner->currentRoom;
 
         // Query actual framebuffer size (differs from window size on Wayland with fractional scaling)
         int fbWidth, fbHeight;
         // glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
-        fbWidth = (int) gen8->defaultWindowWidth;
-        fbHeight = (int) gen8->defaultWindowHeight;
+        fbWidth = (int)gen8->defaultWindowWidth;
+        fbHeight = (int)gen8->defaultWindowHeight;
 
         // Clear the default framebuffer (window background) to black
         // TODO: Make sure this is correct (it should be)
-        /*        
+        /*
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         */
-        //C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-		//C2D_TargetClear(window, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
-        //C2D_SceneBegin(window);
+        // C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        // C2D_TargetClear(window, C2D_Color32f(0.0f, 0.0f, 0.0f, 1.0f));
+        // C2D_SceneBegin(window);
 
-        int32_t gameW = (int32_t) gen8->defaultWindowWidth;
-        int32_t gameH = (int32_t) gen8->defaultWindowHeight;
+        int32_t gameW = (int32_t)gen8->defaultWindowWidth;
+        int32_t gameH = (int32_t)gen8->defaultWindowHeight;
 
         CinnamonProfiler_beginSection(CINNAMON_PROFILE_RENDER);
 
         // Begin the frame via renderer vtable (if provided). This pairs with endFrame below
-        if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->beginFrame != NULL) {
+        if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->beginFrame != NULL)
+        {
             runner->renderer->vtable->beginFrame(runner->renderer, C2D_Color32(BGR_R(runner->backgroundColor), BGR_G(runner->backgroundColor), BGR_B(runner->backgroundColor), 255), runner->currentRoom->speed, gameW, gameH, fbWidth, fbHeight);
         }
 
@@ -954,13 +1011,16 @@ int main(int argc, char* argv[]) {
         // real hardware (the duplicate C3D_FrameBegin was the source of the hardware crash).
 
         // Clear FBO with room background color
-        if (runner->drawBackgroundColor) {
+        if (runner->drawBackgroundColor)
+        {
             int rInt = BGR_R(runner->backgroundColor);
             int gInt = BGR_G(runner->backgroundColor);
             int bInt = BGR_B(runner->backgroundColor);
             // glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
-            //C2D_TargetClear(window, C2D_Color32f(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f));
-        } else {
+            // C2D_TargetClear(window, C2D_Color32f(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f));
+        }
+        else
+        {
             // glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         }
         // glClear(GL_COLOR_BUFFER_BIT);
@@ -970,8 +1030,10 @@ int main(int argc, char* argv[]) {
         bool anyViewRendered = false;
 
         // TODO: Render one of the views to the bottom screen!
-        if (viewsEnabled) {
-            repeat(8, vi) {
+        if (viewsEnabled)
+        {
+            repeat(8, vi)
+            {
                 if (!activeRoom->views[vi].enabled)
                     continue;
 
@@ -988,7 +1050,7 @@ int main(int argc, char* argv[]) {
                 runner->viewCurrent = vi;
                 // TODO: Add renderer, see first comment about  renderer
                 renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX * 400 / gameW, portY * 240 / gameH, portW * 400 / gameW, portH * 240 / gameH, viewAngle, vi);
-                    
+
                 Runner_draw(runner);
 
                 renderer->vtable->endView(renderer);
@@ -996,7 +1058,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (!anyViewRendered) {
+        if (!anyViewRendered)
+        {
             // No views enabled or views disabled: render with default full-screen view
             runner->viewCurrent = 0;
             renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f, 0);
@@ -1039,75 +1102,100 @@ int main(int argc, char* argv[]) {
 
         // End the frame via renderer vtable when possible to avoid unmatched C3D_FrameEnd
         CinnamonProfiler_beginSection(CINNAMON_PROFILE_PRESENT);
-        if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->endFrame != NULL) {
+        if (runner->renderer != NULL && runner->renderer->vtable != NULL && runner->renderer->vtable->endFrame != NULL)
+        {
             runner->renderer->vtable->endFrame(runner->renderer);
-        } else {
+        }
+        else
+        {
             C3D_FrameEnd(0);
         }
         CinnamonProfiler_endSection(CINNAMON_PROFILE_PRESENT);
 
         // Limit frame rate to room speed
         CinnamonProfiler_beginSection(CINNAMON_PROFILE_THROTTLE);
-        if (runner->currentRoom->speed > 0) {
+        if (runner->currentRoom->speed > 0)
+        {
             // Pace using the room's target speed only. If we overrun the budget,
             // don't accumulate delay debt across future frames.
             double frameStartMs = lastFrameTimeMs;
-            double targetFrameMs = 1000.0 / (double) runner->currentRoom->speed;
+            double targetFrameMs = 1000.0 / (double)runner->currentRoom->speed;
             double nextFrameTimeMs = frameStartMs + targetFrameMs;
-            double nowMs = (double) osGetTime();
+            double nowMs = (double)osGetTime();
             double remainingMs = nextFrameTimeMs - nowMs;
 
-            if (remainingMs > 1.5) {
+            if (remainingMs > 1.5)
+            {
                 struct timespec ts = {
                     .tv_sec = 0,
-                    .tv_nsec = (long) ((remainingMs - 0.5) * 1000000.0)
-                };
+                    .tv_nsec = (long)((remainingMs - 0.5) * 1000000.0)};
                 nanosleep(&ts, NULL);
             }
 
-            while ((double) osGetTime() < nextFrameTimeMs) {
+            while ((double)osGetTime() < nextFrameTimeMs)
+            {
                 // Spin-wait for the final sub-millisecond slice.
             }
 
-            nowMs = (double) osGetTime();
+            nowMs = (double)osGetTime();
 
             // Lag state machine: enable per-function timing when fps < 27, stop when >= 30.
             {
                 double totalFrameMs = nowMs - frameStartMs;
                 double decimateThresholdMs = targetFrameMs / 0.8;
 
-                if (totalFrameMs > decimateThresholdMs) {
+                if (totalFrameMs > decimateThresholdMs)
+                {
                     runner->drawSpriteDecimationEnabled = true;
                     runner->drawSpriteDecimationPhase ^= 1u;
-                } else {
+                }
+                else
+                {
                     runner->drawSpriteDecimationEnabled = false;
                     runner->drawSpriteDecimationPhase = 0;
                 }
 
-                // > 37.04ms => fps < 27;  < 33.33ms => fps >= 30
-                if (lagState == 0) {
-                    if (totalFrameMs > 37.04 && runner->renderer) {
+                // Activate lag mode when frame time exceeds targetFrameMs / 0.6
+                // (i.e. running at < 60% of target speed).
+                // Deactivate when frame time drops back to targetFrameMs / 0.7
+                // (i.e. recovering to >= 70% of target speed) — hysteresis prevents thrashing.
+                double lagOnThresholdMs  = targetFrameMs / 0.6;
+                double lagOffThresholdMs = targetFrameMs / 0.7;
+                if (lagState == 0)
+                {
+                    if (totalFrameMs > lagOnThresholdMs && runner->renderer)
+                    {
                         lagState = 1;
                         CRenderer3DS_setLagMode(runner->renderer, true);
                     }
-                } else if (lagState == 1) {
-                    if (totalFrameMs <= 33.33 && runner->renderer) {
+                }
+                else if (lagState == 1)
+                {
+                    if (totalFrameMs <= lagOffThresholdMs && runner->renderer)
+                    {
                         lagState = 2;
                         CRenderer3DS_setLagMode(runner->renderer, false);
                     }
-                } else { // recovering
-                    if (totalFrameMs > 37.04 && runner->renderer) {
+                }
+                else
+                { // recovering
+                    if (totalFrameMs > lagOnThresholdMs && runner->renderer)
+                    {
                         lagState = 1;
                         CRenderer3DS_setLagMode(runner->renderer, true);
-                    } else if (totalFrameMs <= 33.33) {
+                    }
+                    else if (totalFrameMs <= lagOffThresholdMs)
+                    {
                         lagState = 0;
                     }
                 }
             }
 
             lastFrameTimeMs = nowMs > nextFrameTimeMs ? nowMs : nextFrameTimeMs;
-        } else {
-            lastFrameTimeMs = (double) osGetTime();
+        }
+        else
+        {
+            lastFrameTimeMs = (double)osGetTime();
         }
         CinnamonProfiler_endSection(CINNAMON_PROFILE_THROTTLE);
 
@@ -1115,8 +1203,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Save input recording if active, then free
-    if (globalInputRecording != NULL) {
-        if (globalInputRecording->isRecording) {
+    if (globalInputRecording != NULL)
+    {
+        if (globalInputRecording->isRecording)
+        {
             InputRecording_save(globalInputRecording);
         }
         globalInputRecording = NULL;

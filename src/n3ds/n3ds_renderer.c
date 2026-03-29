@@ -1063,7 +1063,7 @@ static void drawRegion(CRenderer3DS* C,
                 C2D_Image image = { .tex = &entry->tex, .subtex = &subtex };
 
                 C2D_ImageTint tint;
-                C2D_PlainImageTint(&tint, color, blend);
+                C2D_PlainImageTint(&tint, color, 0.0f);
 
                 float chunkDestX = flipX
                     ? dstX + (srcX + srcW - (chunkX + chunkW)) * pixScaleX
@@ -1577,12 +1577,16 @@ static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int3
     }
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 
-    // Clear both once per frame so each screen remains valid even if only one
-    // receives draws in this room/frame.
-    C2D_TargetClear(C->top, C->frameClearColor);
-    C2D_TargetClear(C->bottom, C->frameClearColor);
-    C->topClearedThisFrame = true;
-    C->bottomClearedThisFrame = true;
+    // In lag mode skip the pre-emptive clear to avoid flickering: the lazy
+    // clear in CSelectRenderTargetForView will clear each screen on first use.
+    // Outside lag mode pre-clear both so screens with no draws this frame
+    // remain valid (not stale).
+    if (!C->lagMode) {
+        C2D_TargetClear(C->top, C->frameClearColor);
+        C2D_TargetClear(C->bottom, C->frameClearColor);
+        C->topClearedThisFrame = true;
+        C->bottomClearedThisFrame = true;
+    }
 }
 
 static void CEndFrame(Renderer* renderer) {
@@ -1796,7 +1800,14 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     float sheetDstH = (float)tpag->boundingHeight * yscale * C->scaleY;
     float angleRad = angleDeg * (float)(M_PI / 180.0);
 
-    if (isRotatedRectOffscreen(C, sheetDstX, sheetDstY, sheetDstW, sheetDstH, angleRad)) {
+    // Backgrounds have boundingWidth/Height == 0 (no bounding box concept).
+    // Fall back to source dimensions so the offscreen check doesn't discard them.
+    float checkW = (sheetDstW > 0.0f) ? sheetDstW : dstW;
+    float checkH = (sheetDstH > 0.0f) ? sheetDstH : dstH;
+    float checkX = (sheetDstW > 0.0f) ? sheetDstX : dstX;
+    float checkY = (sheetDstH > 0.0f) ? sheetDstY : dstY;
+
+    if (isRotatedRectOffscreen(C, checkX, checkY, checkW, checkH, angleRad)) {
         return;
     }
 
@@ -1829,7 +1840,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                         C2D_PlainImageTint(&tint,
                             C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                         (uint8_t)(alpha * 255.0f)),
-                            1.0f);
+                            0.0f);
 
                         C2D_DrawParams params = {
                             .pos    = {
@@ -1960,7 +1971,7 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                                 C2D_PlainImageTint(&tint,
                                     C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                                 (uint8_t)(alpha * 255.0f)),
-                                    1.0f);
+                                    0.0f);
 
                                 C2D_DrawParams params = {
                                     .pos    = { dstX, dstY, dstW, dstH },
@@ -2160,12 +2171,19 @@ static void CDrawText(Renderer* renderer, const char* text,
                 float srcW = (float)glyph->sourceWidth;
                 float srcH = (float)glyph->sourceHeight;
 
+                // Suppress region lag tracking for glyph draws: the text
+                // function itself already measures total text time in
+                // lagTextTicks, so we don't want each glyph to also
+                // accumulate into lagRegionTicks (double-counting).
+                bool _savedLag = C->lagMode;
+                C->lagMode = false;
                 drawRegion(C, pageIdx, srcX, srcY, srcW, srcH,
                         dstX, dstY, dstW, dstH, 0.0f,
                         C2D_Color32(BGR_R(renderer->drawColor), BGR_G(renderer->drawColor),
                                     BGR_B(renderer->drawColor),
                                     (uint8_t)(renderer->drawAlpha * 255.0f)),
                         1.0f); // blend=1: replace glyph pixels with drawColor
+                C->lagMode = _savedLag;
             }
 
             cursorX += (float)glyph->shift;
