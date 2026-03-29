@@ -681,6 +681,7 @@ int main(int argc, char *argv[])
     Renderer *renderer = CRenderer3DS_create();
     renderer->vtable->init(renderer, dataWin);
     runner->renderer = renderer;
+    CRenderer3DS_setLagMode(renderer, false);
 
     CRenderer3DS *C = (CRenderer3DS *)renderer;
 
@@ -709,8 +710,6 @@ int main(int argc, char *argv[])
     bool debugPaused = false;
     double lastFrameTimeMs = (double)osGetTime();
     uint64_t lastAudioUpdateMs = (uint64_t)osGetTime();
-    // Lag profiling state machine: NORMAL(0) -> LAGGING(1) -> RECOVERING(2)
-    int lagState = 0;
 
     CinnamonProfiler_init((uint32_t)CINNAMON_PROFILE_REPORT_EVERY, (double)CINNAMON_PROFILE_SPIKE_MS);
 
@@ -746,6 +745,12 @@ int main(int argc, char *argv[])
             {
                 RunnerKeyboard_onKeyUp(runner->keyboard, keymap[i].gmlKey);
             }
+        }
+
+        // Emergency audio kill switch: stop all currently playing SFX/music.
+        if ((kDown & KEY_Y) && runner->audioSystem != NULL)
+        {
+            runner->audioSystem->vtable->stopAll(runner->audioSystem);
         }
 
         if (shiftHeld)
@@ -1139,57 +1144,9 @@ int main(int argc, char *argv[])
 
             nowMs = (double)osGetTime();
 
-            // Lag state machine: enable per-function timing when fps < 27, stop when >= 30.
-            {
-                double totalFrameMs = nowMs - frameStartMs;
-                double decimateThresholdMs = targetFrameMs / 0.8;
-
-                if (totalFrameMs > decimateThresholdMs)
-                {
-                    runner->drawSpriteDecimationEnabled = true;
-                    runner->drawSpriteDecimationPhase ^= 1u;
-                }
-                else
-                {
-                    runner->drawSpriteDecimationEnabled = false;
-                    runner->drawSpriteDecimationPhase = 0;
-                }
-
-                // Activate lag mode when frame time exceeds targetFrameMs / 0.6
-                // (i.e. running at < 60% of target speed).
-                // Deactivate when frame time drops back to targetFrameMs / 0.7
-                // (i.e. recovering to >= 70% of target speed) — hysteresis prevents thrashing.
-                double lagOnThresholdMs  = targetFrameMs / 0.6;
-                double lagOffThresholdMs = targetFrameMs / 0.7;
-                if (lagState == 0)
-                {
-                    if (totalFrameMs > lagOnThresholdMs && runner->renderer)
-                    {
-                        lagState = 1;
-                        CRenderer3DS_setLagMode(runner->renderer, true);
-                    }
-                }
-                else if (lagState == 1)
-                {
-                    if (totalFrameMs <= lagOffThresholdMs && runner->renderer)
-                    {
-                        lagState = 2;
-                        CRenderer3DS_setLagMode(runner->renderer, false);
-                    }
-                }
-                else
-                { // recovering
-                    if (totalFrameMs > lagOnThresholdMs && runner->renderer)
-                    {
-                        lagState = 1;
-                        CRenderer3DS_setLagMode(runner->renderer, true);
-                    }
-                    else if (totalFrameMs <= lagOffThresholdMs)
-                    {
-                        lagState = 0;
-                    }
-                }
-            }
+            // Keep full sprite rendering always enabled.
+            runner->drawSpriteDecimationEnabled = false;
+            runner->drawSpriteDecimationPhase = 0;
 
             lastFrameTimeMs = nowMs > nextFrameTimeMs ? nowMs : nextFrameTimeMs;
         }
