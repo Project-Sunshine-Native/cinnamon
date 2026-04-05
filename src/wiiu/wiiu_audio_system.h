@@ -4,6 +4,8 @@
 
 #include <SDL2/SDL.h>
 
+typedef struct stb_vorbis stb_vorbis;
+
 typedef struct {
     bool loaded;
     float* samples;
@@ -29,6 +31,17 @@ typedef struct {
     float sondVolume;
     float sondPitch;
     WiiUDecodedSound* decoded;
+    bool streaming;
+    bool streamEof;
+    int32_t streamSourceChannels;
+    int32_t streamSourceRate;
+    SDL_AudioStream* audioStream;
+    stb_vorbis* vorbisStream;
+    float* streamDecodeBuffer;
+    uint32_t streamDecodeFrames;
+    float* streamMixBuffer;
+    uint32_t streamMixFrames;
+    uint32_t streamMixCapacity;
 } WiiUSoundInstance;
 
 #define MAX_WIIU_SOUND_INSTANCES 64
@@ -47,6 +60,8 @@ typedef struct {
     bool* loadedGroups;
     float* mixBuffer;
     uint32_t mixBufferSamples;
+    float* streamScratch;
+    uint32_t streamScratchSamples;
     WiiUSoundInstance instances[MAX_WIIU_SOUND_INSTANCES];
 } WiiUAudioSystem;
 

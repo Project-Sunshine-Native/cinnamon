@@ -40,6 +40,145 @@ static float WiiUAudio_clampSample(float sample) {
     return sample;
 }
 
+static void WiiUAudio_resetInstance(WiiUSoundInstance* inst) {
+    if (inst->audioStream != NULL) {
+        SDL_FreeAudioStream(inst->audioStream);
+    }
+    if (inst->vorbisStream != NULL) {
+        stb_vorbis_close(inst->vorbisStream);
+    }
+    free(inst->streamDecodeBuffer);
+    free(inst->streamMixBuffer);
+    memset(inst, 0, sizeof(*inst));
+}
+
+static bool WiiUAudio_shouldStreamSound(const Sound* sound) {
+    if (sound == NULL || sound->file == NULL) return false;
+    if ((sound->flags & 0x01) != 0) return false;
+    return strncmp(sound->file, "mus_", 4) == 0;
+}
+
+static bool WiiUAudio_ensureStreamScratch(WiiUAudioSystem* wiiu, uint32_t sampleCount) {
+    if (wiiu->streamScratchSamples < sampleCount) {
+        free(wiiu->streamScratch);
+        wiiu->streamScratch = safeMalloc((size_t) sampleCount * sizeof(float));
+        wiiu->streamScratchSamples = sampleCount;
+    }
+    return wiiu->streamScratch != NULL;
+}
+
+static bool WiiUAudio_ensureStreamMixCapacity(WiiUSoundInstance* inst, uint32_t frameCapacity, uint32_t channelCount) {
+    if (inst->streamMixCapacity >= frameCapacity) return true;
+    uint32_t newCapacity = inst->streamMixCapacity > 0 ? inst->streamMixCapacity : 1024;
+    while (newCapacity < frameCapacity) newCapacity *= 2;
+    float* newBuffer = realloc(inst->streamMixBuffer, (size_t) newCapacity * (size_t) channelCount * sizeof(float));
+    if (newBuffer == NULL) return false;
+    inst->streamMixBuffer = newBuffer;
+    inst->streamMixCapacity = newCapacity;
+    return true;
+}
+
+static bool WiiUAudio_tryOpenVorbisStream(WiiUAudioSystem* wiiu, const char* path, WiiUSoundInstance* slot) {
+    int error = 0;
+    stb_vorbis* vorbis = stb_vorbis_open_filename(path, &error, NULL);
+    if (vorbis == NULL) return false;
+
+    stb_vorbis_info info = stb_vorbis_get_info(vorbis);
+    if (info.channels <= 0 || info.sample_rate <= 0) {
+        stb_vorbis_close(vorbis);
+        return false;
+    }
+
+    SDL_AudioStream* stream = SDL_NewAudioStream(
+        AUDIO_F32SYS,
+        (Uint8) info.channels,
+        info.sample_rate,
+        AUDIO_F32SYS,
+        (Uint8) wiiu->audioSpec.channels,
+        wiiu->audioSpec.freq
+    );
+    if (stream == NULL) {
+        stb_vorbis_close(vorbis);
+        return false;
+    }
+
+    uint32_t decodeFrames = 2048;
+    float* decodeBuffer = safeMalloc((size_t) decodeFrames * (size_t) info.channels * sizeof(float));
+
+    slot->streaming = true;
+    slot->streamEof = false;
+    slot->streamSourceChannels = info.channels;
+    slot->streamSourceRate = info.sample_rate;
+    slot->audioStream = stream;
+    slot->vorbisStream = vorbis;
+    slot->streamDecodeBuffer = decodeBuffer;
+    slot->streamDecodeFrames = decodeFrames;
+    return true;
+}
+
+static bool WiiUAudio_tryOpenMusicStream(WiiUAudioSystem* wiiu, const Sound* sound, WiiUSoundInstance* slot) {
+    if (!WiiUAudio_shouldStreamSound(sound)) return false;
+
+    const char* candidates[3] = { sound->file, NULL, NULL };
+    char oggName[512];
+    char wavName[512];
+    if (strchr(sound->file, '.') == NULL) {
+        snprintf(oggName, sizeof(oggName), "%s.ogg", sound->file);
+        snprintf(wavName, sizeof(wavName), "%s.wav", sound->file);
+        candidates[1] = oggName;
+        candidates[2] = wavName;
+    }
+
+    repeat(3, i) {
+        const char* candidate = candidates[i];
+        if (candidate == NULL) continue;
+
+        char* path = wiiu->fileSystem->vtable->resolvePath(wiiu->fileSystem, candidate);
+        if (path != NULL) {
+            bool ok = WiiUAudio_tryOpenVorbisStream(wiiu, path, slot);
+            free(path);
+            if (ok) return true;
+        }
+
+        char contentPath[640];
+        snprintf(contentPath, sizeof(contentPath), "/vol/content/%s", candidate);
+        if (WiiUAudio_tryOpenVorbisStream(wiiu, contentPath, slot)) return true;
+
+        snprintf(contentPath, sizeof(contentPath), "./content/%s", candidate);
+        if (WiiUAudio_tryOpenVorbisStream(wiiu, contentPath, slot)) return true;
+    }
+
+    return false;
+}
+
+static void WiiUAudio_fillMusicStream(WiiUSoundInstance* inst, uint32_t neededBytes) {
+    if (!inst->streaming || inst->audioStream == NULL || inst->vorbisStream == NULL) return;
+
+    while ((uint32_t) SDL_AudioStreamAvailable(inst->audioStream) < neededBytes) {
+        int decodedFrames = stb_vorbis_get_samples_float_interleaved(
+            inst->vorbisStream,
+            inst->streamSourceChannels,
+            inst->streamDecodeBuffer,
+            (int) (inst->streamDecodeFrames * (uint32_t) inst->streamSourceChannels)
+        );
+        if (decodedFrames <= 0) {
+            if (inst->loop) {
+                stb_vorbis_seek_start(inst->vorbisStream);
+                continue;
+            }
+            inst->streamEof = true;
+            SDL_AudioStreamFlush(inst->audioStream);
+            break;
+        }
+
+        SDL_AudioStreamPut(
+            inst->audioStream,
+            inst->streamDecodeBuffer,
+            decodedFrames * inst->streamSourceChannels * (int) sizeof(float)
+        );
+    }
+}
+
 static uint8_t* WiiUAudio_readFileBinary(const char* path, size_t* outSize) {
     FILE* file = fopen(path, "rb");
     if (file == NULL) return NULL;
@@ -223,37 +362,126 @@ static void WiiUAudio_callback(void* userdata, Uint8* stream, int len) {
 
     repeat(MAX_WIIU_SOUND_INSTANCES, i) {
         WiiUSoundInstance* inst = &wiiu->instances[i];
-        if (!inst->active || inst->paused || inst->decoded == NULL || inst->decoded->samples == NULL) continue;
+        if (!inst->active || inst->paused) continue;
 
-        WiiUDecodedSound* decoded = inst->decoded;
         float gain = inst->currentGain * inst->sondVolume * wiiu->masterGain;
         double step = (double) inst->pitch * (double) inst->sondPitch;
         if (step <= 0.0) step = 1.0;
 
+        if (inst->streaming) {
+            uint32_t channelCount = (uint32_t) (wiiu->audioSpec.channels > 0 ? wiiu->audioSpec.channels : 2);
+            uint32_t outFrames = sampleCount / channelCount;
+            uint32_t neededFrames = (uint32_t) (outFrames * step) + 4;
+            if (!WiiUAudio_ensureStreamMixCapacity(inst, inst->streamMixFrames + neededFrames, channelCount)) continue;
+
+            uint32_t wantedFrames = neededFrames;
+            while (inst->streamMixFrames < wantedFrames) {
+                uint32_t missingFrames = wantedFrames - inst->streamMixFrames;
+                uint32_t missingBytes = missingFrames * channelCount * (uint32_t) sizeof(float);
+                WiiUAudio_fillMusicStream(inst, missingBytes);
+                int availBytes = SDL_AudioStreamAvailable(inst->audioStream);
+                if (availBytes <= 0) break;
+                uint32_t freeFrames = inst->streamMixCapacity - inst->streamMixFrames;
+                uint32_t pullFrames = (uint32_t) availBytes / (channelCount * (uint32_t) sizeof(float));
+                if (pullFrames > freeFrames) pullFrames = freeFrames;
+                if (pullFrames == 0) break;
+                int gotBytes = SDL_AudioStreamGet(
+                    inst->audioStream,
+                    inst->streamMixBuffer + ((size_t) inst->streamMixFrames * channelCount),
+                    (int) (pullFrames * channelCount * (uint32_t) sizeof(float))
+                );
+                if (gotBytes <= 0) break;
+                inst->streamMixFrames += (uint32_t) gotBytes / (channelCount * (uint32_t) sizeof(float));
+            }
+
+            uint32_t mixedFrames = 0;
+            for (uint32_t outFrame = 0; outFrame < outFrames; outFrame++) {
+                double position = inst->position;
+                uint32_t frameIndex = (uint32_t) position;
+                if (frameIndex >= inst->streamMixFrames) {
+                    if (inst->streamEof && SDL_AudioStreamAvailable(inst->audioStream) == 0) {
+                        WiiUAudio_resetInstance(inst);
+                    }
+                    break;
+                }
+
+                uint32_t nextFrameIndex = frameIndex + 1;
+                if (nextFrameIndex >= inst->streamMixFrames) {
+                    nextFrameIndex = frameIndex;
+                }
+
+                float frac = (float) (position - (double) frameIndex);
+                uint32_t srcBase0 = frameIndex * channelCount;
+                uint32_t srcBase1 = nextFrameIndex * channelCount;
+                uint32_t outBase = outFrame * channelCount;
+                repeat(channelCount, ch) {
+                    float s0 = inst->streamMixBuffer[srcBase0 + ch];
+                    float s1 = inst->streamMixBuffer[srcBase1 + ch];
+                    float sample = s0 + (s1 - s0) * frac;
+                    wiiu->mixBuffer[outBase + ch] += sample * gain;
+                }
+                inst->position = position + step;
+                mixedFrames = outFrame + 1;
+            }
+
+            uint32_t consumedFrames = (uint32_t) inst->position;
+            if (consumedFrames > inst->streamMixFrames) consumedFrames = inst->streamMixFrames;
+            if (consumedFrames > 0) {
+                uint32_t remainingFrames = inst->streamMixFrames - consumedFrames;
+                if (remainingFrames > 0) {
+                    memmove(
+                        inst->streamMixBuffer,
+                        inst->streamMixBuffer + ((size_t) consumedFrames * channelCount),
+                        (size_t) remainingFrames * channelCount * sizeof(float)
+                    );
+                }
+                inst->streamMixFrames = remainingFrames;
+                inst->position -= (double) consumedFrames;
+                if (inst->position < 0.0) inst->position = 0.0;
+            }
+
+            (void) mixedFrames;
+            continue;
+        }
+
+        if (inst->decoded == NULL || inst->decoded->samples == NULL) continue;
+        WiiUDecodedSound* decoded = inst->decoded;
         uint32_t channelCount = (uint32_t) (decoded->channels > 0 ? decoded->channels : 1);
         uint32_t frameCount = decoded->sampleCount / channelCount;
         if (frameCount == 0) {
-            inst->active = false;
+            WiiUAudio_resetInstance(inst);
             continue;
         }
 
         for (uint32_t outPos = 0; outPos + channelCount <= sampleCount; outPos += channelCount) {
-            uint32_t frameIndex = (uint32_t) inst->position;
+            double position = inst->position;
+            uint32_t frameIndex = (uint32_t) position;
             if (frameIndex >= frameCount) {
                 if (inst->loop) {
                     inst->position = 0.0;
+                    position = 0.0;
                     frameIndex = 0;
                 } else {
-                    inst->active = false;
+                    WiiUAudio_resetInstance(inst);
                     break;
                 }
             }
 
-            uint32_t srcBase = frameIndex * channelCount;
-            repeat(channelCount, ch) {
-                wiiu->mixBuffer[outPos + ch] += decoded->samples[srcBase + ch] * gain;
+            uint32_t nextFrameIndex = frameIndex + 1;
+            if (nextFrameIndex >= frameCount) {
+                nextFrameIndex = inst->loop ? 0 : frameIndex;
             }
-            inst->position += step;
+
+            float frac = (float) (position - (double) frameIndex);
+            uint32_t srcBase0 = frameIndex * channelCount;
+            uint32_t srcBase1 = nextFrameIndex * channelCount;
+            repeat(channelCount, ch) {
+                float s0 = decoded->samples[srcBase0 + ch];
+                float s1 = decoded->samples[srcBase1 + ch];
+                float sample = s0 + (s1 - s0) * frac;
+                wiiu->mixBuffer[outPos + ch] += sample * gain;
+            }
+            inst->position = position + step;
         }
     }
 
@@ -385,7 +613,7 @@ static WiiUSoundInstance* WiiUAudio_findFreeSlot(WiiUAudioSystem* wiiu) {
     }
 
     if (best != NULL) {
-        memset(best, 0, sizeof(*best));
+        WiiUAudio_resetInstance(best);
     }
     return best;
 }
@@ -444,6 +672,7 @@ static void WiiUAudioSystem_destroy(AudioSystem* audio) {
     }
     free(wiiu->loadedGroups);
     free(wiiu->mixBuffer);
+    free(wiiu->streamScratch);
     free(audio);
 }
 
@@ -489,18 +718,10 @@ static int32_t WiiUAudioSystem_playSound(AudioSystem* audio, int32_t soundIndex,
         return -1;
     }
 
-    WiiUDecodedSound* decoded = &wiiu->decodedSounds[soundIndex];
-    if (!decoded->loaded) {
-        if (!WiiUAudio_decodeSound(wiiu, &dw->sond.sounds[soundIndex], decoded)) {
-            WiiUAudio_bootLog("wiiu_audio: resolveDecodedSound failed");
-            return -1;
-        }
-    }
-
     Sound* sound = &dw->sond.sounds[soundIndex];
 
     SDL_LockAudioDevice(wiiu->deviceId);
-    memset(slot, 0, sizeof(*slot));
+    WiiUAudio_resetInstance(slot);
     slot->active = true;
     slot->loop = loop;
     slot->soundIndex = soundIndex;
@@ -513,7 +734,20 @@ static int32_t WiiUAudioSystem_playSound(AudioSystem* audio, int32_t soundIndex,
     slot->pitch = 1.0f;
     slot->sondVolume = sound->volume;
     slot->sondPitch = sound->pitch <= 0.0f ? 1.0f : sound->pitch;
-    slot->decoded = decoded;
+
+    bool streamOk = WiiUAudio_tryOpenMusicStream(wiiu, sound, slot);
+    if (!streamOk) {
+        WiiUDecodedSound* decoded = &wiiu->decodedSounds[soundIndex];
+        if (!decoded->loaded) {
+            if (!WiiUAudio_decodeSound(wiiu, sound, decoded)) {
+                SDL_UnlockAudioDevice(wiiu->deviceId);
+                WiiUAudio_resetInstance(slot);
+                WiiUAudio_bootLog("wiiu_audio: resolveDecodedSound failed");
+                return -1;
+            }
+        }
+        slot->decoded = decoded;
+    }
     SDL_UnlockAudioDevice(wiiu->deviceId);
 
     snprintf(buffer, sizeof(buffer), "wiiu_audio: playSound end sound=%d instance=%d", soundIndex, slot->instanceId);
@@ -528,11 +762,11 @@ static void WiiUAudioSystem_stopSound(AudioSystem* audio, int32_t soundOrInstanc
     SDL_LockAudioDevice(wiiu->deviceId);
     if (soundOrInstance >= WIIU_SOUND_INSTANCE_ID_BASE) {
         WiiUSoundInstance* inst = WiiUAudio_findInstanceById(wiiu, soundOrInstance);
-        if (inst != NULL) memset(inst, 0, sizeof(*inst));
+        if (inst != NULL) WiiUAudio_resetInstance(inst);
     } else {
         repeat(MAX_WIIU_SOUND_INSTANCES, i) {
             WiiUSoundInstance* inst = &wiiu->instances[i];
-            if (inst->active && inst->soundIndex == soundOrInstance) memset(inst, 0, sizeof(*inst));
+            if (inst->active && inst->soundIndex == soundOrInstance) WiiUAudio_resetInstance(inst);
         }
     }
     SDL_UnlockAudioDevice(wiiu->deviceId);
@@ -542,7 +776,7 @@ static void WiiUAudioSystem_stopAll(AudioSystem* audio) {
     WiiUAudioSystem* wiiu = (WiiUAudioSystem*) audio;
     if (wiiu->deviceId == 0) return;
     SDL_LockAudioDevice(wiiu->deviceId);
-    memset(wiiu->instances, 0, sizeof(wiiu->instances));
+    repeat(MAX_WIIU_SOUND_INSTANCES, i) { WiiUAudio_resetInstance(&wiiu->instances[i]); }
     SDL_UnlockAudioDevice(wiiu->deviceId);
 }
 
@@ -664,15 +898,21 @@ static float WiiUAudioSystem_getSoundGain(AudioSystem* audio, int32_t soundOrIns
 
 static void WiiUAudioSystem_setSoundPitch(AudioSystem* audio, int32_t soundOrInstance, float pitch) {
     WiiUAudioSystem* wiiu = (WiiUAudioSystem*) audio;
+    if (wiiu->deviceId == 0) return;
+    if (pitch <= 0.0f) pitch = 1.0f;
+
+    SDL_LockAudioDevice(wiiu->deviceId);
     if (soundOrInstance >= WIIU_SOUND_INSTANCE_ID_BASE) {
         WiiUSoundInstance* inst = WiiUAudio_findInstanceById(wiiu, soundOrInstance);
         if (inst != NULL) inst->pitch = pitch;
+        SDL_UnlockAudioDevice(wiiu->deviceId);
         return;
     }
     repeat(MAX_WIIU_SOUND_INSTANCES, i) {
         WiiUSoundInstance* inst = &wiiu->instances[i];
         if (inst->active && inst->soundIndex == soundOrInstance) inst->pitch = pitch;
     }
+    SDL_UnlockAudioDevice(wiiu->deviceId);
 }
 
 static float WiiUAudioSystem_getSoundPitch(AudioSystem* audio, int32_t soundOrInstance) {

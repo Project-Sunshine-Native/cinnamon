@@ -11,6 +11,20 @@
 
 #include "stb_ds.h"
 
+__attribute__((weak)) void Runner_platformBootLog(const char* message) {
+    (void) message;
+}
+
+static void Runner_bootLog(const char* message) {
+    Runner_platformBootLog(message);
+}
+
+static void Runner_bootLogFirstFrame(Runner* runner, const char* message) {
+    if (runner != nullptr && runner->frameCount == 0) {
+        Runner_bootLog(message);
+    }
+}
+
 // ===[ Helper: Find event action in object hierarchy ]===
 // Walks the parent chain starting from objectIndex to find an event handler.
 // Returns the EventAction's codeId, or -1 if not found.
@@ -62,6 +76,22 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     if (0 > codeId) return;
 
     VMContext* vm = runner->vmContext;
+    DataWin* dataWin = runner->dataWin;
+
+    char bootLogBuffer[256];
+    const char* codeName = ((uint32_t) codeId < dataWin->code.count && dataWin->code.entries[codeId].name != nullptr)
+        ? dataWin->code.entries[codeId].name
+        : "<invalid-code-name>";
+    snprintf(
+        bootLogBuffer,
+        sizeof(bootLogBuffer),
+        "runner: executeCode begin codeId=%d code=%s instance=%d object=%d",
+        codeId,
+        codeName,
+        instance != nullptr ? instance->instanceId : -1,
+        instance != nullptr ? instance->objectIndex : -1
+    );
+    Runner_bootLog(bootLogBuffer);
 
     // Save instance context
     Instance* savedInstance = (Instance*) vm->currentInstance;
@@ -92,6 +122,16 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     // Execute
     RValue result = VM_executeCode(vm, codeId);
     RValue_free(&result);
+    snprintf(
+        bootLogBuffer,
+        sizeof(bootLogBuffer),
+        "runner: executeCode end codeId=%d code=%s instance=%d object=%d",
+        codeId,
+        codeName,
+        instance != nullptr ? instance->instanceId : -1,
+        instance != nullptr ? instance->objectIndex : -1
+    );
+    Runner_bootLog(bootLogBuffer);
 
     // Restore instance context
     restoreVMInstanceContext(vm, savedInstance);
@@ -236,6 +276,23 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
     DataWin* dataWin = runner->dataWin;
     float roomW = (float) runner->currentRoom->width;
     float roomH = (float) runner->currentRoom->height;
+    float visibleX = 0.0f;
+    float visibleY = 0.0f;
+    float visibleW = (float) dataWin->gen8.defaultWindowWidth;
+    float visibleH = (float) dataWin->gen8.defaultWindowHeight;
+
+    if ((runner->currentRoom->flags & 1) != 0) {
+        int32_t vi = runner->viewCurrent;
+        if (vi >= 0 && vi < 8 && runner->currentRoom->views[vi].enabled) {
+            visibleX = (float) runner->currentRoom->views[vi].viewX;
+            visibleY = (float) runner->currentRoom->views[vi].viewY;
+            visibleW = (float) runner->currentRoom->views[vi].viewWidth;
+            visibleH = (float) runner->currentRoom->views[vi].viewHeight;
+        }
+    }
+
+    if (visibleW <= 0.0f) visibleW = roomW;
+    if (visibleH <= 0.0f) visibleH = roomH;
 
     repeat(8, i) {
         RuntimeBackground* bg = &runner->backgrounds[i];
@@ -252,7 +309,7 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
             float yscale = roomH / (float) tpag->boundingHeight;
             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, bg->alpha);
         } else if (bg->tileX || bg->tileY) {
-            Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, roomW, roomH, bg->alpha);
+            Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, visibleX, visibleY, visibleW, visibleH, bg->alpha);
         } else {
             // Single placement
             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, bg->x, bg->y, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0xFFFFFF, bg->alpha);
@@ -298,6 +355,48 @@ static int compareInstanceDepth(const void* a, const void* b) {
     if (instB->depth > instA->depth) return 1;
     return 0;
 }
+
+#ifdef __WIIU__
+static bool Runner_tileIntersectsCurrentViewport(Runner* runner, RoomTile* tile, float offsetX, float offsetY) {
+    Room* room = runner->currentRoom;
+
+    float viewX = 0.0f;
+    float viewY = 0.0f;
+    float viewW = (float) runner->dataWin->gen8.defaultWindowWidth;
+    float viewH = (float) runner->dataWin->gen8.defaultWindowHeight;
+
+    bool viewsEnabled = (room->flags & 1) != 0;
+    if (viewsEnabled) {
+        int32_t vi = runner->viewCurrent;
+        if (vi >= 0 && vi < 8 && room->views[vi].enabled) {
+            viewX = (float) room->views[vi].viewX;
+            viewY = (float) room->views[vi].viewY;
+            viewW = (float) room->views[vi].viewWidth;
+            viewH = (float) room->views[vi].viewHeight;
+        }
+    }
+
+    if (viewW <= 0.0f || viewH <= 0.0f) return true;
+
+    float x0 = (float) tile->x + offsetX;
+    float y0 = (float) tile->y + offsetY;
+    float x1 = x0 + (float) tile->width * tile->scaleX;
+    float y1 = y0 + (float) tile->height * tile->scaleY;
+
+    float tileLeft = fminf(x0, x1);
+    float tileRight = fmaxf(x0, x1);
+    float tileTop = fminf(y0, y1);
+    float tileBottom = fmaxf(y0, y1);
+
+    float viewRight = viewX + viewW;
+    float viewBottom = viewY + viewH;
+
+    return tileRight > viewX &&
+           tileBottom > viewY &&
+           tileLeft < viewRight &&
+           tileTop < viewBottom;
+}
+#endif
 
 static void fireDrawSubtype(Runner* runner, Instance** drawList, int32_t drawCount, int32_t subtype) {
     repeat(drawCount, i) {
@@ -345,6 +444,16 @@ void Runner_draw(Runner* runner) {
         // Check if this tile's layer is hidden
         ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
         if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
+
+#ifdef __WIIU__
+        float offsetX = 0.0f;
+        float offsetY = 0.0f;
+        if (layerIdx >= 0) {
+            offsetX = runner->tileLayerMap[layerIdx].value.offsetX;
+            offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
+        }
+        if (!Runner_tileIntersectsCurrentViewport(runner, tile, offsetX, offsetY)) continue;
+#endif
 
         Drawable d = { .type = DRAWABLE_TILE, .depth = tile->tileDepth, .tileIndex = (int32_t) i };
         arrput(drawables, d);
@@ -456,8 +565,7 @@ static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32
 
 // ===[ Room Management ]===
 
-static void initRoom(Runner* runner, int32_t roomIndex)
-{
+static void initRoom(Runner* runner, int32_t roomIndex) {
     DataWin* dataWin = runner->dataWin;
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
 
@@ -559,9 +667,11 @@ static void initRoom(Runner* runner, int32_t roomIndex)
     // Two-pass instance creation (matches HTML5 runner behavior):
     // Pass 1: Create all instance objects so they exist for cross-references
     // Pass 2: Fire preCreateCode, CREATE events, and creationCode
-    // This ensures that when an instance's Create event reads another instance    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
+    // This ensures that when an instance's Create event reads another instance
+    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
 
     // Pass 1: Create all instances without firing events
+    Runner_bootLog("runner: initRoom pass1 begin");
     repeat(room->gameObjectCount, i) {
         RoomGameObject* roomObj = &room->gameObjects[i];
 
@@ -576,16 +686,26 @@ static void initRoom(Runner* runner, int32_t roomIndex)
         if (alreadyExists) continue;
         if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
-        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition,
-                                               (double) roomObj->x, (double) roomObj->y);
+        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (double) roomObj->x, (double) roomObj->y);
         inst->imageXscale = (double) roomObj->scaleX;
         inst->imageYscale = (double) roomObj->scaleY;
         inst->imageAngle = (double) roomObj->rotation;
     }
+    Runner_bootLog("runner: initRoom pass1 end");
 
     // Pass 2: Fire events for newly created instances (in room definition order)
+    Runner_bootLog("runner: initRoom pass2 begin");
     repeat(room->gameObjectCount, i) {
         RoomGameObject* roomObj = &room->gameObjects[i];
+        char bootLogBuffer[256];
+        snprintf(
+            bootLogBuffer,
+            sizeof(bootLogBuffer),
+            "runner: initRoom pass2 object=%d instance=%d begin",
+            roomObj->objectDefinition,
+            roomObj->instanceID
+        );
+        Runner_bootLog(bootLogBuffer);
 
         // Find the instance we created (skip persistent ones that were kept)
         Instance* inst = nullptr;
@@ -601,72 +721,45 @@ static void initRoom(Runner* runner, int32_t roomIndex)
         if (inst->createEventFired) continue;
         inst->createEventFired = true;
 
+        Runner_bootLog("runner: initRoom preCreateCode begin");
         executeCode(runner, inst, roomObj->preCreateCode);
+        Runner_bootLog("runner: initRoom preCreateCode end");
+        Runner_bootLog("runner: initRoom Create event begin");
         Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
+        Runner_bootLog("runner: initRoom Create event end");
+        Runner_bootLog("runner: initRoom creationCode begin");
         executeCode(runner, inst, roomObj->creationCode);
+        Runner_bootLog("runner: initRoom creationCode end");
+        snprintf(
+            bootLogBuffer,
+            sizeof(bootLogBuffer),
+            "runner: initRoom pass2 object=%d instance=%d end",
+            roomObj->objectDefinition,
+            roomObj->instanceID
+        );
+        Runner_bootLog(bootLogBuffer);
     }
+    Runner_bootLog("runner: initRoom pass2 end");
 
     // Run room creation code
     if (room->creationCodeId >= 0 && dataWin->code.count > (uint32_t) room->creationCodeId) {
+        Runner_bootLog("runner: room creation code begin");
         // Room creation code runs in global context (no specific instance)
         RValue result = VM_executeCode(runner->vmContext, room->creationCodeId);
         RValue_free(&result);
+        Runner_bootLog("runner: room creation code end");
     }
 
     // Mark this room as initialized for persistent room support
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
-
-    // -----------------------------------------------------------------
-    // TEXTURE PRELOAD: load all textures referenced by sprites of the
-    // instances that are now active in this room.
-    // -----------------------------------------------------------------    
-    if (dataWin->txtr.count > 0) {
-        printf("[TXTR] scanning instances\n");
-
-        for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
-            Instance* inst = runner->instances[i];
-            if (!inst->active) {
-                printf("[TXTR] inst %d skipped: inactive\n", i);
-                continue;
-            }
-            if (inst->spriteIndex < 0) {
-                printf("[TXTR] inst %d skipped: no sprite\n", i);
-                continue;
-            }
-
-            Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
-            printf("[TXTR] inst %d sprite %d texCount %u\n", i, inst->spriteIndex, spr->textureCount);
-
-            for (uint32_t t = 0; t < spr->textureCount; ++t) {
-                uint32_t tpagOffset = spr->textureOffsets[t];
-                int32_t tpagIndex   = DataWin_resolveTPAG(dataWin, tpagOffset);
-                if (tpagIndex < 0) {
-                    printf("[TXTR]  t=%u invalid TPAG offset %u\n", t, tpagOffset);
-                    continue;
-                }
-
-                TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
-                uint32_t texPageIdx = (uint32_t) tpagItem->texturePageId;
-                if (texPageIdx >= dataWin->txtr.count) {
-                    printf("[TXTR]  t=%u page %u out of range (count %u)\n",
-                        t, texPageIdx, dataWin->txtr.count);
-                    continue;
-                }
-
-                printf("[TXTR]  loading page %u (inst %d)\n", texPageIdx, i);
-
-                DataWin_loadTexture(dataWin, texPageIdx);
-                dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
-            }
-        }
-    }
 }
 
 // ===[ Public API ]===
 
 Runner* Runner_create(DataWin* dataWin, VMContext* vm, FileSystem* fileSystem) {
+    Runner_bootLog("runner: Runner_create begin");
     Runner* runner = safeCalloc(1, sizeof(Runner));
     runner->dataWin = dataWin;
     runner->vmContext = vm;
@@ -684,6 +777,7 @@ Runner* Runner_create(DataWin* dataWin, VMContext* vm, FileSystem* fileSystem) {
     // Link runner to VM context
     vm->runner = (struct Runner*) runner;
 
+    Runner_bootLog("runner: Runner_create end");
     return runner;
 }
 
@@ -722,29 +816,41 @@ void Runner_cleanupDestroyedInstances(Runner* runner) {
 
 void Runner_initFirstRoom(Runner* runner) {
     DataWin* dataWin = runner->dataWin;
+    Runner_bootLog("runner: initFirstRoom entered");
     require(dataWin->gen8.roomOrderCount > 0);
+    Runner_bootLog("runner: roomOrderCount ok");
 
     int32_t firstRoomIndex = dataWin->gen8.roomOrder[0];
+    Runner_bootLog("runner: firstRoomIndex resolved");
 
     // Run global init scripts first
+    Runner_bootLog("runner: global init begin");
     repeat(dataWin->glob.count, i) {
         int32_t codeId = dataWin->glob.codeIds[i];
         if (codeId >= 0 && dataWin->code.count > (uint32_t) codeId) {
             fprintf(stderr, "Runner: Executing global init script: %s\n", dataWin->code.entries[codeId].name);
+            Runner_bootLog(dataWin->code.entries[codeId].name);
             RValue result = VM_executeCode(runner->vmContext, codeId);
             RValue_free(&result);
         }
     }
+    Runner_bootLog("runner: global init end");
 
     // Initialize the first room
+    Runner_bootLog("runner: initRoom begin");
     initRoom(runner, firstRoomIndex);
+    Runner_bootLog("runner: initRoom end");
 
     // Fire Game Start for all instances
+    Runner_bootLog("runner: Game Start begin");
     Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_GAME_START);
     runner->gameStartFired = true;
+    Runner_bootLog("runner: Game Start end");
 
     // Fire Room Start for all instances
+    Runner_bootLog("runner: Room Start begin");
     Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
+    Runner_bootLog("runner: Room Start end");
 }
 
 // ===[ Collision Event Dispatch ]===
@@ -1048,6 +1154,8 @@ static bool adaptPath(Runner* runner, Instance* inst) {
 }
 
 void Runner_step(Runner* runner) {
+    Runner_bootLogFirstFrame(runner, "runner: step begin");
+
     // Save xprevious/yprevious and path_positionprevious for all active instances
     int32_t prevCount = (int32_t) arrlen(runner->instances);
     repeat(prevCount, i) {
@@ -1061,9 +1169,11 @@ void Runner_step(Runner* runner) {
 
     // Scroll backgrounds
     Runner_scrollBackgrounds(runner);
+    Runner_bootLogFirstFrame(runner, "runner: step after scroll backgrounds");
 
     // Execute Begin Step for all instances
     Runner_executeEventForAll(runner, EVENT_STEP, STEP_BEGIN);
+    Runner_bootLogFirstFrame(runner, "runner: step after begin step");
 
     // Dispatch keyboard events
     RunnerKeyboardState* kb = runner->keyboard;
@@ -1082,6 +1192,7 @@ void Runner_step(Runner* runner) {
             Runner_executeEventForAll(runner, EVENT_KEYRELEASE, key);
         }
     }
+    Runner_bootLogFirstFrame(runner, "runner: step after keyboard");
 
     // Process alarms for all instances
     int32_t alarmCount = (int32_t) arrlen(runner->instances);
@@ -1110,9 +1221,11 @@ void Runner_step(Runner* runner) {
             }
         }
     }
+    Runner_bootLogFirstFrame(runner, "runner: step after alarms");
 
     // Execute Normal Step for all instances
     Runner_executeEventForAll(runner, EVENT_STEP, STEP_NORMAL);
+    Runner_bootLogFirstFrame(runner, "runner: step after normal step");
 
     // Apply motion: friction, gravity, then x += hspeed, y += vspeed
     int32_t motionCount = (int32_t) arrlen(runner->instances);
@@ -1150,18 +1263,23 @@ void Runner_step(Runner* runner) {
             inst->y += inst->vspeed;
         }
     }
+    Runner_bootLogFirstFrame(runner, "runner: step after motion");
 
     // Dispatch outside room events
     dispatchOutsideRoomEvents(runner);
+    Runner_bootLogFirstFrame(runner, "runner: step after outside room");
 
     // Dispatch collision events
     dispatchCollisionEvents(runner);
+    Runner_bootLogFirstFrame(runner, "runner: step after collisions");
 
     // Execute End Step for all instances
     Runner_executeEventForAll(runner, EVENT_STEP, STEP_END);
+    Runner_bootLogFirstFrame(runner, "runner: step after end step");
 
     // Update view following and clamping
     updateViews(runner);
+    Runner_bootLogFirstFrame(runner, "runner: step after update views");
 
     // Advance image_index by image_speed for all active instances
     int32_t animCount = (int32_t) arrlen(runner->instances);
@@ -1183,15 +1301,25 @@ void Runner_step(Runner* runner) {
             Runner_executeEvent(runner, inst, EVENT_OTHER, OTHER_ANIMATION_END);
         }
     }
+    Runner_bootLogFirstFrame(runner, "runner: step after animation");
+
+    if (runner->frameCount == 0) {
+        char buffer[96];
+        snprintf(buffer, sizeof(buffer), "runner: step pendingRoom=%d", runner->pendingRoom);
+        Runner_bootLog(buffer);
+    }
 
     // Handle room transition
     if (runner->pendingRoom >= 0) {
+        Runner_bootLogFirstFrame(runner, "runner: step entering room transition");
         int32_t oldRoomIndex = runner->currentRoomIndex;
         Room* oldRoom = runner->currentRoom;
         const char* oldRoomName = oldRoom->name;
 
         // Fire Room End for all instances
+        Runner_bootLogFirstFrame(runner, "runner: step before room end events");
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
+        Runner_bootLogFirstFrame(runner, "runner: step after room end events");
 
         int32_t newRoomIndex = runner->pendingRoom;
         require(runner->dataWin->room.count > (uint32_t) newRoomIndex);
@@ -1199,10 +1327,16 @@ void Runner_step(Runner* runner) {
 
         fprintf(stderr, "Room changed: %s (room %d) -> %s (room %d)\n", oldRoomName, oldRoomIndex, newRoomName, newRoomIndex);
 
-        runner->renderer->vtable->onRoomEnd(runner->renderer);
+        if (runner->renderer != nullptr &&
+            runner->renderer->vtable != nullptr &&
+            runner->renderer->vtable->onRoomEnd != nullptr) {
+            runner->renderer->vtable->onRoomEnd(runner->renderer);
+        }
+        Runner_bootLogFirstFrame(runner, "runner: step after renderer onRoomEnd");
 
         // If the old room is persistent, save its instance and visual state
         if (oldRoom->persistent) {
+            Runner_bootLogFirstFrame(runner, "runner: step saving persistent room");
             SavedRoomState* state = &runner->savedRoomStates[oldRoomIndex];
 
             // Free any previously saved instances (from an earlier visit)
@@ -1244,24 +1378,22 @@ void Runner_step(Runner* runner) {
         }
 
         // Load new room
+        Runner_bootLogFirstFrame(runner, "runner: step before initRoom pending");
         initRoom(runner, newRoomIndex);
-
-        runner->renderer->vtable->onRoomStart(runner->renderer);
+        Runner_bootLogFirstFrame(runner, "runner: step after initRoom pending");
 
         // Fire Room Start for all instances
+        Runner_bootLogFirstFrame(runner, "runner: step before pending room start");
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
-#ifndef __WIIU__
-        if (runner->renderer != nullptr &&
-            runner->renderer->vtable != nullptr &&
-            runner->renderer->vtable->onRoomStart != nullptr) {
-            runner->renderer->vtable->onRoomStart(runner->renderer);
-        }
-#endif
+        Runner_bootLogFirstFrame(runner, "runner: step after pending room start");
 
         runner->pendingRoom = -1;
     }
+    Runner_bootLogFirstFrame(runner, "runner: step after room transition");
 
+    Runner_bootLogFirstFrame(runner, "runner: step before cleanup");
     Runner_cleanupDestroyedInstances(runner);
+    Runner_bootLogFirstFrame(runner, "runner: step after cleanup");
 
     runner->frameCount++;
 }
