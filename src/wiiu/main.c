@@ -20,6 +20,7 @@
 #include <padscore/kpad.h>
 #include <padscore/wpad.h>
 #include <vpad/input.h>
+#include <sysapp/launch.h>
 #include <whb/gfx.h>
 #include <whb/proc.h>
 #include <whb/sdcard.h>
@@ -33,6 +34,10 @@
 #include <unistd.h>
 
 static int gBootLogFd = -1;
+static bool gLaunchHomeMenuOnExit = false;
+static bool gRelaunchTitleOnExit = false;
+static int gMainArgc = 0;
+static char** gMainArgv = NULL;
 
 typedef struct {
     float progress;
@@ -52,20 +57,16 @@ static const WiiUKeyMap WIIU_KEY_MAPS[] = {
     { VPAD_BUTTON_A, 'Z' },
     { VPAD_BUTTON_B, 'X' },
     { VPAD_BUTTON_X, 'C' },
-    { VPAD_BUTTON_Y, VK_ESCAPE },
+    { VPAD_BUTTON_Y, 'C' },
     { VPAD_BUTTON_PLUS, VK_ENTER },
-    { VPAD_BUTTON_MINUS, VK_BACKSPACE },
+    { VPAD_BUTTON_MINUS, VK_ESCAPE },
     { VPAD_BUTTON_L, VK_PAGEDOWN },
     { VPAD_BUTTON_R, VK_PAGEUP },
     { VPAD_BUTTON_ZL, VK_SHIFT },
-    { VPAD_BUTTON_ZR, VK_CONTROL },
 };
 
 static void bootLog(const char* message) {
     if (gBootLogFd < 0 || message == NULL) return;
-
-    if (strncmp(message, "runner:", 7) == 0) return;
-    if (strncmp(message, "vm:", 3) == 0) return;
 
     write(gBootLogFd, message, strlen(message));
     write(gBootLogFd, "\n", 1);
@@ -138,10 +139,28 @@ static int32_t clampRenderDimension(int32_t value, int32_t fallback, int32_t max
     return value;
 }
 
+static double getTargetFrameMs(const Runner* runner) {
+    if (runner != NULL && runner->currentRoom != NULL && runner->currentRoom->speed > 0) {
+        return 1000.0 / (double) runner->currentRoom->speed;
+    }
+    return 1000.0 / 30.0;
+}
+
 static double elapsedMs(const struct timespec* start, const struct timespec* end) {
     double seconds = (double) (end->tv_sec - start->tv_sec);
     double nanos = (double) (end->tv_nsec - start->tv_nsec);
     return seconds * 1000.0 + nanos / 1000000.0;
+}
+
+static uint32_t mergeLeftStickDirections(const VPADStatus* status, uint32_t held) {
+    const float threshold = 0.35f;
+    if (status == NULL) return held;
+
+    if (status->leftStick.y >= threshold) held |= VPAD_BUTTON_UP;
+    if (status->leftStick.y <= -threshold) held |= VPAD_BUTTON_DOWN;
+    if (status->leftStick.x <= -threshold) held |= VPAD_BUTTON_LEFT;
+    if (status->leftStick.x >= threshold) held |= VPAD_BUTTON_RIGHT;
+    return held;
 }
 
 static void syncButtonsToKeyboard(RunnerKeyboardState* keyboard, uint32_t held) {
@@ -162,6 +181,15 @@ void DataWin_platformBootLog(const char* message) { bootLog(message); }
 void WiiUFileSystem_platformBootLog(const char* message) { bootLog(message); }
 void WiiUAudio_platformBootLog(const char* message) { bootLog(message); }
 void WiiURenderer_platformBootLog(const char* message) { bootLog(message); }
+void VMBuiltins_platformBootLog(const char* message) { bootLog(message); }
+void VMBuiltins_platformGameEnd(void) {
+    gLaunchHomeMenuOnExit = true;
+    SYSLaunchMenu();
+}
+void VMBuiltins_platformGameRestart(void) {
+    gRelaunchTitleOnExit = true;
+    SYSRelaunchTitle((uint32_t) gMainArgc, gMainArgv);
+}
 
 static void drawLoadingBarToBuffer(GX2ContextState* context, GX2ColorBuffer* buffer, float progress) {
     if (context == NULL || buffer == NULL) return;
@@ -210,8 +238,6 @@ static void drawLoadingBarToBuffer(GX2ContextState* context, GX2ColorBuffer* buf
     GX2SetScissor(0, 0, width, height);
 }
 
-
-
 static void presentStartupFrame(uint8_t r, uint8_t g, uint8_t b) {
     GX2ColorBuffer* tv = WHBGfxGetTVColourBuffer();
     GX2ColorBuffer* drc = WHBGfxGetDRCColourBuffer();
@@ -238,8 +264,6 @@ static void presentStartupFrame(uint8_t r, uint8_t g, uint8_t b) {
     GX2SwapScanBuffers();
     GX2DrawDone();
 }
-
-//supposed to be a loading bar, broken right now and shows solid orange color. will fix later
 
 static void presentLoadingProgress(float progress) {
     GX2ColorBuffer* tv = WHBGfxGetTVColourBuffer();
@@ -285,6 +309,8 @@ static void dataWinProgressCallback(
 }
 
 int main(int argc, char* argv[]) {
+    gMainArgc = argc;
+    gMainArgv = argv;
     WHBProcInit();
     openBootLog();
     bootLog("stage: after WHBProcInit");
@@ -392,7 +418,7 @@ int main(int argc, char* argv[]) {
     double perfVmMs = 0.0;
     double perfRenderMs = 0.0;
 
-    while (WHBProcIsRunning() && !runner->shouldExit) {
+    while (WHBProcIsRunning() && (!runner->shouldExit || gLaunchHomeMenuOnExit || gRelaunchTitleOnExit)) {
         struct timespec frameStartTime;
         clock_gettime(CLOCK_MONOTONIC, &frameStartTime);
         RunnerKeyboard_beginFrame(runner->keyboard);
@@ -401,7 +427,12 @@ int main(int argc, char* argv[]) {
         VPADReadError error;
         memset(&vpadStatus, 0, sizeof(vpadStatus));
         if (VPADRead(VPAD_CHAN_0, &vpadStatus, 1, &error) > 0 && error == VPAD_READ_SUCCESS) {
-            syncButtonsToKeyboard(runner->keyboard, vpadStatus.hold);
+            syncButtonsToKeyboard(runner->keyboard, mergeLeftStickDirections(&vpadStatus, vpadStatus.hold));
+        }
+
+        if (gLaunchHomeMenuOnExit || gRelaunchTitleOnExit) {
+            usleep(1000);
+            continue;
         }
 
         struct timespec vmStart;
@@ -410,6 +441,11 @@ int main(int argc, char* argv[]) {
         Runner_step(runner);
         clock_gettime(CLOCK_MONOTONIC, &vmEnd);
         perfVmMs += elapsedMs(&vmStart, &vmEnd);
+
+        if (gLaunchHomeMenuOnExit || gRelaunchTitleOnExit) {
+            usleep(1000);
+            continue;
+        }
 
         float deltaTime = (float) (frameStartTime.tv_sec - lastFrameTime.tv_sec);
         deltaTime += (float) (frameStartTime.tv_nsec - lastFrameTime.tv_nsec) / 1000000000.0f;
@@ -526,8 +562,9 @@ int main(int argc, char* argv[]) {
         struct timespec frameEndTime;
         clock_gettime(CLOCK_MONOTONIC, &frameEndTime);
         double frameElapsedMs = elapsedMs(&frameStartTime, &frameEndTime);
-        if (frameElapsedMs < 33.333) {
-            useconds_t remainingUs = (useconds_t) ((33.333 - frameElapsedMs) * 1000.0);
+        double targetFrameMs = getTargetFrameMs(runner);
+        if (frameElapsedMs < targetFrameMs) {
+            useconds_t remainingUs = (useconds_t) ((targetFrameMs - frameElapsedMs) * 1000.0);
             if (remainingUs > 0) {
                 usleep(remainingUs);
             }

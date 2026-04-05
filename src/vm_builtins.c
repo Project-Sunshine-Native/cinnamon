@@ -18,6 +18,7 @@
 
 #define MAX_VIEWS 8
 #define MAX_BACKGROUNDS 8
+#define MAX_SURFACES 64
 
 // ===[ BUILTIN FUNCTION REGISTRY ]===
 typedef struct {
@@ -27,6 +28,54 @@ typedef struct {
 
 static bool initialized = false;
 static BuiltinEntry* builtinMap = nullptr;
+
+__attribute__((weak)) void VMBuiltins_platformBootLog([[maybe_unused]] const char* message) {
+}
+
+static void VMBuiltins_bootLog(const char* message) {
+    VMBuiltins_platformBootLog(message);
+}
+
+typedef struct {
+    bool exists;
+    int32_t width;
+    int32_t height;
+} VmSurface;
+
+static VmSurface gSurfaces[MAX_SURFACES];
+static int32_t gCurrentSurfaceTarget = -1;
+static bool gApplicationSurfaceEnabled = true;
+static bool gApplicationSurfaceDrawEnabled = true;
+
+static int32_t VMBuiltins_findFreeSurfaceSlot(void) {
+    repeat(MAX_SURFACES, i) {
+        if (!gSurfaces[i].exists) return (int32_t) i;
+    }
+    return -1;
+}
+
+static bool VMBuiltins_surfaceExists(int32_t surfaceId) {
+    if (surfaceId == -1) return gApplicationSurfaceEnabled;
+    return surfaceId >= 0 && surfaceId < MAX_SURFACES && gSurfaces[surfaceId].exists;
+}
+
+static bool VMBuiltins_shouldSynthesizeFloweyMarker(FileSystem* fs, const char* path) {
+    if (fs == NULL || path == NULL) return false;
+    if (strcmp(path, "system_information_962") != 0 && strcmp(path, "system_information_963") != 0) {
+        return false;
+    }
+
+    char* iniText = fs->vtable->readFileText(fs, "undertale.ini");
+    if (iniText == NULL) return false;
+
+    bool synthesize =
+        strstr(iniText, "Alter=\"1.000000\"") != NULL ||
+        strstr(iniText, "alter2=\"1.000000\"") != NULL ||
+        strstr(iniText, "reset=\"1.000000\"") != NULL;
+
+    free(iniText);
+    return synthesize;
+}
 
 static void registerBuiltin(const char* name, BuiltinFunc func) {
     requireMessage(shgeti(builtinMap, name) == -1, "Trying to register an already registered builtin function!");
@@ -1237,6 +1286,27 @@ static RValue builtinScriptExecute(VMContext* ctx, RValue* args, int32_t argCoun
         return RValue_makeUndefined();
     }
 
+    if (
+        ctx->currentCodeName != NULL &&
+        (
+            strncmp(ctx->currentCodeName, "gml_Object_obj_screen_", 22) == 0 ||
+            strncmp(ctx->currentCodeName, "gml_Object_obj_time_", 20) == 0 ||
+            strncmp(ctx->currentCodeName, "gml_Object_obj_f_gamestart_", 27) == 0
+        )
+    ) {
+        char logBuffer[256];
+        snprintf(
+            logBuffer,
+            sizeof(logBuffer),
+            "wiiu_vm: script_execute caller=%s script=%d codeId=%d code=%s",
+            ctx->currentCodeName,
+            scriptIdx,
+            codeId,
+            ctx->dataWin->code.entries[codeId].name
+        );
+        VMBuiltins_bootLog(logBuffer);
+    }
+
     // Pass remaining args (skip the script index)
     RValue* scriptArgs = (argCount > 1) ? &args[1] : nullptr;
     int32_t scriptArgCount = argCount - 1;
@@ -1473,13 +1543,64 @@ static RValue builtinArrayLengthId([[maybe_unused]] VMContext* ctx, [[maybe_unus
         return RValue_makeUndefined(); \
     }
 
-// Steam stubs
-STUB_RETURN_ZERO(steam_initialised)
-STUB_RETURN_ZERO(steam_stats_ready)
-STUB_RETURN_ZERO(steam_file_exists)
-STUB_RETURN_UNDEFINED(steam_file_write)
-STUB_RETURN_UNDEFINED(steam_file_read)
-STUB_RETURN_ZERO(steam_get_persona_name)
+// Steam compatibility
+static RValue builtin_steam_initialised([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    VMBuiltins_bootLog("wiiu_vm: steam_initialised=true");
+    return RValue_makeBool(true);
+}
+
+static RValue builtin_steam_stats_ready([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    VMBuiltins_bootLog("wiiu_vm: steam_stats_ready=true");
+    return RValue_makeBool(true);
+}
+
+static RValue builtin_steam_file_exists(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (argCount < 1) return RValue_makeBool(false);
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    char logBuffer[256];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: steam_file_exists path=%s", path);
+    VMBuiltins_bootLog(logBuffer);
+    bool exists = fs->vtable->fileExists(fs, path);
+    if (!exists && VMBuiltins_shouldSynthesizeFloweyMarker(fs, path)) {
+        VMBuiltins_bootLog("wiiu_vm: synthesizing Flowey marker");
+        exists = fs->vtable->writeFileText(fs, path, "");
+    }
+    return RValue_makeBool(exists);
+}
+
+static RValue builtin_steam_file_write(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (argCount < 2) return RValue_makeBool(false);
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    char* contents = RValue_toString(args[1]);
+    char logBuffer[256];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: steam_file_write path=%s bytes=%zu", path, strlen(contents));
+    VMBuiltins_bootLog(logBuffer);
+    bool ok = fs->vtable->writeFileText(fs, path, contents);
+    free(contents);
+    return RValue_makeBool(ok);
+}
+
+static RValue builtin_steam_file_read(VMContext* ctx, RValue* args, int32_t argCount) {
+    if (argCount < 1) return RValue_makeOwnedString(safeStrdup(""));
+    Runner* runner = (Runner*) ctx->runner;
+    FileSystem* fs = runner->fileSystem;
+    const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    char logBuffer[256];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: steam_file_read path=%s", path);
+    VMBuiltins_bootLog(logBuffer);
+    char* contents = fs->vtable->readFileText(fs, path);
+    if (contents == nullptr) contents = safeStrdup("");
+    return RValue_makeOwnedString(contents);
+}
+
+static RValue builtin_steam_get_persona_name([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    VMBuiltins_bootLog("wiiu_vm: steam_get_persona_name=Cinnamon");
+    return RValue_makeOwnedString(safeStrdup("Cinnamon"));
+}
 
 // ===[ Audio Built-in Functions ]===
 
@@ -1681,9 +1802,21 @@ static RValue builtin_audioSoundSetTrackPosition(VMContext* ctx, RValue* args, [
     return RValue_makeUndefined();
 }
 
-// Application surface stubs
-STUB_RETURN_UNDEFINED(application_surface_enable)
-STUB_RETURN_UNDEFINED(application_surface_draw_enable)
+static RValue builtin_application_surface_enable([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    gApplicationSurfaceEnabled = argCount > 0 ? RValue_toBool(args[0]) : true;
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: application_surface_enable=%d", gApplicationSurfaceEnabled ? 1 : 0);
+    VMBuiltins_bootLog(logBuffer);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_application_surface_draw_enable([[maybe_unused]] VMContext* ctx, RValue* args, int32_t argCount) {
+    gApplicationSurfaceDrawEnabled = argCount > 0 ? RValue_toBool(args[0]) : true;
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: application_surface_draw_enable=%d", gApplicationSurfaceDrawEnabled ? 1 : 0);
+    VMBuiltins_bootLog(logBuffer);
+    return RValue_makeUndefined();
+}
 
 // Gamepad stubs
 STUB_RETURN_ZERO(gamepad_get_device_count)
@@ -1720,6 +1853,9 @@ static RValue builtinIniOpen(VMContext* ctx, RValue* args, int32_t argCount) {
     if (1 > argCount) return RValue_makeUndefined();
 
     const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
+    char logBuffer[256];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: ini_open path=%s", path);
+    VMBuiltins_bootLog(logBuffer);
 
     // If the same file is already open, do nothing
     if (currentIni != nullptr && currentIniPath != nullptr && strcmp(currentIniPath, path) == 0) {
@@ -1890,6 +2026,9 @@ static RValue builtinFileTextOpenRead(VMContext* ctx, RValue* args, int32_t argC
     const char* path = (args[0].type == RVALUE_STRING ? args[0].string : "");
     Runner* runner = (Runner*) ctx->runner;
     FileSystem* fs = runner->fileSystem;
+    char logBuffer[256];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: file_text_open_read path=%s", path);
+    VMBuiltins_bootLog(logBuffer);
 
     int32_t slot = findFreeTextFileSlot();
     if (0 > slot) {
@@ -2163,6 +2302,12 @@ STUB_RETURN_UNDEFINED(window_set_fullscreen)
 STUB_RETURN_UNDEFINED(window_set_caption)
 STUB_RETURN_UNDEFINED(window_set_size)
 STUB_RETURN_UNDEFINED(window_center)
+__attribute__((weak)) void VMBuiltins_platformGameEnd(void) {
+}
+
+__attribute__((weak)) void VMBuiltins_platformGameRestart(void) {
+}
+
 static RValue builtinWindowGetWidth(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
     return RValue_makeReal((double) ctx->dataWin->gen8.defaultWindowWidth);
 }
@@ -2172,10 +2317,18 @@ static RValue builtinWindowGetHeight(VMContext* ctx, [[maybe_unused]] RValue* ar
 }
 
 // Game stubs
-STUB_RETURN_UNDEFINED(game_restart)
+static RValue builtin_game_restart(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    Runner* runner = (Runner*) ctx->runner;
+    VMBuiltins_bootLog("wiiu_vm: game_restart requested");
+    runner->shouldExit = true;
+    VMBuiltins_platformGameRestart();
+    return RValue_makeUndefined();
+}
 static RValue builtinGameEnd(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
+    VMBuiltins_bootLog("wiiu_vm: game_end requested");
     runner->shouldExit = true;
+    VMBuiltins_platformGameEnd();
     return RValue_makeUndefined();
 }
 STUB_RETURN_UNDEFINED(game_save)
@@ -2810,8 +2963,34 @@ static RValue builtin_drawTextTransformed(VMContext* ctx, RValue* args, [[maybe_
 }
 STUB_RETURN_UNDEFINED(draw_text_ext)
 STUB_RETURN_UNDEFINED(draw_text_ext_transformed)
-STUB_RETURN_UNDEFINED(draw_surface)
-STUB_RETURN_UNDEFINED(draw_surface_ext)
+static RValue builtin_draw_surface(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    if (surfaceId == -1) {
+        // Application surface already effectively renders directly on Wii U.
+        return RValue_makeUndefined();
+    }
+
+    if (!VMBuiltins_surfaceExists(surfaceId)) return RValue_makeUndefined();
+
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: draw_surface sid=%d", surfaceId);
+    VMBuiltins_bootLog(logBuffer);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_draw_surface_ext(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    if (surfaceId == -1) {
+        return RValue_makeUndefined();
+    }
+
+    if (!VMBuiltins_surfaceExists(surfaceId)) return RValue_makeUndefined();
+
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: draw_surface_ext sid=%d", surfaceId);
+    VMBuiltins_bootLog(logBuffer);
+    return RValue_makeUndefined();
+}
 static RValue builtin_drawBackground(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
     if (runner->renderer == nullptr || 3 > argCount) return RValue_makeUndefined();
@@ -3016,19 +3195,65 @@ static RValue builtinMergeColor([[maybe_unused]] VMContext* ctx, RValue* args, [
     return RValue_makeReal((double) (((b << 16) & 0xFF0000) | ((g << 8) & 0xFF00) | (r & 0xFF)));
 }
 
-// Surface stubs
-STUB_RETURN_ZERO(surface_create)
-STUB_RETURN_UNDEFINED(surface_free)
-STUB_RETURN_UNDEFINED(surface_set_target)
-STUB_RETURN_UNDEFINED(surface_reset_target)
-STUB_RETURN_ZERO(surface_exists)
+// Minimal surface support for scripted application-surface flows.
+static RValue builtin_surface_create(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t width = RValue_toInt32(args[0]);
+    int32_t height = RValue_toInt32(args[1]);
+    int32_t slot = VMBuiltins_findFreeSurfaceSlot();
+    if (slot < 0) return RValue_makeReal(-1.0);
+
+    if (width <= 0) width = ctx->dataWin->gen8.defaultWindowWidth;
+    if (height <= 0) height = ctx->dataWin->gen8.defaultWindowHeight;
+    gSurfaces[slot] = (VmSurface) {
+        .exists = true,
+        .width = width,
+        .height = height,
+    };
+
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: surface_create sid=%d %dx%d", slot, width, height);
+    VMBuiltins_bootLog(logBuffer);
+    return RValue_makeReal((double) slot);
+}
+
+static RValue builtin_surface_free([[maybe_unused]] VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    if (surfaceId >= 0 && surfaceId < MAX_SURFACES) {
+        gSurfaces[surfaceId] = (VmSurface) {0};
+        if (gCurrentSurfaceTarget == surfaceId) gCurrentSurfaceTarget = -1;
+    }
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_surface_set_target([[maybe_unused]] VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    if (!VMBuiltins_surfaceExists(surfaceId)) return RValue_makeUndefined();
+    gCurrentSurfaceTarget = surfaceId;
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: surface_set_target sid=%d", surfaceId);
+    VMBuiltins_bootLog(logBuffer);
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_surface_reset_target([[maybe_unused]] VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+    gCurrentSurfaceTarget = -1;
+    VMBuiltins_bootLog("wiiu_vm: surface_reset_target");
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_surface_exists([[maybe_unused]] VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    return RValue_makeBool(VMBuiltins_surfaceExists(surfaceId));
+}
 // application_surface is surface ID -1 (sentinel); for it, return the window dimensions
 static RValue builtinSurfaceGetWidth(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     int32_t surfaceId = (int32_t) RValue_toReal(args[0]);
     if (surfaceId == -1) {
         return RValue_makeReal((double) ctx->dataWin->gen8.defaultWindowWidth);
     }
-    logStubbedFunction(ctx, "surface_get_width");
+    if (VMBuiltins_surfaceExists(surfaceId)) {
+        return RValue_makeReal((double) gSurfaces[surfaceId].width);
+    }
     return RValue_makeReal(0.0);
 }
 
@@ -3037,7 +3262,9 @@ static RValue builtinSurfaceGetHeight(VMContext* ctx, RValue* args, [[maybe_unus
     if (surfaceId == -1) {
         return RValue_makeReal((double) ctx->dataWin->gen8.defaultWindowHeight);
     }
-    logStubbedFunction(ctx, "surface_get_height");
+    if (VMBuiltins_surfaceExists(surfaceId)) {
+        return RValue_makeReal((double) gSurfaces[surfaceId].height);
+    }
     return RValue_makeReal(0.0);
 }
 

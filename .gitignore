@@ -29,3 +29,5 @@
 # Build directories
 build-n3ds/
 .vscode/
+build-wiiu/.map
+build-wiiu/cinnamon.lst

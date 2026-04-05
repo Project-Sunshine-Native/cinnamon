@@ -1280,11 +1280,13 @@ static void parseAUDO(BinaryReader* reader, DataWin* dw) {
 
     if (count == 0) { safeFree(ptrs); a->entries = NULL; return; }
 
-    a->entries = safeMalloc(count * sizeof(AudioEntry));
+    a->entries = safeCalloc(count, sizeof(AudioEntry));
     repeat(count, i) {
         BinaryReader_seek(reader, ptrs[i]);
         a->entries[i].dataSize = BinaryReader_readUint32(reader);
         a->entries[i].dataOffset = (uint32_t)BinaryReader_getPosition(reader);
+        a->entries[i].data = NULL;
+        a->entries[i].loaded = false;
         // Load audio data into owned buffer
         /*
         if (a->entries[i].dataSize > 0) {
@@ -1720,4 +1722,3 @@ int32_t DataWin_resolveTPAG(DataWin* dw, uint32_t offset) {
     if (0 > idx) return -1;
     return dw->tpagOffsetMap[idx].value;
 }
-
