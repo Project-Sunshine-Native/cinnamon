@@ -27,7 +27,23 @@
 *.lib
 
 # Build directories
+<<<<<<< HEAD
 build-n3ds/
 .vscode/
 build-wiiu/.map
 build-wiiu/cinnamon.lst
+=======
+build-n3ds/**
+build/**
+gfx/**
+romfs/gfx/**
+romfs/audio/**
+sfx/**
+.vscode/**
+output/**
+build-n3ds-profile/**
+venv/**
+crash_dump_*.dmp
+crash_dump_*.dmp
+output/cinnamon.3dsx
+>>>>>>> 318c09a12fa285796319b38390def1947681b82f

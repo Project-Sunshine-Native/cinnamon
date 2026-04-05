@@ -1,0 +1,17 @@
+--- tmp_compare/CDrawText_8ef4fe08.c	2026-03-29 15:46:33.670483678 -0400
++++ tmp_compare/CDrawText_current_now.c	2026-03-29 15:50:44.508292678 -0400
+@@ -77,13 +77,12 @@
+                 float srcY = (float)(tpag->sourceY + glyph->sourceY);
+                 float srcW = (float)glyph->sourceWidth;
+                 float srcH = (float)glyph->sourceHeight;
+-
+                 drawRegion(C, pageIdx, srcX, srcY, srcW, srcH,
+                         dstX, dstY, dstW, dstH, 0.0f,
+                         C2D_Color32(BGR_R(renderer->drawColor), BGR_G(renderer->drawColor),
+                                     BGR_B(renderer->drawColor),
+                                     (uint8_t)(renderer->drawAlpha * 255.0f)),
+-                        1.0f); // blend=1: replace glyph pixels with drawColor
++                    1.0f);
+             }
+ 
+             cursorX += (float)glyph->shift;

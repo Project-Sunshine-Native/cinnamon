@@ -305,8 +305,11 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
         if (bg->stretch) {
             // Stretch to fill room dimensions
             TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
-            float xscale = roomW / (float) tpag->boundingWidth;
-            float yscale = roomH / (float) tpag->boundingHeight;
+            float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
+            float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
+            if (baseW <= 0.0f || baseH <= 0.0f) continue;
+            float xscale = roomW / baseW;
+            float yscale = roomH / baseH;
             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, bg->alpha);
         } else if (bg->tileX || bg->tileY) {
             Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, visibleX, visibleY, visibleW, visibleH, bg->alpha);
@@ -510,6 +513,12 @@ void Runner_draw(Runner* runner) {
             if (codeId >= 0) {
                 Runner_executeEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL);
             } else if (runner->renderer != nullptr) {
+                if (runner->drawSpriteDecimationEnabled && inst->spriteIndex >= 0) {
+                    uint8_t spriteHalf = (uint8_t)(inst->instanceId & 1u);
+                    if (spriteHalf != runner->drawSpriteDecimationPhase) {
+                        continue;
+                    }
+                }
                 Renderer_drawSelf(runner->renderer, inst);
             }
         }
@@ -754,6 +763,40 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+<<<<<<< HEAD
+=======
+
+    // -----------------------------------------------------------------
+    // TEXTURE PRELOAD: load all textures referenced by sprites of the
+    // instances that are now active in this room.
+    // -----------------------------------------------------------------    
+    if (dataWin->txtr.count > 0) {
+#if defined(__3DS__)
+        // 3DS renderer now prefers romfs sprite/background sheets and only
+        // falls back to TPAG pages lazily when needed. Eager room-time page
+        // preloading here causes noisy logs and unnecessary cache churn.
+#else
+        for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
+            Instance* inst = runner->instances[i];
+            if (!inst->active || inst->spriteIndex < 0) continue;
+
+            Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
+            for (uint32_t t = 0; t < spr->textureCount; ++t) {
+                uint32_t tpagOffset = spr->textureOffsets[t];
+                int32_t tpagIndex = DataWin_resolveTPAG(dataWin, tpagOffset);
+                if (tpagIndex < 0) continue;
+
+                TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
+                uint32_t texPageIdx = (uint32_t)tpagItem->texturePageId;
+                if (texPageIdx >= dataWin->txtr.count) continue;
+
+                DataWin_loadTexture(dataWin, texPageIdx);
+                dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
+            }
+        }
+#endif
+    }
+>>>>>>> 318c09a12fa285796319b38390def1947681b82f
 }
 
 // ===[ Public API ]===

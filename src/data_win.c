@@ -1705,9 +1705,6 @@ void DataWin_free(DataWin* dw) {
     safeFree(dw->txtrLastUsed);
     safeFree(dw->audoLastUsed);
 
-    // stb_ds hashmap (built during TPAG parsing)
-    hmfree(dw->tpagOffsetMap);
-
     if (dw->file) {
         fclose(dw->file);
     }

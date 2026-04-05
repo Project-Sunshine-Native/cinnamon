@@ -1,0 +1,587 @@
+diff --git a/src/profiler.c b/src/profiler.c
+index 0d10b088..52dda2cc 100644
+--- a/src/profiler.c
++++ b/src/profiler.c
+@@ -39,6 +39,10 @@ typedef struct {
+ 
+ static ProfileState gProfile;
+ 
++enum {
++    CINNAMON_PROFILE_SPIKE_LOG_EVERY_FRAMES = 10,
++};
++
+ static double profilerNowMs(void) {
+ #if defined(__3DS__)
+     return (double) osGetTime();
+@@ -57,6 +61,10 @@ static void resetFrameSections(void) {
+     }
+ }
+ 
++static bool shouldEmitSpikeLog(uint64_t frameIndex) {
++    return (frameIndex % CINNAMON_PROFILE_SPIKE_LOG_EVERY_FRAMES) == 0;
++}
++
+ static void ensureInitialized(void) {
+     if (gProfile.initialized) return;
+ 
+@@ -121,6 +129,7 @@ void CinnamonProfiler_endSection(CinnamonProfileSection section) {
+ 
+ static void printSpikeIfNeeded(void) {
+     if (gProfile.frameDurationMs < gProfile.spikeFrameMs) return;
++    if (!shouldEmitSpikeLog(gProfile.frameIndex)) return;
+ 
+     fprintf(stderr,
+             "Profiler: frame=%llu spike=%.2fms",
+diff --git a/src/renderer.h b/src/renderer.h
+index 7569b79d..aa0220ac 100644
+--- a/src/renderer.h
++++ b/src/renderer.h
+@@ -219,8 +219,8 @@ static void Renderer_drawBackgroundTiled(Renderer* renderer, int32_t tpagIndex,
+     if (0 > tpagIndex || (uint32_t) tpagIndex >= dw->tpag.count) return;
+ 
+     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
+-    float bgW = (float) tpag->boundingWidth;
+-    float bgH = (float) tpag->boundingHeight;
++    float bgW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
++    float bgH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
+     if (0 >= bgW || 0 >= bgH) return;
+ 
+     // Compute start/end for each axis
+diff --git a/src/runner.c b/src/runner.c
+index 959091ee..f0d9c8c5 100644
+--- a/src/runner.c
++++ b/src/runner.c
+@@ -248,8 +248,11 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
+         if (bg->stretch) {
+             // Stretch to fill room dimensions
+             TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
+-            float xscale = roomW / (float) tpag->boundingWidth;
+-            float yscale = roomH / (float) tpag->boundingHeight;
++            float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
++            float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
++            if (baseW <= 0.0f || baseH <= 0.0f) continue;
++            float xscale = roomW / baseW;
++            float yscale = roomH / baseH;
+             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, bg->alpha);
+         } else if (bg->tileX || bg->tileY) {
+             Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, roomW, roomH, bg->alpha);
+@@ -401,6 +404,12 @@ void Runner_draw(Runner* runner) {
+             if (codeId >= 0) {
+                 Runner_executeEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL);
+             } else if (runner->renderer != nullptr) {
++                if (runner->drawSpriteDecimationEnabled && inst->spriteIndex >= 0) {
++                    uint8_t spriteHalf = (uint8_t)(inst->instanceId & 1u);
++                    if (spriteHalf != runner->drawSpriteDecimationPhase) {
++                        continue;
++                    }
++                }
+                 Renderer_drawSelf(runner->renderer, inst);
+             }
+         }
+diff --git a/src/runner.h b/src/runner.h
+index 5e19cc23..9605cca2 100644
+--- a/src/runner.h
++++ b/src/runner.h
+@@ -104,6 +104,8 @@ typedef struct Runner {
+     float viewAngles[8]; // runtime-only view_angle per view (not stored in data.win)
+     int32_t viewCurrent; // index of the view currently being drawn (for view_current)
+     struct { char* key; int value; }* disabledObjects; // stb_ds string hashmap, nullptr = no filtering
++    bool drawSpriteDecimationEnabled;
++    uint8_t drawSpriteDecimationPhase;
+ } Runner;
+ 
+ const char* Runner_getEventName(int32_t eventType, int32_t eventSubtype);
+diff --git a/src/runner_keyboard.c b/src/runner_keyboard.c
+index f9381a46..33a4899f 100644
+--- a/src/runner_keyboard.c
++++ b/src/runner_keyboard.c
+@@ -14,6 +14,9 @@ RunnerKeyboardState* RunnerKeyboard_create(void) {
+     kb->currentKey = VK_NOKEY;
+ #endif
+     kb->lastKey = VK_NOKEY;
++    for (int32_t i = 0; i < GML_KEY_COUNT; i++) {
++        kb->keyMap[i] = i;
++    }
+     return kb;
+ }
+ 
+@@ -27,6 +30,8 @@ void RunnerKeyboard_beginFrame(RunnerKeyboardState* kb) {
+ }
+ 
+ void RunnerKeyboard_onKeyDown(RunnerKeyboardState* kb, int32_t gmlKeyCode) {
++    if (!isValidKey(gmlKeyCode)) return;
++    gmlKeyCode = kb->keyMap[gmlKeyCode];
+     if (!isValidKey(gmlKeyCode)) return;
+     kb->keyDown[gmlKeyCode] = true;
+     kb->keyPressed[gmlKeyCode] = true;
+@@ -37,6 +42,8 @@ void RunnerKeyboard_onKeyDown(RunnerKeyboardState* kb, int32_t gmlKeyCode) {
+ }
+ 
+ void RunnerKeyboard_onKeyUp(RunnerKeyboardState* kb, int32_t gmlKeyCode) {
++    if (!isValidKey(gmlKeyCode)) return;
++    gmlKeyCode = kb->keyMap[gmlKeyCode];
+     if (!isValidKey(gmlKeyCode)) return;
+     kb->keyDown[gmlKeyCode] = false;
+     kb->keyReleased[gmlKeyCode] = true;
+@@ -140,3 +147,8 @@ void RunnerKeyboard_clear(RunnerKeyboardState* kb, int32_t gmlKeyCode) {
+     }
+ #endif
+ }
++
++void RunnerKeyboard_setMap(RunnerKeyboardState* kb, int32_t fromKey, int32_t toKey) {
++    if (!isValidKey(fromKey) || !isValidKey(toKey)) return;
++    kb->keyMap[fromKey] = toKey;
++}
+diff --git a/src/runner_keyboard.h b/src/runner_keyboard.h
+index c541cd31..d9a9edf4 100644
+--- a/src/runner_keyboard.h
++++ b/src/runner_keyboard.h
+@@ -89,6 +89,7 @@ typedef struct RunnerKeyboardState {
+     int32_t currentKey;              // Current active key (for keyboard_key)
+ #endif
+     int32_t lastKey;                 // Last key pressed (for keyboard_key variable)
++    int32_t keyMap[GML_KEY_COUNT];   // Key remapping table (identity by default)
+ } RunnerKeyboardState;
+ 
+ // Lifecycle
+@@ -113,3 +114,6 @@ void RunnerKeyboard_simulateRelease(RunnerKeyboardState* kb, int32_t gmlKeyCode)
+ 
+ // Clear a specific key's state
+ void RunnerKeyboard_clear(RunnerKeyboardState* kb, int32_t gmlKeyCode);
++
++// Remap fromKey so it fires as toKey (keyboard_set_map)
++void RunnerKeyboard_setMap(RunnerKeyboardState* kb, int32_t fromKey, int32_t toKey);
+diff --git a/src/vm_builtins.c b/src/vm_builtins.c
+index 2b1d2acc..4017cd0e 100644
+--- a/src/vm_builtins.c
++++ b/src/vm_builtins.c
+@@ -1219,6 +1219,58 @@ static RValue builtinVariableGlobalSet(VMContext* ctx, RValue* args, int32_t arg
+     return RValue_makeUndefined();
+ }
+ 
++static RValue builtinVariableInstanceExists(VMContext* ctx, RValue* args, int32_t argCount) {
++    if (2 > argCount || args[1].type != RVALUE_STRING) return RValue_makeBool(false);
++    const char* varName = args[1].string;
++    Runner* runner = (Runner*) ctx->runner;
++
++    // Resolve target instance
++    Instance* inst = nullptr;
++    int32_t id = RValue_toInt32(args[0]);
++    if (id == INSTANCE_SELF) {
++        inst = (Instance*) ctx->currentInstance;
++    } else if (id == INSTANCE_OTHER) {
++        inst = (Instance*) ctx->otherInstance;
++    } else {
++        int32_t instanceCount = (int32_t) arrlen(runner->instances);
++        if (id >= 100000) {
++            // Instance ID
++            repeat(instanceCount, i) {
++                Instance* candidate = runner->instances[i];
++                if (candidate->active && (int32_t) candidate->instanceId == id) {
++                    inst = candidate;
++                    break;
++                }
++            }
++        } else if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
++            // Object index: first active instance of that type
++            repeat(instanceCount, i) {
++                Instance* candidate = runner->instances[i];
++                if (candidate->active && VM_isObjectOrDescendant(ctx->dataWin, candidate->objectIndex, id)) {
++                    inst = candidate;
++                    break;
++                }
++            }
++        }
++    }
++    if (inst == nullptr) return RValue_makeBool(false);
++
++    // Check VARI table for a matching variable name
++    DataWin* dw = ctx->dataWin;
++    repeat(dw->vari.variableCount, i) {
++        Variable* var = &dw->vari.variables[i];
++        if (strcmp(var->name, varName) != 0) continue;
++        if (var->varID == -6) {
++            // Built-in variable: exists on all instances
++            return RValue_makeBool(true);
++        }
++        if (var->instanceType == INSTANCE_SELF && var->varID >= 0) {
++            return RValue_makeBool(hmgeti(inst->selfVars, var->varID) >= 0);
++        }
++    }
++    return RValue_makeBool(false);
++}
++
+ // ===[ SCRIPT EXECUTE ]===
+ 
+ static RValue builtinScriptExecute(VMContext* ctx, RValue* args, int32_t argCount) {
+@@ -1596,6 +1648,25 @@ static RValue builtin_audioStopAll([[maybe_unused]] VMContext* ctx, [[maybe_unus
+     return RValue_makeUndefined();
+ }
+ 
++// Legacy GML sound functions
++static RValue builtin_soundPlay(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    AudioSystem* audio = getAudioSystem(ctx);
++    if (audio == nullptr) return RValue_makeUndefined();
++    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
++    if (soundIndex < 0) return RValue_makeUndefined();
++    audio->vtable->playSound(audio, soundIndex, 0, false);
++    return RValue_makeUndefined();
++}
++
++static RValue builtin_soundStop(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    AudioSystem* audio = getAudioSystem(ctx);
++    if (audio == nullptr) return RValue_makeUndefined();
++    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
++    if (soundIndex < 0) return RValue_makeUndefined();
++    audio->vtable->stopSound(audio, soundIndex);
++    return RValue_makeUndefined();
++}
++
+ static RValue builtin_audioIsPlaying(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+     AudioSystem* audio = getAudioSystem(ctx);
+     if (audio == nullptr) return RValue_makeBool(false);
+@@ -2238,6 +2309,15 @@ static RValue builtinKeyboardClear(VMContext* ctx, RValue* args, int32_t argCoun
+     return RValue_makeUndefined();
+ }
+ 
++static RValue builtinKeyboardSetMap(VMContext* ctx, RValue* args, int32_t argCount) {
++    if (2 > argCount) return RValue_makeUndefined();
++    Runner* runner = (Runner*) ctx->runner;
++    int32_t fromKey = RValue_toInt32(args[0]);
++    int32_t toKey = RValue_toInt32(args[1]);
++    RunnerKeyboard_setMap(runner->keyboard, fromKey, toKey);
++    return RValue_makeUndefined();
++}
++
+ // Joystick stubs
+ STUB_RETURN_ZERO(joystick_exists)
+ STUB_RETURN_ZERO(joystick_xpos)
+@@ -2543,6 +2623,116 @@ static RValue builtinActionSetRelative(VMContext* ctx, [[maybe_unused]] RValue*
+     return RValue_makeUndefined();
+ }
+ 
++static RValue actionResolveNamedVariable(VMContext* ctx, const char* varName) {
++    if (varName == nullptr || varName[0] == '\0') return RValue_makeUndefined();
++
++    DataWin* dw = ctx->dataWin;
++    Instance* inst = (Instance*) ctx->currentInstance;
++
++    repeat(dw->vari.variableCount, i) {
++        Variable* var = &dw->vari.variables[i];
++        if (strcmp(var->name, varName) != 0) continue;
++
++        if (var->varID == -6) {
++            return VMBuiltins_getVariable(ctx, varName, -1);
++        }
++
++        if (var->instanceType == INSTANCE_SELF && inst != nullptr && var->varID >= 0) {
++            return Instance_getSelfVar(inst, var->varID);
++        }
++
++        if (var->instanceType == INSTANCE_GLOBAL && var->varID >= 0 && (uint32_t) var->varID < ctx->globalVarCount) {
++            RValue val = ctx->globalVars[var->varID];
++            val.ownsString = false;
++            return val;
++        }
++    }
++
++    if (strcmp(varName, "true") == 0 || strcmp(varName, "false") == 0 || strcmp(varName, "pi") == 0 || strcmp(varName, "undefined") == 0) {
++        return VMBuiltins_getVariable(ctx, varName, -1);
++    }
++
++    return RValue_makeUndefined();
++}
++
++static bool actionCompareRValues(RValue lhs, RValue rhs, int cmpKind) {
++    if (lhs.type == RVALUE_STRING && rhs.type == RVALUE_STRING) {
++        int cmp = strcmp(lhs.string != nullptr ? lhs.string : "", rhs.string != nullptr ? rhs.string : "");
++        switch (cmpKind) {
++            case CMP_LT:  return cmp < 0;
++            case CMP_LTE: return cmp <= 0;
++            case CMP_EQ:  return cmp == 0;
++            case CMP_NEQ: return cmp != 0;
++            case CMP_GTE: return cmp >= 0;
++            case CMP_GT:  return cmp > 0;
++            default:      return false;
++        }
++    }
++
++    double da = RValue_toReal(lhs);
++    double db = RValue_toReal(rhs);
++    double diff = da - db;
++    int cmp = fabs(diff) <= GML_MATH_EPSILON ? 0 : (diff < 0 ? -1 : 1);
++    switch (cmpKind) {
++        case CMP_LT:  return cmp < 0;
++        case CMP_LTE: return cmp <= 0;
++        case CMP_EQ:  return cmp == 0;
++        case CMP_NEQ: return cmp != 0;
++        case CMP_GTE: return cmp >= 0;
++        case CMP_GT:  return cmp > 0;
++        default:      return false;
++    }
++}
++
++static int actionParseComparisonKind(RValue opArg) {
++    if (opArg.type == RVALUE_STRING) {
++        const char* op = opArg.string != nullptr ? opArg.string : "";
++        if (strcmp(op, "<") == 0) return CMP_LT;
++        if (strcmp(op, "<=") == 0) return CMP_LTE;
++        if (strcmp(op, "=") == 0 || strcmp(op, "==") == 0) return CMP_EQ;
++        if (strcmp(op, "<>") == 0 || strcmp(op, "!=") == 0) return CMP_NEQ;
++        if (strcmp(op, ">=") == 0) return CMP_GTE;
++        if (strcmp(op, ">") == 0) return CMP_GT;
++        if (strcasecmp(op, "lt") == 0) return CMP_LT;
++        if (strcasecmp(op, "lte") == 0 || strcasecmp(op, "le") == 0) return CMP_LTE;
++        if (strcasecmp(op, "eq") == 0) return CMP_EQ;
++        if (strcasecmp(op, "neq") == 0 || strcasecmp(op, "ne") == 0) return CMP_NEQ;
++        if (strcasecmp(op, "gte") == 0 || strcasecmp(op, "ge") == 0) return CMP_GTE;
++        if (strcasecmp(op, "gt") == 0) return CMP_GT;
++        return CMP_EQ;
++    }
++
++    int op = RValue_toInt32(opArg);
++    if (op >= CMP_LT && op <= CMP_GT) return op;
++    switch (op) {
++        case 0: return CMP_EQ;
++        case 1: return CMP_LT;
++        case 2: return CMP_LTE;
++        case 3: return CMP_GT;
++        case 4: return CMP_GTE;
++        case 5: return CMP_NEQ;
++        default:
++            return CMP_EQ;
++    }
++}
++
++static RValue builtinActionIfVariable(VMContext* ctx, RValue* args, int32_t argCount) {
++    if (argCount <= 0) return RValue_makeBool(false);
++
++    char* varName = RValue_toString(args[0]);
++    RValue lhs = actionResolveNamedVariable(ctx, varName);
++    free(varName);
++
++    if (argCount == 1) {
++        bool result = RValue_toBool(lhs);
++        return RValue_makeBool(result);
++    }
++
++    int cmpKind = (argCount >= 3) ? actionParseComparisonKind(args[2]) : CMP_EQ;
++    bool result = actionCompareRValues(lhs, args[1], cmpKind);
++    return RValue_makeBool(result);
++}
++
+ static RValue builtinActionMove(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+     // action_move(direction_string, speed)
+     // Direction string is 9 chars of '0'/'1' encoding a 3x3 direction grid:
+@@ -2829,6 +3019,36 @@ static RValue builtin_drawRectangle(VMContext* ctx, RValue* args, [[maybe_unused
+     return RValue_makeUndefined();
+ }
+ 
++// draw_rectangle_color(x1, y1, x2, y2, c1, c2, c3, c4, outline)
++// The renderer API only supports a flat rectangle color today. For Undertale's
++// UI boxes this is typically enough because all four colors usually match.
++static RValue builtin_drawRectangleColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    Runner* runner = (Runner*) ctx->runner;
++    if (runner->renderer == nullptr || argCount < 9) return RValue_makeUndefined();
++
++    float x1 = (float) RValue_toReal(args[0]);
++    float y1 = (float) RValue_toReal(args[1]);
++    float x2 = (float) RValue_toReal(args[2]);
++    float y2 = (float) RValue_toReal(args[3]);
++    uint32_t c1 = (uint32_t) RValue_toInt32(args[4]);
++    uint32_t c2 = (uint32_t) RValue_toInt32(args[5]);
++    uint32_t c3 = (uint32_t) RValue_toInt32(args[6]);
++    uint32_t c4 = (uint32_t) RValue_toInt32(args[7]);
++    bool outline = RValue_toBool(args[8]);
++
++    // TODO: true 4-corner gradient rectangles. For now, use c1 directly rather
++    // than averaging, which keeps saturated UI borders crisp.
++    (void)c2;
++    (void)c3;
++    (void)c4;
++    runner->renderer->vtable->drawRectangle(runner->renderer, x1, y1, x2, y2, c1, runner->renderer->drawAlpha, outline);
++    return RValue_makeUndefined();
++}
++
++static RValue builtin_drawRectangleColour(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    return builtin_drawRectangleColor(ctx, args, argCount);
++}
++
+ static RValue builtin_drawSetColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+     Runner* runner = (Runner*) ctx->runner;
+     if (runner->renderer != nullptr) {
+@@ -2899,6 +3119,85 @@ static RValue builtin_drawTextTransformed(VMContext* ctx, RValue* args, [[maybe_
+ }
+ STUB_RETURN_UNDEFINED(draw_text_ext)
+ STUB_RETURN_UNDEFINED(draw_text_ext_transformed)
++
++// draw_text_ext_color(x, y, str, sep, w, c1, c2, c3, c4, alpha)
++// We currently ignore sep/w wrapping but preserve color + alpha behavior.
++static RValue builtin_draw_text_ext_color(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    Runner* runner = (Runner*) ctx->runner;
++    if (runner->renderer == nullptr || argCount < 10) return RValue_makeUndefined();
++
++    float x   = (float) RValue_toReal(args[0]);
++    float y   = (float) RValue_toReal(args[1]);
++    char* str = RValue_toString(args[2]);
++    uint32_t c1 = (uint32_t) RValue_toInt32(args[5]);
++    uint32_t c2 = (uint32_t) RValue_toInt32(args[6]);
++    uint32_t c3 = (uint32_t) RValue_toInt32(args[7]);
++    uint32_t c4 = (uint32_t) RValue_toInt32(args[8]);
++    float alpha = (float) RValue_toReal(args[9]);
++
++    // TODO: true 4-corner gradient text tint.
++    // Until then, use c1 directly; averaging can wash saturated text to near-white.
++    (void)c2; (void)c3; (void)c4;
++    uint32_t avgColor = c1;
++
++    uint32_t savedColor = runner->renderer->drawColor;
++    float    savedAlpha = runner->renderer->drawAlpha;
++    runner->renderer->drawColor = avgColor;
++    runner->renderer->drawAlpha = alpha;
++    runner->renderer->vtable->drawText(runner->renderer, str, x, y, 1.0f, 1.0f, 0.0f);
++    runner->renderer->drawColor = savedColor;
++    runner->renderer->drawAlpha = savedAlpha;
++    free(str);
++    return RValue_makeUndefined();
++}
++
++static RValue builtin_draw_text_ext_colour(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    return builtin_draw_text_ext_color(ctx, args, argCount);
++}
++
++// draw_text_color(x, y, str, c1, c2, c3, c4, alpha)
++// GML draws text with four corner colors; we use the average of all four.
++static RValue builtin_drawTextColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
++    Runner* runner = (Runner*) ctx->runner;
++    if (runner->renderer == nullptr || argCount < 8) return RValue_makeUndefined();
++
++    float x   = (float) RValue_toReal(args[0]);
++    float y   = (float) RValue_toReal(args[1]);
++    char* str = RValue_toString(args[2]);
++    uint32_t c1 = (uint32_t) RValue_toInt32(args[3]);
++    uint32_t c2 = (uint32_t) RValue_toInt32(args[4]);
++    uint32_t c3 = (uint32_t) RValue_toInt32(args[5]);
++    uint32_t c4 = (uint32_t) RValue_toInt32(args[6]);
++    float alpha = (float) RValue_toReal(args[7]);
++
++    // TODO: true 4-corner gradient text tint.
++    // Until then, use c1 directly; averaging can wash saturated text to near-white.
++    (void)c2; (void)c3; (void)c4;
++    uint32_t avgColor = c1;
++
++    static int s_dbgDrawTextColorN = 0;
++    if (s_dbgDrawTextColorN < 16) {
++        fprintf(stderr, "[B_DRAW_TEXT_COLOR] c1=%06lx c2=%06lx c3=%06lx c4=%06lx use=%06lx alpha=%.3f\n",
++                (unsigned long)(c1 & 0xFFFFFFu),
++                (unsigned long)(c2 & 0xFFFFFFu),
++                (unsigned long)(c3 & 0xFFFFFFu),
++                (unsigned long)(c4 & 0xFFFFFFu),
++                (unsigned long)(avgColor & 0xFFFFFFu),
++                (double)alpha);
++        s_dbgDrawTextColorN++;
++    }
++
++    uint32_t savedColor = runner->renderer->drawColor;
++    float    savedAlpha = runner->renderer->drawAlpha;
++    runner->renderer->drawColor = avgColor;
++    runner->renderer->drawAlpha = alpha;
++    runner->renderer->vtable->drawText(runner->renderer, str, x, y, 1.0f, 1.0f, 0.0f);
++    runner->renderer->drawColor = savedColor;
++    runner->renderer->drawAlpha = savedAlpha;
++    free(str);
++    return RValue_makeUndefined();
++}
++
+ STUB_RETURN_UNDEFINED(draw_surface)
+ STUB_RETURN_UNDEFINED(draw_surface_ext)
+ static RValue builtin_drawBackground(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+@@ -2950,8 +3249,11 @@ static RValue builtin_drawBackgroundStretched(VMContext* ctx, RValue* args, [[ma
+     if (0 > tpagIndex) return RValue_makeUndefined();
+ 
+     TexturePageItem* tpag = &runner->dataWin->tpag.items[tpagIndex];
+-    float xscale = w / (float) tpag->boundingWidth;
+-    float yscale = h / (float) tpag->boundingHeight;
++    float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
++    float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
++    if (baseW <= 0.0f || baseH <= 0.0f) return RValue_makeUndefined();
++    float xscale = w / baseW;
++    float yscale = h / baseH;
+ 
+     runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, x, y, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, runner->renderer->drawAlpha);
+     return RValue_makeUndefined();
+@@ -2989,7 +3291,8 @@ static RValue builtinBackgroundGetWidth(VMContext* ctx, RValue* args, [[maybe_un
+     int32_t bgIndex = RValue_toInt32(args[0]);
+     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
+     if (0 > tpagIndex) return RValue_makeReal(0.0);
+-    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingWidth);
++    TexturePageItem* tpag = &ctx->dataWin->tpag.items[tpagIndex];
++    return RValue_makeReal((double) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth));
+ }
+ 
+ static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+@@ -2997,7 +3300,8 @@ static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_u
+     int32_t bgIndex = RValue_toInt32(args[0]);
+     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
+     if (0 > tpagIndex) return RValue_makeReal(0.0);
+-    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingHeight);
++    TexturePageItem* tpag = &ctx->dataWin->tpag.items[tpagIndex];
++    return RValue_makeReal((double) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight));
+ }
+ 
+ static RValue builtin_draw_self(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
+@@ -3791,6 +4095,7 @@ void VMBuiltins_registerAll(void) {
+     registerBuiltin("variable_global_exists", builtinVariableGlobalExists);
+     registerBuiltin("variable_global_get", builtinVariableGlobalGet);
+     registerBuiltin("variable_global_set", builtinVariableGlobalSet);
++    registerBuiltin("variable_instance_exists", builtinVariableInstanceExists);
+ 
+     // Script
+     registerBuiltin("script_execute", builtinScriptExecute);
+@@ -3838,6 +4143,8 @@ void VMBuiltins_registerAll(void) {
+     registerBuiltin("audio_sound_pitch", builtin_audioSoundPitch);
+     registerBuiltin("audio_sound_get_gain", builtin_audioSoundGetGain);
+     registerBuiltin("audio_sound_get_pitch", builtin_audioSoundGetPitch);
++    registerBuiltin("sound_play", builtin_soundPlay);
++    registerBuiltin("sound_stop", builtin_soundStop);
+     registerBuiltin("audio_master_gain", builtin_audioMasterGain);
+     registerBuiltin("audio_group_load", builtin_audioGroupLoad);
+     registerBuiltin("audio_group_is_loaded", builtin_audioGroupIsLoaded);
+@@ -3897,6 +4204,7 @@ void VMBuiltins_registerAll(void) {
+     registerBuiltin("keyboard_key_press", builtinKeyboardKeyPress);
+     registerBuiltin("keyboard_key_release", builtinKeyboardKeyRelease);
+     registerBuiltin("keyboard_clear", builtinKeyboardClear);
++    registerBuiltin("keyboard_set_map", builtinKeyboardSetMap);
+ 
+     // Joystick
+     registerBuiltin("joystick_exists", builtin_joystick_exists);
+@@ -3934,6 +4242,7 @@ void VMBuiltins_registerAll(void) {
+     registerBuiltin("action_kill_object", builtinActionKillObject);
+     registerBuiltin("action_create_object", builtinActionCreateObject);
+     registerBuiltin("action_set_relative", builtinActionSetRelative);
++    registerBuiltin("action_if_variable", builtinActionIfVariable);
+     registerBuiltin("action_move", builtinActionMove);
+     registerBuiltin("action_move_to", builtinActionMoveTo);
+     registerBuiltin("action_set_friction", builtinActionSetFriction);
+@@ -3967,6 +4276,8 @@ void VMBuiltins_registerAll(void) {
+     registerBuiltin("draw_sprite_part", builtin_drawSpritePart);
+     registerBuiltin("draw_sprite_part_ext", builtin_drawSpritePartExt);
+     registerBuiltin("draw_rectangle", builtin_drawRectangle);
++    registerBuiltin("draw_rectangle_color", builtin_drawRectangleColor);
++    registerBuiltin("draw_rectangle_colour", builtin_drawRectangleColour);
+     registerBuiltin("draw_set_color", builtin_drawSetColor);
+     registerBuiltin("draw_set_alpha", builtin_drawSetAlpha);
+     registerBuiltin("draw_set_font", builtin_drawSetFont);
+@@ -3974,8 +4285,12 @@ void VMBuiltins_registerAll(void) {
+     registerBuiltin("draw_set_valign", builtin_drawSetValign);
+     registerBuiltin("draw_text", builtin_drawText);
+     registerBuiltin("draw_text_transformed", builtin_drawTextTransformed);
++    registerBuiltin("draw_text_color", builtin_drawTextColor);
++    registerBuiltin("draw_text_colour", builtin_drawTextColor);
+     registerBuiltin("draw_text_ext", builtin_draw_text_ext);
+     registerBuiltin("draw_text_ext_transformed", builtin_draw_text_ext_transformed);
++    registerBuiltin("draw_text_ext_color", builtin_draw_text_ext_color);
++    registerBuiltin("draw_text_ext_colour", builtin_draw_text_ext_colour);
+     registerBuiltin("draw_surface", builtin_draw_surface);
+     registerBuiltin("draw_surface_ext", builtin_draw_surface_ext);
+     registerBuiltin("draw_background", builtin_drawBackground);

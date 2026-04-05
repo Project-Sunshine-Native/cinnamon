@@ -1,0 +1,103 @@
+--- tmp_compare/CDrawText_8ef4fe08.c	2026-03-29 15:46:33.670483678 -0400
++++ tmp_compare/CDrawText_current.c	2026-03-29 15:46:33.659483642 -0400
+@@ -22,6 +22,10 @@
+ 
+     TexturePageItem* tpag = &dw->tpag.items[fontTpagIndex];
+     uint32_t pageIdx = (uint32_t)tpag->texturePageId;
++    uint32_t baseColor = renderer->drawColor;
++
++    // Match sprite tint mode; fonts should follow draw_set_color consistently.
++    C2D_SetTintMode(C2D_TintMult);
+ 
+     // Preprocess GML text (# -> newline, \# -> #)
+     char* processed = TextUtils_preprocessGmlText(text);
+@@ -37,6 +41,13 @@
+     float cursorY  = valignOffset;
+     int32_t lineStart = 0;
+ 
++    float angleRad = -angleDeg * ((float)M_PI / 180.0f);
++    Matrix4f transform;
++    Matrix4f_setTransform2D(&transform, x, y,
++                            xscale * font->scaleX,
++                            yscale * font->scaleY,
++                            angleRad);
++
+     while (lineStart <= textLen) {
+         // Find end of current line
+         int32_t lineEnd = lineStart;
+@@ -61,29 +72,51 @@
+             if (!glyph) continue;
+ 
+             if (glyph->sourceWidth > 0 && glyph->sourceHeight > 0) {
+-                // Screen-space destination rect for this glyph
+-                float glyphX = x + (cursorX + (float)glyph->offset) * xscale * font->scaleX;
+-                float glyphY = y + cursorY * yscale * font->scaleY;
+-                float glyphW = (float)glyph->sourceWidth  * xscale * font->scaleX;
+-                float glyphH = (float)glyph->sourceHeight * yscale * font->scaleY;
+-
+-                float dstX = (glyphX - (float)C->viewX) * C->scaleX + C->offsetX;
+-                float dstY = (glyphY - (float)C->viewY) * C->scaleY + C->offsetY;
+-                float dstW = glyphW * C->scaleX;
+-                float dstH = glyphH * C->scaleY;
++                // transform each glyph quad in world
++                // space, then convert basis vectors to
++                // screen-space size+angle.
++                float localX0 = cursorX + (float)glyph->offset;
++                float localY0 = cursorY;
++                float localX1 = localX0 + (float)glyph->sourceWidth;
++                float localY1 = localY0 + (float)glyph->sourceHeight;
++
++                float w0x, w0y, w1x, w1y, w2x, w2y;
++                Matrix4f_transformPoint(&transform, localX0, localY0, &w0x, &w0y);
++                Matrix4f_transformPoint(&transform, localX1, localY0, &w1x, &w1y);
++                Matrix4f_transformPoint(&transform, localX0, localY1, &w2x, &w2y);
++
++                float s0x = (w0x - (float)C->viewX) * C->scaleX + C->offsetX;
++                float s0y = (w0y - (float)C->viewY) * C->scaleY + C->offsetY;
++                float s1x = (w1x - (float)C->viewX) * C->scaleX + C->offsetX;
++                float s1y = (w1y - (float)C->viewY) * C->scaleY + C->offsetY;
++                float s2x = (w2x - (float)C->viewX) * C->scaleX + C->offsetX;
++                float s2y = (w2y - (float)C->viewY) * C->scaleY + C->offsetY;
++
++                float edgeXx = s1x - s0x;
++                float edgeXy = s1y - s0y;
++                float edgeYx = s2x - s0x;
++                float edgeYy = s2y - s0y;
++
++                float dstX = s0x;
++                float dstY = s0y;
++                float dstW = sqrtf(edgeXx * edgeXx + edgeXy * edgeXy);
++                float dstH = sqrtf(edgeYx * edgeYx + edgeYy * edgeYy);
++                float glyphAngle = atan2f(edgeXy, edgeXx);
+ 
+                 // Source rect within the atlas page: tpag origin + glyph offset
+                 float srcX = (float)(tpag->sourceX + glyph->sourceX);
+                 float srcY = (float)(tpag->sourceY + glyph->sourceY);
+                 float srcW = (float)glyph->sourceWidth;
+                 float srcH = (float)glyph->sourceHeight;
++                u32 tintColor = C2D_Color32(BGR_R(baseColor), BGR_G(baseColor), BGR_B(baseColor),
++                                            (uint8_t)(renderer->drawAlpha * 255.0f));
+ 
++                // Use drawRegion to render glyph with the draw color
++                // Use full tint strength so glyph RGB is actually colorized.
+                 drawRegion(C, pageIdx, srcX, srcY, srcW, srcH,
+-                        dstX, dstY, dstW, dstH, 0.0f,
+-                        C2D_Color32(BGR_R(renderer->drawColor), BGR_G(renderer->drawColor),
+-                                    BGR_B(renderer->drawColor),
+-                                    (uint8_t)(renderer->drawAlpha * 255.0f)),
+-                        1.0f); // blend=1: replace glyph pixels with drawColor
++                        dstX, dstY, dstW, dstH, glyphAngle,
++                    tintColor,
++                    1.0f);
+             }
+ 
+             cursorX += (float)glyph->shift;
+@@ -106,6 +139,8 @@
+     }
+ 
+     free(processed);
++    // Restore default tint mode for sprites
++    C2D_SetTintMode(C2D_TintMult);
+     if (C->lagMode) { C->lagTextTicks += svcGetSystemTick() - _lagTXT0; C->lagTextN++; }
+ }
+ //

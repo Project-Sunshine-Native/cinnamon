@@ -1,0 +1,2321 @@
+#include "n3ds_renderer.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <math.h>
+#include <sys/stat.h>
+
+#include <3ds.h>
+#include <citro2d.h>
+#include <citro3d.h>
+
+#include "utils.h"
+#include "text_utils.h"
+
+// Write errors to both stderr (on-screen console) and stdout (file log).
+#define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); printf(__VA_ARGS__); } while(0)
+
+// Define CINNAMON_DEBUG_LOGGING to re-enable verbose per-draw-call logging.
+// Leave undefined in production - every printf flushes to the SD card via
+// line-buffered stdout and costs several milliseconds, easily dropping from
+// 60 fps to ~15 fps when many sprites are on screen.
+// #define CINNAMON_DEBUG_LOGGING
+
+#ifdef CINNAMON_DEBUG_LOGGING
+#  define DBG_LOG(...) printf(__VA_ARGS__)
+#else
+#  define DBG_LOG(...) ((void)0)
+#endif
+
+// TODO: update this comment, its outdated
+// ===[ Linear-backed lodepng allocator ]===
+//
+// lodepng calls malloc/realloc/free internally.  On 3DS the app heap is only
+// ~4 MB, which is not enough to decode a 1024x2048 atlas (8 MB raw RGBA8).
+// The linear heap has ~30 MB free, so we redirect lodepng there.
+//
+// linearAlloc has no native realloc, so we store the allocation size in an
+// 8-byte header immediately before the data pointer lodepng receives.
+//
+// IMPORTANT: define LODEPNG_NO_COMPILE_ALLOCATORS before including lodepng.h so
+// the header sees our declarations instead of the default malloc/free ones.
+// Add   CFLAGS += -DLODEPNG_NO_COMPILE_ALLOCATORS   to your Makefile, or define
+// it here before the include (whichever your build system supports).
+
+typedef struct { size_t size; uint32_t _pad; } LodePNGAllocHeader;
+
+void* lodepng_malloc(size_t size) {
+    //size_t total = size + sizeof(LodePNGAllocHeader);
+    //LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
+    //if (!hdr) return NULL;
+    //hdr->size = size;
+    //return hdr + 1;
+    return malloc(size);
+}
+
+void lodepng_free(void* ptr);
+
+void* lodepng_realloc(void* ptr, size_t new_size) {
+    //if (!ptr)      return lodepng_malloc(new_size);
+    //if (!new_size) { lodepng_free(ptr); return NULL; }
+    //LodePNGAllocHeader* old_hdr = (LodePNGAllocHeader*)ptr - 1;
+    //size_t old_size = old_hdr->size;
+    //void* new_ptr = lodepng_malloc(new_size);
+    //if (!new_ptr) return NULL;
+    //memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
+    //lodepng_free(ptr);
+    //return new_ptr;
+    return realloc(ptr, new_size);
+}
+
+void lodepng_free(void* ptr) {
+    //if (!ptr) return;
+    //linearFree((LodePNGAllocHeader*)ptr - 1);
+    free(ptr);
+}
+
+#include "lodepng.h"
+
+static void verifyLodepngAllocator(void) {
+    u32 before = linearSpaceFree();
+    void* p = lodepng_malloc(1024 * 1024);
+    u32 after = linearSpaceFree();
+    if (p && before != after)
+        printf("[lodepng] custom allocator OK (linear %ld KB)\n",
+       ((long)before - (long)after) / 1024);
+    else {
+        LOG_ERR("[lodepng] WARNING: custom allocator NOT using linear heap!\n");
+        LOG_ERR("[lodepng] Add -DLODEPNG_NO_COMPILE_ALLOCATORS to the build rule for lodepng.c\n");
+    }
+    if (p) lodepng_free(p);
+}
+
+// ===[ Memory logging ]===
+
+static void logMemory(const char* tag) {
+    printf("[MEM] %-40s linear: %lu KB\n", tag, (unsigned long)(linearSpaceFree() / 1024));
+}
+
+static inline void getActiveTargetSize(const CRenderer3DS* C, float* outW, float* outH) {
+    if (C->viewIndex == 1) {
+        *outW = 320.0f;
+        *outH = 240.0f;
+    } else {
+        *outW = 400.0f;
+        *outH = 240.0f;
+    }
+}
+
+static inline bool isRectOffscreen(const CRenderer3DS* C, float x, float y, float w, float h) {
+    if (w < 0.0f) {
+        x += w;
+        w = -w;
+    }
+    if (h < 0.0f) {
+        y += h;
+        h = -h;
+    }
+
+    float targetW, targetH;
+    getActiveTargetSize(C, &targetW, &targetH);
+
+    return (x >= targetW) || (y >= targetH) || ((x + w) <= 0.0f) || ((y + h) <= 0.0f);
+}
+
+static inline bool isRotatedRectOffscreen(const CRenderer3DS* C, float x, float y, float w, float h, float angleRad) {
+    if (angleRad == 0.0f) return isRectOffscreen(C, x, y, w, h);
+
+    float halfW = fabsf(w) * 0.5f;
+    float halfH = fabsf(h) * 0.5f;
+    float cx = x + halfW;
+    float cy = y + halfH;
+    float radius = sqrtf(halfW * halfW + halfH * halfH);
+
+    float targetW, targetH;
+    getActiveTargetSize(C, &targetW, &targetH);
+
+    return ((cx - radius) >= targetW) || ((cy - radius) >= targetH) ||
+           ((cx + radius) <= 0.0f) || ((cy + radius) <= 0.0f);
+}
+
+static void CFlushQueuedRects(CRenderer3DS* C);
+
+static void CSelectRenderTargetForView(CRenderer3DS* C, uint32_t viewIndex) {
+    int desiredScreen = (viewIndex == 1) ? 1 : 0;
+    bool* cleared = (desiredScreen == 1) ? &C->bottomClearedThisFrame : &C->topClearedThisFrame;
+    C3D_RenderTarget* target = (desiredScreen == 1) ? C->bottom : C->top;
+
+    if (!*cleared) {
+        C2D_TargetClear(target, C->frameClearColor);
+        *cleared = true;
+    }
+
+    if (C->activeScreen != desiredScreen) {
+        C2D_SceneBegin(target);
+        C->activeScreen = (int8_t) desiredScreen;
+    }
+}
+
+static inline bool nearlyEqualF(float a, float b) {
+    return fabsf(a - b) <= 0.01f;
+}
+
+static bool canMergeRectCmd(const RectDrawCmd* a, const RectDrawCmd* b) {
+    // Keep merging conservative so visual order remains unchanged.
+    if (a->outline || b->outline) return false;
+    if (a->color != b->color) return false;
+    if (!nearlyEqualF(a->y1, b->y1) || !nearlyEqualF(a->y2, b->y2)) return false;
+
+    // Merge only when horizontal spans overlap or touch.
+    float leftA = fminf(a->x1, a->x2);
+    float rightA = fmaxf(a->x1, a->x2);
+    float leftB = fminf(b->x1, b->x2);
+    float rightB = fmaxf(b->x1, b->x2);
+
+    return !(rightA < (leftB - 0.01f) || rightB < (leftA - 0.01f));
+}
+
+static void queueRectCmd(CRenderer3DS* C, const RectDrawCmd* cmd) {
+    if (C->rectCmdCount > 0) {
+        RectDrawCmd* last = &C->rectCmds[C->rectCmdCount - 1];
+        if (canMergeRectCmd(last, cmd)) {
+            float left = fminf(fminf(last->x1, last->x2), fminf(cmd->x1, cmd->x2));
+            float right = fmaxf(fmaxf(last->x1, last->x2), fmaxf(cmd->x1, cmd->x2));
+            last->x1 = left;
+            last->x2 = right;
+            C->rectCmdMerged++;
+            return;
+        }
+    }
+
+    if (C->rectCmdCount >= RECT_CMD_BUFFER_MAX) {
+        CFlushQueuedRects(C);
+    }
+
+    C->rectCmds[C->rectCmdCount++] = *cmd;
+}
+
+static void CFlushQueuedRects(CRenderer3DS* C) {
+    if (C->rectCmdCount == 0) return;
+
+    for (uint16_t i = 0; i < C->rectCmdCount; i++) {
+        const RectDrawCmd* cmd = &C->rectCmds[i];
+        if (cmd->outline) {
+            float pw = 1.0f * C->scaleX;
+            float ph = 1.0f * C->scaleY;
+            C2D_DrawLine(cmd->x1, cmd->y1, cmd->color, cmd->x2, cmd->y1, cmd->color, ph, cmd->z);
+            C2D_DrawLine(cmd->x1, cmd->y2, cmd->color, cmd->x2, cmd->y2, cmd->color, ph, cmd->z);
+            C2D_DrawLine(cmd->x1, cmd->y1, cmd->color, cmd->x1, cmd->y2, cmd->color, pw, cmd->z);
+            C2D_DrawLine(cmd->x2, cmd->y1, cmd->color, cmd->x2, cmd->y2, cmd->color, pw, cmd->z);
+        } else {
+            C2D_DrawRectSolid(cmd->x1, cmd->y1, cmd->z,
+                              cmd->x2 - cmd->x1, cmd->y2 - cmd->y1,
+                              cmd->color);
+        }
+    }
+
+    C->rectCmdCount = 0;
+}
+
+// ===[ POT helpers ]===
+
+static uint32_t nextPow2(uint32_t v) {
+    if (v == 0) return 1;
+    v--;
+    v |= v >> 1; v |= v >> 2; v |= v >> 4; v |= v >> 8; v |= v >> 16;
+    return v + 1;
+}
+
+static uint32_t gpuTexDim(uint32_t pixels) {
+    uint32_t p = nextPow2(pixels);
+    if (p < 8) p = 8; // PICA200 hard minimum: textures must be at least 8x8
+    return (p > RENDERER_MAX_TEX_DIM) ? RENDERER_MAX_TEX_DIM : p;
+}
+
+// ===[ Morton (Z-order) swizzle ]===
+//
+// Converts a rectangle from a linear RGBA8 source image into the Morton-order
+// tiled layout the 3DS GPU expects.  The source image is stored top-row-first
+// (standard PNG order); the GPU tile format is Y-flipped, so we read
+// flippedLy = (texH-1)-ly from the source when filling each Morton slot.
+
+static void linearToTile(uint8_t*       dst,
+                          const uint8_t* src,
+                          uint32_t srcX0, uint32_t srcY0,
+                          uint32_t copyW, uint32_t copyH,
+                          uint32_t fullSrcW,
+                          uint32_t texW,  uint32_t texH)
+{
+    for (uint32_t ty = 0; ty < texH; ty += 8) {
+        for (uint32_t tx = 0; tx < texW; tx += 8) {
+            for (uint32_t py = 0; py < 8; py++) {
+                for (uint32_t px = 0; px < 8; px++) {
+                    uint32_t lx = tx + px;
+                    uint32_t ly = ty + py;
+                    // citro2d automatically does this
+                    //uint32_t flippedLy = (texH - 1) - ly;
+
+                    uint32_t m = 0;
+                    for (uint32_t bit = 0; bit < 3; bit++) {
+                        m |= ((px >> bit) & 1u) << (bit * 2);
+                        m |= ((py >> bit) & 1u) << (bit * 2 + 1);
+                    }
+                    uint32_t tileIdx = (ty / 8) * (texW / 8) + (tx / 8);
+                    uint32_t dstOff  = (tileIdx * 64 + m) * 4;
+
+                    if (lx < copyW && ly < copyH) {
+                        uint32_t srcOff = ((srcY0 + ly) * fullSrcW + (srcX0 + lx)) * 4;
+                        uint8_t a = src[srcOff + 3];
+                        dst[dstOff + 3] = a;
+
+                        if (a) {
+                            uint32_t srcOff = ((srcY0 + ly) * fullSrcW + (srcX0 + lx)) * 4;
+                            dst[dstOff + 0] = src[srcOff + 3]; // A
+                            dst[dstOff + 1] = src[srcOff + 2]; // B
+                            dst[dstOff + 2] = src[srcOff + 1]; // G
+                            dst[dstOff + 3] = src[srcOff + 0]; // R
+                        } else {
+                            dst[dstOff + 0] = 0;
+                            dst[dstOff + 1] = 0;
+                            dst[dstOff + 2] = 0;
+                            dst[dstOff + 3] = 0;
+                        }
+                    }
+                    else {
+                        dst[dstOff + 0] = 0; // B
+                        dst[dstOff + 1] = 0; // G
+                        dst[dstOff + 2] = 0; // R
+                        dst[dstOff + 3] = 0; // A (transparent)
+                    }
+                    // else: out-of-bounds texels stay zero (transparent)
+                }
+            }
+        }
+    }
+}
+
+// ===[ Region cache ]===
+//
+// Instead of uploading entire page slabs (up to 2048x2048 = 16 MB of linear
+// RAM), we upload only the exact (srcX, srcY, srcW, srcH) rectangle needed by
+// each draw call.  A 64x64 sprite uses 16 KB instead of a 4-16 MB slab, so
+// many more regions coexist in linear RAM at once.
+//
+// Each TexCachePage holds a flat array of REGION_CACHE_MAX RegionCacheEntry
+// slots; the LRU entry is evicted (C3D_TexDelete) when the array is full.
+//
+// page->pixels holds the decoded PNG pixels for the duration of one frame.
+// Multiple region misses on the same page share one decode.  CEndFrame frees
+// all page->pixels so only the small per-region GPU textures persist.
+//
+// ===[ Required header changes (n3ds_renderer.h) ]===
+//
+// Replace the TexCacheTile / tile-grid fields with:
+//
+//   #define REGION_CACHE_MAX 256
+//
+//   typedef struct {
+//       uint16_t srcX, srcY, srcW, srcH; // cache key (source atlas texels)
+//       uint32_t texW, texH;             // actual POT GPU texture dimensions
+//       C3D_Tex  tex;
+//       bool     loaded;
+//       uint32_t lastUsed;               // frameCounter when last drawn (LRU)
+//   } RegionCacheEntry;
+//
+//   typedef struct {
+//       const uint8_t*   blobData;       // points into DataWin; never owned
+//       size_t           blobSize;
+//       uint32_t         atlasW, atlasH;
+//       bool             loadFailed;     // permanent decode failure; never retry
+//       uint8_t*         pixels;         // non-null during frames with cache misses
+//       uint32_t         lastUsedFrame;
+//       RegionCacheEntry regions[REGION_CACHE_MAX];
+//       uint32_t         regionCount;
+//   } TexCachePage;
+//
+//   typedef struct {
+//       Renderer          base;
+//       TexCachePage*     pageCache;
+//       uint32_t          pageCacheCount;
+//       C3D_RenderTarget* top;
+//       float  scaleX, scaleY, offsetX, offsetY;
+//       int32_t viewX, viewY;
+//       float    zCounter;
+//       uint32_t frameCounter;
+//   } CRenderer3DS;
+
+// ===[ Region cache: lookup ]===
+//
+// Checks the pinned font glyph array first (never evicted), then the sprite
+// LRU pool.  Keeping them separate means font glyphs never consume sprite slots
+// and sprites never crowd out glyphs, regardless of how many fonts share a page.
+
+static RegionCacheEntry* regionLookup(TexCachePage* page,
+                                       uint16_t srcX, uint16_t srcY,
+                                       uint16_t srcW, uint16_t srcH,
+                                       uint32_t frameCounter)
+{
+    // Pinned font glyphs - no LRU update needed, these never expire
+    for (uint32_t i = 0; i < page->pinnedRegionCount; i++) {
+        RegionCacheEntry* e = &page->pinnedRegions[i];
+        if (e->srcX == srcX && e->srcY == srcY &&
+            e->srcW == srcW && e->srcH == srcH)
+            return e;
+    }
+
+    // Sprite LRU pool
+    for (uint32_t i = 0; i < page->regionCount; i++) {
+        RegionCacheEntry* e = &page->regions[i];
+        if (e->srcX == srcX && e->srcY == srcY &&
+            e->srcW == srcW && e->srcH == srcH)
+        {
+            if (e->loaded) e->lastUsed = frameCounter;
+            return e;
+        }
+    }
+    return NULL;
+}
+
+// ===[ Region cache: pinned alloc (font glyphs only) ]===
+//
+// Grows pinnedRegions with realloc.  Called only from preloadFontGlyphs at init.
+
+static RegionCacheEntry* regionAllocPinned(TexCachePage* page,
+                                            uint16_t srcX, uint16_t srcY,
+                                            uint16_t srcW, uint16_t srcH)
+{
+    if (page->pinnedRegionCount >= page->pinnedRegionCapacity) {
+        uint32_t newCap = (page->pinnedRegionCapacity == 0) ? 64 : page->pinnedRegionCapacity * 2;
+        RegionCacheEntry* newArr = realloc(page->pinnedRegions, newCap * sizeof(RegionCacheEntry));
+        if (!newArr) {
+            LOG_ERR("CRenderer3DS: OOM growing pinnedRegions\n");
+            return NULL;
+        }
+        page->pinnedRegions        = newArr;
+        page->pinnedRegionCapacity = newCap;
+    }
+
+    RegionCacheEntry* e = &page->pinnedRegions[page->pinnedRegionCount++];
+    memset(e, 0, sizeof(*e));
+    e->srcX = srcX; e->srcY = srcY;
+    e->srcW = srcW; e->srcH = srcH;
+    return e;
+}
+
+// ===[ Region cache: sprite alloc / LRU eviction ]===
+//
+// Operates only on the sprite regions[] array - pinned font glyphs are never
+// touched here.  The sprite pool is always fully available regardless of how
+// many font glyphs are pinned on the same page.
+
+static RegionCacheEntry* regionAlloc(TexCachePage* page,
+                                      uint16_t srcX, uint16_t srcY,
+                                      uint16_t srcW, uint16_t srcH,
+                                      uint32_t frameCounter)
+{
+    // Prefer an empty slot
+    if (page->regionCount < REGION_CACHE_MAX) {
+        RegionCacheEntry* e = &page->regions[page->regionCount++];
+        memset(e, 0, sizeof(*e));
+        e->srcX = srcX; e->srcY = srcY;
+        e->srcW = srcW; e->srcH = srcH;
+        e->lastUsed = frameCounter;
+        return e;
+    }
+
+    // All slots occupied: evict the least-recently-used entry
+    // (no pinned entries can exist in regions[] - they live in pinnedRegions[])
+    uint32_t oldestIdx = 0;
+    uint32_t oldest    = page->regions[0].lastUsed;
+    for (uint32_t i = 1; i < REGION_CACHE_MAX; i++) {
+        if (page->regions[i].lastUsed < oldest) {
+            oldest    = page->regions[i].lastUsed;
+            oldestIdx = i;
+        }
+    }
+
+    RegionCacheEntry* e = &page->regions[oldestIdx];
+    if (e->loaded) C3D_TexDelete(&e->tex);
+    memset(e, 0, sizeof(*e));
+    e->srcX = srcX; e->srcY = srcY;
+    e->srcW = srcW; e->srcH = srcH;
+    e->lastUsed = frameCounter;
+    return e;
+}
+
+// ===[ Pre-decode eviction ]===
+//
+// GPU region textures (C3D_Tex) live in linear RAM alongside lodepng's decode
+// buffers.  Even when total linearSpaceFree() looks sufficient, interleaved
+// small allocations fragment the heap so lodepng cannot get one large
+// contiguous block.  Before each decode we evict loaded region entries
+// (globally, LRU order) until there is enough headroom.
+//
+// We need: atlasW * atlasH * 4        - lodepng output buffer
+//        + atlasW * atlasH * 4        - lodepng internal pre-filter scratch
+//        + 2 MB                       - huffman tables, zlib window, misc
+// (Total ≈ 2× raw size + 2 MB)
+//
+// After eviction the linear heap has one large free region that lodepng can
+// grab contiguously.  Any evicted regions are re-uploaded from the fresh
+// pixels during the same frame without a second decode.
+
+// C must be passed so we can walk all pages' region caches.
+// pageCache/pageCacheCount are not accessible from TexCachePage alone.
+// We store a module-level pointer set during CInit for this purpose.
+// (Alternatively, thread it through, but this is simpler for a single-threaded renderer.)
+static CRenderer3DS* g_renderer = NULL;
+
+static bool findOldestLoadedRegion(uint32_t skipPageIdx, uint32_t* outPage, uint32_t* outSlot) {
+    uint32_t victimPage = UINT32_MAX;
+    uint32_t victimSlot = UINT32_MAX;
+    uint32_t oldest     = UINT32_MAX;
+    bool found          = false;
+
+    for (uint32_t pi = 0; pi < g_renderer->pageCacheCount; pi++) {
+        if (pi == skipPageIdx) continue;
+
+        TexCachePage* p = &g_renderer->pageCache[pi];
+        for (uint32_t ri = 0; ri < p->regionCount; ri++) {
+            RegionCacheEntry* e = &p->regions[ri];
+            if (!e->loaded) continue;
+
+            if (!found || e->lastUsed < oldest) {
+                oldest     = e->lastUsed;
+                victimPage = pi;
+                victimSlot = ri;
+                found      = true;
+            }
+        }
+    }
+
+    if (!found) return false;
+
+    *outPage = victimPage;
+    *outSlot = victimSlot;
+    return true;
+}
+
+static void evictRegionsForDecode(uint32_t skipPageIdx, size_t bytesNeeded) {
+    if (!g_renderer || bytesNeeded == 0) return;
+
+    while ((size_t)linearSpaceFree() < bytesNeeded) {
+        uint32_t victimPage;
+        uint32_t victimSlot;
+
+        if (!findOldestLoadedRegion(skipPageIdx, &victimPage, &victimSlot)) {
+            printf("[TEX] eviction exhausted; %lu KB free (needed %lu KB)\n",
+                   (unsigned long)(linearSpaceFree() / 1024),
+                   (unsigned long)(bytesNeeded / 1024));
+            return;
+        }
+
+        RegionCacheEntry* e = &g_renderer->pageCache[victimPage].regions[victimSlot];
+
+        C3D_TexDelete(&e->tex);
+        memset(&e->tex, 0, sizeof(e->tex));
+        e->loaded   = false;
+        e->lastUsed  = 0;
+    }
+}
+
+static void regionEvictAllNonPinned(CRenderer3DS* C)
+{
+    for (uint32_t pi = 0; pi < C->pageCacheCount; pi++) {
+        TexCachePage* page = &C->pageCache[pi];
+
+        for (uint32_t r = 0; r < page->regionCount; r++) {
+            if (page->regions[r].loaded)
+                C3D_TexDelete(&page->regions[r].tex);
+        }
+
+        page->regionCount = 0;
+    }
+}
+
+// Use this on OLD 3DS to give the linear heap a chance to recover between evicting and decoding
+static void regionEvictAllNonPinnedOLD3DS(CRenderer3DS* C)
+{
+    bool isNew3DS = false;
+    APT_CheckNew3DS(&isNew3DS);
+
+    if (!isNew3DS)
+        regionEvictAllNonPinned(C);
+}
+
+// ===[ Page decode ]===
+//
+// Decode the page PNG into linear RAM exactly once per frame, storing the
+// result in page->pixels.  Subsequent region misses on the same page reuse
+// the already-decoded pixels without re-decoding.  CEndFrame frees them.
+//
+// Before decoding, evict enough GPU region textures to guarantee a contiguous
+// block for lodepng - otherwise heap fragmentation causes error 83 even when
+// total free bytes appear sufficient.
+
+// ===[ SD pixel cache ]===
+//
+// Decoded RGBA8 pixels are saved to sdmc:/cinnamon/cache/page_N.bin on first
+// decode and loaded from there on subsequent runs, completely bypassing lodepng.
+// PNG decode on the ARM11 @ 268 MHz is the dominant startup cost; a raw file
+// read of the same data is significantly faster.
+//
+// Cache file layout (all little-endian):
+//   [0..3]   magic  "C3CP"
+//   [4..7]   width  (uint32_t)
+//   [8..11]  height (uint32_t)
+//   [12..15] blobSize - used as a simple version tag; if the PNG changes
+//            the blobSize changes and the cache is discarded.
+//   [16..]   raw RGBA8 pixels, width*height*4 bytes
+
+#define PIXEL_CACHE_MAGIC "C3CP"
+#define PIXEL_CACHE_HEADER_SIZE 16
+
+static void buildCachePath(char* out, size_t outLen, uint32_t pageIdx) {
+    snprintf(out, outLen, "sdmc:/cinnamon/cache/page_%lu.bin", pageIdx);
+}
+
+// Returns true if the cache file at `path` is valid for a page with `blobSize`
+// and the expected pixel dimensions `atlasW` x `atlasH`.
+static bool isCacheValid(const char* path, uint32_t blobSize,
+                          uint32_t atlasW, uint32_t atlasH) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+
+    uint8_t hdr[PIXEL_CACHE_HEADER_SIZE];
+    if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) { fclose(f); return false; }
+
+    if (memcmp(hdr, PIXEL_CACHE_MAGIC, 4) != 0) { fclose(f); return false; }
+    uint32_t w        = hdr[4]  | ((uint32_t)hdr[5]  << 8) | ((uint32_t)hdr[6]  << 16) | ((uint32_t)hdr[7]  << 24);
+    uint32_t h        = hdr[8]  | ((uint32_t)hdr[9]  << 8) | ((uint32_t)hdr[10] << 16) | ((uint32_t)hdr[11] << 24);
+    uint32_t cachedBS = hdr[12] | ((uint32_t)hdr[13] << 8) | ((uint32_t)hdr[14] << 16) | ((uint32_t)hdr[15] << 24);
+
+    bool hdrOk = (cachedBS == blobSize) && (w == atlasW) && (h == atlasH);
+    if (!hdrOk) { fclose(f); return false; }
+
+    fseek(f, 0, SEEK_END);
+    long fileSize = ftell(f);
+    fclose(f);
+
+    long expected = (long)PIXEL_CACHE_HEADER_SIZE + (long)w * h * 4;
+    return (fileSize == expected);
+}
+
+// Read a single sprite rectangle directly from the SD pixel cache.
+// Seeks to each row in turn — no full-page buffer needed.
+// outPixels must be caller-allocated: srcW * srcH * 4 bytes.
+static bool readRegionFromSDCache(TexCachePage* page, uint32_t pageIdx,
+                                   uint16_t srcX, uint16_t srcY,
+                                   uint16_t srcW,  uint16_t srcH,
+                                   uint8_t* outPixels)
+{
+    char path[128];
+    buildCachePath(path, sizeof(path), pageIdx);
+
+    DataWin* dw   = g_renderer->base.dataWin;
+    uint32_t blob = dw->txtr.textures[pageIdx].blobSize;
+    if (!isCacheValid(path, blob, page->atlasW, page->atlasH))
+        return false;
+
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+
+    uint32_t rowStride = page->atlasW * 4; // bytes per full atlas row
+    for (uint16_t row = 0; row < srcH; row++) {
+        long off = (long)PIXEL_CACHE_HEADER_SIZE
+                 + (long)(srcY + row) * rowStride
+                 + (long)srcX * 4;
+        if (fseek(f, off, SEEK_SET) != 0)          { fclose(f); return false; }
+        size_t want = (size_t)srcW * 4;
+        if (fread(outPixels + (size_t)row * want, 1, want, f) != want)
+                                                    { fclose(f); return false; }
+    }
+    fclose(f);
+    return true;
+}
+
+static bool loadPageFromSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blobSize) {
+    char path[128];
+    buildCachePath(path, sizeof(path), pageIdx);
+
+    if (!isCacheValid(path, blobSize, page->atlasW, page->atlasH)) return false;
+
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+
+    // Skip past the header
+    if (fseek(f, PIXEL_CACHE_HEADER_SIZE, SEEK_SET) != 0) { fclose(f); return false; }
+
+    size_t pixSize = (size_t)page->atlasW * page->atlasH * 4;
+
+    // Use regular malloc (main heap), NOT lodepng_malloc (linear heap).
+    // Linear heap is limited to ~30 MB on Old 3DS and must stay free for GPU texture uploads.
+    page->pixels = malloc(pixSize);
+    if (!page->pixels) { fclose(f); return false; }
+
+    if (fread(page->pixels, 1, pixSize, f) != pixSize) {
+        free(page->pixels);
+        page->pixels = NULL;
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+
+    printf("CRenderer3DS: page %lu loaded from SD cache (%lux%lu)\n",
+           pageIdx, page->atlasW, page->atlasH);
+    return true;
+}
+
+static void savePageToSDCache(TexCachePage* page, uint32_t pageIdx, uint32_t blobSize, void* pixels) {
+    if (!pixels) return; // Guard against null pointers
+
+    char path[128];
+    buildCachePath(path, sizeof(path), pageIdx);
+
+    FILE* f = fopen(path, "wb");
+    if (!f) {
+        printf("CRenderer3DS: WARNING, could not write cache for page %lu\n", (unsigned long)pageIdx);
+        return;
+    }
+
+    uint32_t w = page->atlasW, h = page->atlasH;
+    uint8_t hdr[PIXEL_CACHE_HEADER_SIZE] = {0}; // Zero-init for safety
+    memcpy(hdr, PIXEL_CACHE_MAGIC, 4);
+    hdr[4]  = (uint8_t)(w);        hdr[5]  = (uint8_t)(w >> 8);
+    hdr[6]  = (uint8_t)(w >> 16);  hdr[7]  = (uint8_t)(w >> 24);
+    hdr[8]  = (uint8_t)(h);        hdr[9]  = (uint8_t)(h >> 8);
+    hdr[10] = (uint8_t)(h >> 16);  hdr[11] = (uint8_t)(h >> 24);
+    hdr[12] = (uint8_t)(blobSize); hdr[13] = (uint8_t)(blobSize >> 8);
+    hdr[14] = (uint8_t)(blobSize >> 16); hdr[15] = (uint8_t)(blobSize >> 24);
+
+    fwrite(hdr, 1, sizeof(hdr), f);
+    // Write directly from the provided pointer (the linear heap)
+    fwrite(pixels, 1, (size_t)w * h * 4, f); 
+    fclose(f);
+
+    printf("CRenderer3DS: page %lu saved to SD cache (%lux%lu, %lu KB)\n",
+           (unsigned long)pageIdx, (unsigned long)w, (unsigned long)h, 
+           (unsigned long)((size_t)w * h * 4 / 1024));
+}
+
+static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
+    if (page->pixels)      return true;
+    if (page->loadFailed)  return false;
+
+    CRenderer3DS* C          = g_renderer;
+    uint32_t      currentFrame = C->frameCounter;
+    DataWin*      dw           = C->base.dataWin;
+    uint32_t      blobSize     = dw->txtr.textures[pageIdx].blobSize;
+
+    // 1. Try the SD card pixel cache (skips lodepng decode entirely)
+    if (loadPageFromSDCache(page, pageIdx, blobSize)) {
+        page->lastDecodeFrame = currentFrame;
+        return true;
+    }
+
+    // 2. Load the PNG blob from data.win and decode with lodepng
+    uint8_t* blobData = DataWin_loadTexture(dw, pageIdx);
+    if (!blobData) {
+        page->loadFailed = true;
+        return false;
+    }
+
+    size_t estimatedPeak = (size_t)page->atlasW * page->atlasH * 4 * 2 + 1024 * 1024;
+    evictRegionsForDecode(pageIdx, estimatedPeak);
+
+    uint8_t* linearPixels = NULL;
+    unsigned w = 0, h = 0;
+    unsigned err = lodepng_decode32(&linearPixels, &w, &h, blobData, blobSize);
+    if (err) {
+        LOG_ERR("CRenderer3DS: lodepng error %u on page %lu - %s\n",
+                err, pageIdx, lodepng_error_text(err));
+        page->loadFailed = true;
+        return false;
+    }
+
+    // Copy decoded pixels from linear heap (lodepng) into regular main heap (malloc).
+    // This immediately frees the linear allocation so subsequent GPU uploads and
+    // further lodepng decodes don't fragment the limited ~30 MB linear pool.
+    size_t pixSize = (size_t)w * h * 4;
+    page->pixels = malloc(pixSize);
+    if (!page->pixels) {
+        lodepng_free(linearPixels);
+        LOG_ERR("CRenderer3DS: malloc failed for %zu KB pixel buf page %lu\n",
+                pixSize / 1024, pageIdx);
+        page->loadFailed = true;
+        return false;
+    }
+    memcpy(page->pixels, linearPixels, pixSize);
+    lodepng_free(linearPixels); // release linear heap immediately
+
+    page->lastDecodeFrame = currentFrame;
+
+    // 3. Save to SD cache for next run (non-fatal if it fails)
+    savePageToSDCache(page, pageIdx, blobSize, page->pixels);
+
+
+    return true;
+}
+
+// ===[ Region upload ]===
+//
+// Extract entry's source rectangle from page->pixels, Morton-swizzle it into
+// a temporary linear buffer, DMA-copy to the GPU texture, then free the
+// swizzle buffer.  page->pixels stays alive until CEndFrame.
+
+static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t pageIdx) {
+    entry->texW = gpuTexDim(entry->srcW);
+    entry->texH = gpuTexDim(entry->srcH);
+
+    if (!C3D_TexInit(&entry->tex,
+                     (uint16_t)entry->texW, (uint16_t)entry->texH,
+                     GPU_RGBA8)) {
+        LOG_ERR("CRenderer3DS: C3D_TexInit failed page %lu region %ux%u @ (%u,%u)\n",
+                (unsigned long)pageIdx,
+                (unsigned)entry->srcW, (unsigned)entry->srcH,
+                (unsigned)entry->srcX, (unsigned)entry->srcY);
+        entry->loadFailed = true;
+        return false;
+    }
+
+    size_t bufSize = (size_t)entry->texW * entry->texH * 4;
+    uint8_t* swizzle = (uint8_t*)linearAlloc(bufSize);
+    if (!swizzle) {
+        LOG_ERR("CRenderer3DS: linearAlloc(%lu KB) failed for swizzle page %lu\n",
+                (unsigned long)(bufSize / 1024), (unsigned long)pageIdx);
+        C3D_TexDelete(&entry->tex);
+        entry->loadFailed = true;
+        return false;
+    }
+    memset(swizzle, 0, bufSize);
+
+    bool ok = false;
+
+    if (page->pixels) {
+        // Full page already in RAM (font preload path or fallback decode).
+        // Use it directly — no extra allocation needed.
+        linearToTile(swizzle,
+                     page->pixels,
+                     entry->srcX, entry->srcY,
+                     entry->srcW, entry->srcH,
+                     page->atlasW,
+                     entry->texW, entry->texH);
+        ok = true;
+    } else {
+        // Hot path during gameplay: read only this sprite's rows from the SD
+        // pixel cache.  Peak allocation is srcW*srcH*4 (e.g. 16 KB for 64x64)
+        // instead of atlasW*atlasH*4 (up to 16 MB for a 2048x2048 page).
+        size_t spriteBytes = (size_t)entry->srcW * entry->srcH * 4;
+        uint8_t* spritePixels = (uint8_t*)malloc(spriteBytes);
+        if (spritePixels) {
+            if (readRegionFromSDCache(page, pageIdx,
+                                      entry->srcX, entry->srcY,
+                                      entry->srcW, entry->srcH,
+                                      spritePixels)) {
+                // spritePixels is a packed srcW×srcH buffer starting at (0,0)
+                linearToTile(swizzle,
+                             spritePixels,
+                             0, 0,
+                             entry->srcW, entry->srcH,
+                             entry->srcW,          // fullSrcW = packed width
+                             entry->texW, entry->texH);
+                ok = true;
+            } else {
+                // Fallback for first-run or stale SD cache: decode once and then
+                // pull this region from page->pixels.
+                if (ensurePageDecoded(page, pageIdx) && page->pixels) {
+                    linearToTile(swizzle,
+                                 page->pixels,
+                                 entry->srcX, entry->srcY,
+                                 entry->srcW, entry->srcH,
+                                 page->atlasW,
+                                 entry->texW, entry->texH);
+                    ok = true;
+                } else {
+                    LOG_ERR("CRenderer3DS: failed to load region page %lu (%u,%u,%u,%u)\n",
+                            (unsigned long)pageIdx,
+                            entry->srcX, entry->srcY, entry->srcW, entry->srcH);
+                }
+            }
+            free(spritePixels);
+        } else {
+            LOG_ERR("CRenderer3DS: malloc failed for sprite pixel buf (%lu KB)\n",
+                    (unsigned long)(spriteBytes / 1024));
+        }
+    }
+
+    if (!ok) {
+        linearFree(swizzle);
+        C3D_TexDelete(&entry->tex);
+        entry->loadFailed = true;
+        return false;
+    }
+
+    memcpy(entry->tex.data, swizzle, bufSize);
+    GSPGPU_FlushDataCache(entry->tex.data, bufSize);
+    linearFree(swizzle);
+
+    C3D_TexSetFilter(&entry->tex, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(&entry->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    entry->loaded = true;
+    return true;
+}
+
+// ===[ Page registration ]===
+//
+// Read only the PNG IHDR (~33 bytes) to record dimensions.  No decode, no GPU
+// work - everything is demand-driven from drawRegion on first use.
+
+// Now passing blobOffset directly instead of the Texture* pointer
+static bool registerPage(DataWin* dw, TexCachePage* page, uint32_t blobOffset, uint32_t pageIdx) {
+    if (blobOffset == 0) {
+        printf("CRenderer3DS: page %lu has no blob (external texture), skipping\n",
+               (unsigned long)pageIdx);
+        page->loadFailed = true;
+        return false;
+    }
+
+    page->blobData      = NULL;
+    page->blobSize      = 0;
+    page->pixels        = NULL;
+    page->loadFailed    = false;
+    page->lastUsedFrame = 0;
+    page->regionCount   = 0;
+    page->decodeTimeout = 120;
+
+    // Force 4-byte alignment on the stack so lodepng doesn't crash on ARM11
+    uint32_t hdr_buf[9];
+    memset(hdr_buf, 0, sizeof(hdr_buf));
+    uint8_t* hdr = (uint8_t*)hdr_buf;
+    
+    if (!dw || !dw->file) {
+        LOG_ERR("CRenderer3DS: page %lu - data.win stream is unavailable\n", (unsigned long)pageIdx);
+        page->loadFailed = true;
+        return false;
+    }
+
+    if (fseek(dw->file, (long)blobOffset, SEEK_SET) != 0 ||
+        fread(hdr, 1, 33, dw->file) != 33) {
+        LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header from data.win\n",
+                (unsigned long)pageIdx);
+        page->loadFailed = true;
+        return false;
+    }
+
+    // Provide a valid LodePNGState to prevent NULL pointer dereferences
+    unsigned w = 0, h = 0;
+    LodePNGState state;
+    lodepng_state_init(&state);
+    unsigned err = lodepng_inspect(&w, &h, &state, hdr, 33);
+    lodepng_state_cleanup(&state);
+    
+    if (err != 0) {
+        LOG_ERR("CRenderer3DS: page %lu - lodepng_inspect failed on IHDR bytes (err %u)\n",
+                (unsigned long)pageIdx, err);
+        page->loadFailed = true;
+        return false;
+    }
+
+    page->atlasW = (uint32_t)w;
+    page->atlasH = (uint32_t)h;
+
+    printf("CRenderer3DS: page %lu registered %ux%u (decode peak ~%lu KB)\n",
+           (unsigned long)pageIdx, w, h,
+           (unsigned long)((size_t)w * h * 4 / 1024));
+    return true;
+}
+
+// ===[ drawRegion ]===
+//
+// Core draw primitive.  Looks up the exact source rectangle as a cached GPU
+// texture, uploading it on first use.  Draws a single C2D_DrawImage call.
+//
+// If the requested region is larger than RENDERER_MAX_TEX_DIM in either
+// dimension it is split along RENDERER_MAX_TEX_DIM boundaries and each chunk
+// is cached and drawn independently.  In practice rotated draws come from
+// sprite frames that are well under RENDERER_MAX_TEX_DIM, so the chunk loop
+// executes exactly once for them.
+
+// TODO: Remove blend, we don't even use it
+// TODO: Make some of this preprocessed on first upload?
+static void drawRegion(CRenderer3DS* C,
+                        uint32_t pageIdx,
+                        float srcX,  float srcY,
+                        float srcW,  float srcH,
+                        float dstX,  float dstY,
+                        float dstW,  float dstH,
+                        float angle, u32 color,
+                        float blend)
+{
+    if (isRotatedRectOffscreen(C, dstX, dstY, dstW, dstH, angle)) return;
+
+    CFlushQueuedRects(C);
+
+    DBG_LOG("drawRegion: Called for page %lu: src=(%.1f,%.1f,%.1f,%.1f) dst=(%.1f,%.1f,%.1f,%.1f)\n",
+            (unsigned long)pageIdx, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
+
+    if (pageIdx >= C->pageCacheCount) {
+        DBG_LOG("drawRegion: ERROR - page index %lu >= cache count %lu\n",
+               (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
+        return;
+    }
+    
+    TexCachePage* page = &C->pageCache[pageIdx];
+    if (page->loadFailed) {
+        DBG_LOG("drawRegion: ERROR - page %lu marked as loadFailed\n", (unsigned long)pageIdx);
+        return;
+    }
+
+    page->lastUsedFrame = C->frameCounter;
+
+    // Clamp source rect to atlas bounds
+    if (srcX < 0.0f) { 
+        float d = -srcX * dstW / srcW; 
+        dstX += d; dstW -= d; 
+        srcW += srcX; 
+        srcX = 0.0f; 
+    }
+    if (srcY < 0.0f) { 
+        float d = -srcY * dstH / srcH; 
+        dstY += d; dstH -= d; 
+        srcH += srcY; 
+        srcY = 0.0f;
+    }
+    {
+        float overX = (srcX + srcW) - (float)page->atlasW;
+        float overY = (srcY + srcH) - (float)page->atlasH;
+        if (overX > 0.0f) { dstW -= overX * dstW / srcW; srcW -= overX; }
+        if (overY > 0.0f) { dstH -= overY * dstH / srcH; srcH -= overY; }
+    }
+    if (srcW <= 0.0f || srcH <= 0.0f) return;
+
+    u64 _lagRegT0 = C->lagMode ? svcGetSystemTick() : 0;
+
+    float pixScaleX = dstW / srcW;
+    float pixScaleY = dstH / srcH;
+
+    // Split along RENDERER_MAX_TEX_DIM chunk boundaries so each chunk fits in
+    // a single GPU texture.
+    float chunkY = srcY;
+    while (chunkY < srcY + srcH) {
+        float nextBY = (float)(((uint32_t)chunkY / RENDERER_MAX_TEX_DIM) + 1) * RENDERER_MAX_TEX_DIM;
+        float chunkH = nextBY - chunkY;
+        if (chunkY + chunkH > srcY + srcH) chunkH = (srcY + srcH) - chunkY;
+
+        float chunkX = srcX;
+        while (chunkX < srcX + srcW) {
+            float nextBX = (float)(((uint32_t)chunkX / RENDERER_MAX_TEX_DIM) + 1) * RENDERER_MAX_TEX_DIM;
+            float chunkW = nextBX - chunkX;
+            if (chunkX + chunkW > srcX + srcW) chunkW = (srcX + srcW) - chunkX;
+
+            uint16_t iSrcX = (uint16_t)chunkX;
+            uint16_t iSrcY = (uint16_t)chunkY;
+            uint16_t iSrcW = (uint16_t)chunkW;
+            uint16_t iSrcH = (uint16_t)chunkH;
+
+            RegionCacheEntry* entry = regionLookup(page, iSrcX, iSrcY, iSrcW, iSrcH,
+                                                   C->frameCounter);
+            if (!entry) {
+                // No full-page decode needed — uploadRegion reads directly from
+                // the SD pixel cache row-by-row.  ensurePageDecoded is only
+                // called if page->pixels is somehow already populated (e.g.
+                // during the init font-preload window).
+                entry = regionAlloc(page, iSrcX, iSrcY, iSrcW, iSrcH, C->frameCounter);
+                if (!entry) goto next_chunk;
+
+                uploadRegion(page, entry, pageIdx);
+                if (!entry->loaded) goto next_chunk;
+            }
+
+            if (!entry->loaded) goto next_chunk;
+
+            {
+                float scaleW = (float)iSrcW / (float)entry->texW;
+                float scaleH = (float)iSrcH / (float)entry->texH;
+
+                Tex3DS_SubTexture subtex = {
+                    .width  = iSrcW,
+                    .height = iSrcH,
+                    .left   = 0.0f, .right  = scaleW,
+                    .top    = 1.0f, .bottom = 1.0f - scaleH,
+                };
+
+                if (entry->tex.data == NULL) goto next_chunk;
+
+                C2D_Image image = { .tex = &entry->tex, .subtex = &subtex };
+
+                C2D_ImageTint tint;
+                C2D_PlainImageTint(&tint, color, blend);
+
+                float chunkDestX = dstX + (chunkX - srcX) * pixScaleX;
+                float chunkDestY = dstY + (chunkY - srcY) * pixScaleY;
+                float chunkDestW = chunkW * pixScaleX;
+                float chunkDestH = chunkH * pixScaleY;
+
+                float drawX = chunkDestX;
+                float drawY = chunkDestY;
+                float centerX = 0.0f;
+                float centerY = 0.0f;
+                if (angle != 0.0f) {
+                    centerX = chunkDestW * 0.5f;
+                    centerY = chunkDestH * 0.5f;
+                    // C2D applies center as an origin offset from pos; keep
+                    // the visual top-left fixed by advancing pos to the center.
+                    drawX += centerX;
+                    drawY += centerY;
+                }
+
+                C2D_DrawParams params = {
+                    .pos    = { drawX, drawY, chunkDestW, chunkDestH },
+                    .center = { centerX, centerY },
+                    .depth  = C->zCounter,
+                    .angle  = angle,
+                };
+                       
+                C2D_DrawImage(image, &params, &tint);
+                C->zCounter += 0.0001f;
+            }
+
+next_chunk:
+            chunkX = nextBX;
+        }
+        chunkY = nextBY;
+    }
+
+    if (C->lagMode) {
+        C->lagRegionTicks += svcGetSystemTick() - _lagRegT0;
+        C->lagRegionN++;
+    }
+}
+
+// ===[ Font glyph preload ]===
+//
+// At init time, decode every font's atlas page once and upload all glyphs as
+// pinned region cache entries.  Pinned entries survive LRU eviction and the
+// pre-decode eviction pass, so CDrawText never touches the PNG again.
+//
+// Pages shared by multiple fonts (or by fonts and sprites) are decoded once
+// and all their fonts' glyphs are uploaded before pixels are freed.
+
+static void preloadFontGlyphs(CRenderer3DS* C, DataWin* dw) {
+    printf("CRenderer3DS: preloading font glyphs...\n");
+    logMemory("before font preload");
+
+    for (uint32_t fi = 0; fi < dw->font.count; fi++) {
+        Font* font = &dw->font.fonts[fi];
+
+        int32_t fontTpagIndex = DataWin_resolveTPAG(dw, font->textureOffset);
+        if (fontTpagIndex < 0 || (uint32_t)fontTpagIndex >= dw->tpag.count) continue;
+
+        TexturePageItem* tpag = &dw->tpag.items[fontTpagIndex];
+        uint32_t pageIdx = (uint32_t)tpag->texturePageId;
+        if (pageIdx >= C->pageCacheCount) continue;
+
+        TexCachePage* page = &C->pageCache[pageIdx];
+        page->blobData = DataWin_loadTexture(dw, pageIdx);
+        page->blobSize = dw->txtr.textures[pageIdx].blobSize;
+        if (page->loadFailed) continue;
+
+        // Allow ram to recover, this lets OLD 3DS work
+        logMemory("regionEvictAllNonPinned before font page preload");
+        regionEvictAllNonPinnedOLD3DS(C);
+        logMemory("regionEvictAllNonPinned finished before font page preload");
+
+        // Decode the page if not already in RAM from a previous font on the same page
+        if (!page->pixels) {
+            size_t peakBytes = (size_t)page->atlasW * page->atlasH * 4 * 2 + 2 * 1024 * 1024;
+            evictRegionsForDecode(pageIdx, peakBytes);
+
+            logMemory("before font page PNG decode");
+            uint8_t* linearPixels = NULL;
+            unsigned w = 0, h = 0;
+            unsigned err = lodepng_decode32(&linearPixels, &w, &h,
+                                            page->blobData, page->blobSize);
+            if (err) {
+                LOG_ERR("CRenderer3DS: font page %lu decode error %u: %s\n",
+                        (unsigned long)pageIdx, err, lodepng_error_text(err));
+                page->loadFailed = true;
+                continue;
+            }
+            // Copy to main heap and release linear heap before GPU uploads
+            size_t pixSize = (size_t)w * h * 4;
+            page->pixels = malloc(pixSize);
+            if (!page->pixels) {
+                lodepng_free(linearPixels);
+                LOG_ERR("CRenderer3DS: font page %lu malloc failed\n", (unsigned long)pageIdx);
+                page->loadFailed = true;
+                continue;
+            }
+            memcpy(page->pixels, linearPixels, pixSize);
+            lodepng_free(linearPixels);
+        }
+
+        logMemory("regionEvictAllNonPinned after font page preload");
+        regionEvictAllNonPinnedOLD3DS(C);
+        logMemory("regionEvictAllNonPinned finished after font page preload");
+
+        // Upload every glyph that has visible pixels as a pinned cache entry.
+        // IMPORTANT: use regionAllocPinned, not regionAlloc.  regionAlloc puts
+        // entries in the sprite LRU pool which COnRoomEnd wipes on every room
+        // transition, destroying all pre-uploaded font glyphs.  Pinned entries
+        // live in a separate array that is never touched by LRU eviction.
+        uint32_t uploaded = 0;
+        uint32_t skipped  = 0;
+        for (uint32_t gi = 0; gi < font->glyphCount; gi++) {
+            FontGlyph* glyph = &font->glyphs[gi];
+            if (glyph->sourceWidth == 0 || glyph->sourceHeight == 0) continue;
+
+            uint16_t srcX = (uint16_t)(tpag->sourceX + glyph->sourceX);
+            uint16_t srcY = (uint16_t)(tpag->sourceY + glyph->sourceY);
+            uint16_t srcW = (uint16_t)glyph->sourceWidth;
+            uint16_t srcH = (uint16_t)glyph->sourceHeight;
+
+            // Skip if already pinned by a previous font sharing this page
+            RegionCacheEntry* entry = regionLookup(page, srcX, srcY, srcW, srcH, 0);
+            if (entry) { skipped++; continue; }
+
+            entry = regionAllocPinned(page, srcX, srcY, srcW, srcH);
+            if (!entry) {
+                LOG_ERR("CRenderer3DS: OOM allocating pinned slot for font %lu glyph %lu\n",
+                        (unsigned long)fi, (unsigned long)gi);
+                continue;
+            }
+            if (uploadRegion(page, entry, pageIdx))
+                uploaded++;
+        }
+
+        printf("CRenderer3DS: font %lu (%lu glyphs) on page %lu - %lu uploaded, %lu already cached\n",
+               (unsigned long)fi, (unsigned long)font->glyphCount,
+               (unsigned long)pageIdx, uploaded, skipped);
+    }
+
+    // Free all decoded page pixels - pinned GPU textures remain resident
+    for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+        if (C->pageCache[i].pixels) {
+            free(C->pageCache[i].pixels);
+            C->pageCache[i].pixels = NULL;
+        }
+    }
+
+    logMemory("after font preload");
+    printf("CRenderer3DS: font preload complete\n");
+}
+
+//
+// Called once during CInit after C->top is ready.  Iterates every texture page
+// and ensures a valid SD cache file exists for it.  Pages that are already
+// cached are skipped instantly.  Pages that need caching are decoded right here
+// while the linear heap is fully clean (no GPU textures yet, no fragmentation).
+//
+// On Old 3DS the linear heap is ~30 MB.  Pages up to 1024x2048 need ~18 MB
+// peak and always succeed.  2048x2048 pages need ~34 MB and will fail - they
+// are left uncached and fall back to the runtime decode path.
+//
+// After this function returns, ensurePageDecoded() will almost always find
+// the SD cache and never need to call lodepng during gameplay.
+
+static void CPrecomputeSDCaches(CRenderer3DS* C, DataWin* dw) {
+    printf("CRenderer3DS: checking SD pixel caches for %lu pages...\n", C->pageCacheCount);
+    logMemory("before SD cache precompute");
+
+    // Count how many pages actually need caching
+    uint32_t needCount = 0;
+    for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+        TexCachePage* page = &C->pageCache[i];
+        if (page->loadFailed) continue;
+        uint32_t blobSize = dw->txtr.textures[i].blobSize;
+        if (blobSize == 0) continue;
+
+        char path[128];
+        buildCachePath(path, sizeof(path), i);
+        if (!isCacheValid(path, blobSize, page->atlasW, page->atlasH)) needCount++;
+    }
+
+    if (needCount == 0) {
+        printf("CRenderer3DS: all %lu pages already cached on SD\n", C->pageCacheCount);
+        logMemory("SD cache precompute skipped");
+        return;
+    }
+
+    printf("CRenderer3DS: caching %lu/%lu pages to SD card (first run)...\n",
+           needCount, C->pageCacheCount);
+
+    uint32_t done = 0;
+    for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+        TexCachePage* page = &C->pageCache[i];
+        if (page->loadFailed) { done++; continue; }
+        uint32_t blobSize = dw->txtr.textures[i].blobSize;
+        if (blobSize == 0) { done++; continue; }
+
+        // Show progress bar - simple filled rect on top screen, no text needed
+        // TODO: why do we have two progress bars showing the same thing..?
+        {
+            C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+            C2D_TargetClear(C->top, C2D_Color32(20, 20, 40, 255));
+            C2D_SceneBegin(C->top);
+
+            // Track bar
+            C2D_DrawRectSolid(20.0f, 100.0f, 0.5f, 360.0f, 20.0f, C2D_Color32(60, 60, 80, 255));
+            // Fill
+            float pct = (C->pageCacheCount > 0)
+                ? (float)done / (float)C->pageCacheCount : 0.0f;
+            C2D_DrawRectSolid(20.0f, 100.0f, 0.6f, 360.0f * pct, 20.0f, C2D_Color32(80, 160, 255, 255));
+            // Page indicator bar (smaller, below)
+            C2D_DrawRectSolid(20.0f, 130.0f, 0.5f, 360.0f, 8.0f, C2D_Color32(40, 40, 60, 255));
+            float pagePct = (float)(i + 1) / (float)C->pageCacheCount;
+            C2D_DrawRectSolid(20.0f, 130.0f, 0.6f, 360.0f * pagePct, 8.0f, C2D_Color32(100, 200, 120, 255));
+
+            C3D_FrameEnd(0);
+        }
+
+        // Skip if already valid on SD
+        char path[128];
+        buildCachePath(path, sizeof(path), i);
+        if (isCacheValid(path, blobSize, page->atlasW, page->atlasH)) { done++; continue; }
+
+        // Load the PNG blob
+        uint8_t* blobData = DataWin_loadTexture(dw, i);
+        if (!blobData) {
+            printf("CRenderer3DS: precompute: page %lu - blob load failed, skipping\n", i);
+            done++;
+            continue;
+        }
+
+        // Decode PNG → linear heap (lodepng)
+        uint8_t* linearPixels = NULL;
+        unsigned w = 0, h = 0;
+        unsigned err = lodepng_decode32(&linearPixels, &w, &h, blobData, blobSize);
+        if (err) {
+            printf("CRenderer3DS: precompute: page %lu lodepng error %u (%s) - will retry at runtime\n",
+                   i, err, lodepng_error_text(err));
+            // Do NOT set loadFailed - let the runtime path try with eviction
+            // Free the blob to reclaim main RAM before moving to the next page
+            free(dw->txtr.textures[i].blobData);
+            dw->txtr.textures[i].blobData = NULL;
+            dw->txtr.textures[i].loaded   = false;
+            done++;
+            continue;
+        }
+
+        // Copy to main heap and release linear heap immediately
+        //size_t pixSize = (size_t)w * h * 4;
+        //page->pixels = malloc(pixSize);
+        //if (!page->pixels) {
+        //    lodepng_free(linearPixels);
+        //    LOG_ERR("CRenderer3DS: precompute: malloc failed for page %lu (%zu KB)\n",
+        //            i, pixSize / 1024);
+        //    done++;
+        //    continue;
+        //}
+        //memcpy(page->pixels, linearPixels, pixSize);
+        //lodepng_free(linearPixels); // release linear heap now
+
+        // Save decoded pixels to SD card
+        //savePageToSDCache(page, i, blobSize);
+
+        // Save directly from the linear heap buffer
+        // We don't really need to copy to main heap 
+        // and waste time and break on bigger textures
+
+        savePageToSDCache(page, i, blobSize, linearPixels);
+
+        // Release the linear heap immediately after saving
+        lodepng_free(linearPixels);
+
+        // Set this to NULL so the rest of your code knows it's not in RAM
+        page->pixels = NULL; 
+
+        // Free pixels and blob - no GPU work yet, we just needed them for the cache
+        free(page->pixels);
+        page->pixels = NULL;
+        free(dw->txtr.textures[i].blobData);
+        dw->txtr.textures[i].blobData = NULL;
+        dw->txtr.textures[i].loaded   = false;
+
+        done++;
+        logMemory("after precompute page");
+    }
+
+    // Final full-bar frame
+    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    C2D_TargetClear(C->top, C2D_Color32(20, 20, 40, 255));
+    C2D_SceneBegin(C->top);
+    C2D_DrawRectSolid(20.0f, 100.0f, 0.5f, 360.0f, 20.0f, C2D_Color32(60, 60, 80, 255));
+    C2D_DrawRectSolid(20.0f, 100.0f, 0.6f, 360.0f, 20.0f, C2D_Color32(80, 160, 255, 255));
+    C3D_FrameEnd(0);
+
+    printf("CRenderer3DS: SD cache precompute complete\n");
+    logMemory("after SD cache precompute");
+}
+
+static void CBuildTpagToSpriteMapping(CRenderer3DS* C, DataWin* dw);
+
+
+
+static void CInit(Renderer* renderer, DataWin* dataWin) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+
+    C2D_SpriteSheet sheet = C2D_SpriteSheetLoad("romfs:/gfx/borders.t3x");
+    if (sheet) {
+        C->border = C2D_SpriteSheetGetImage(sheet, 0);
+    }
+    
+    renderer->dataWin    = dataWin;
+    renderer->drawColor  = 0xFFFFFF;
+    renderer->drawAlpha  = 1.0f;
+    renderer->drawFont   = -1;
+    renderer->drawHalign = 0;
+    renderer->drawValign = 0;
+
+    uint32_t pageCount = dataWin->txtr.count;
+    C->pageCache       = (TexCachePage*) safeCalloc(pageCount, sizeof(TexCachePage));
+    C->pageCacheCount  = pageCount;
+    C->frameCounter    = 1;
+    g_renderer         = C;
+
+    // Initialize TPAG->sprite/frame lookup and lazy sprite sheet cache.
+    uint32_t tpagCount = dataWin->tpag.count;
+    C->tpagToSpriteIndex = (int32_t*) safeCalloc(tpagCount, sizeof(int32_t));
+    C->tpagToFrameIndex  = (int32_t*) safeCalloc(tpagCount, sizeof(int32_t));
+    for (uint32_t i = 0; i < tpagCount; i++) {
+        C->tpagToSpriteIndex[i] = -1;
+        C->tpagToFrameIndex[i] = -1;
+    }
+    C->tpagToBackgroundIndex = (int32_t*) safeCalloc(tpagCount, sizeof(int32_t));
+    for (uint32_t i = 0; i < tpagCount; i++) {
+        C->tpagToBackgroundIndex[i] = -1;
+    }
+    C->tpagFallbackLogged = (uint8_t*) safeCalloc(tpagCount, sizeof(uint8_t));
+
+    C->spriteSheetCount = dataWin->sprt.count;
+    C->spriteSheets = (C2D_SpriteSheet*) safeCalloc(C->spriteSheetCount, sizeof(C2D_SpriteSheet));
+    C->spriteSheetState = (uint8_t*) safeCalloc(C->spriteSheetCount, sizeof(uint8_t));
+    C->backgroundSheetCount = dataWin->bgnd.count;
+    C->backgroundSheets = (C2D_SpriteSheet*) safeCalloc(C->backgroundSheetCount, sizeof(C2D_SpriteSheet));
+    C->backgroundSheetState = (uint8_t*) safeCalloc(C->backgroundSheetCount, sizeof(uint8_t));
+    CBuildTpagToSpriteMapping(C, dataWin);
+
+    // Create the render target first so progress bars can be shown during init
+    C->bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+
+    verifyLodepngAllocator();
+    logMemory("before page registration");
+    for (uint32_t i = 0; i < pageCount; i++)
+    {
+        printf("during page registaration, starting page: %ld\n", i);
+        logMemory("during page registration, starting page");
+        
+        // Extract blobOffset to bypass unaligned memory crashes
+        uint32_t safeBlobOffset = 0;
+        memcpy(&safeBlobOffset, &dataWin->txtr.textures[i].blobOffset, sizeof(uint32_t));
+        
+        registerPage(dataWin, &C->pageCache[i], safeBlobOffset, i);
+        
+        logMemory("during page registration, finished page");
+        printf("during page registaration, finished page: %ld\n", i);
+    }
+    logMemory("after page registration");
+
+    // Skip full SD cache precompute at startup.
+    // The lazy path in ensurePageDecoded()/savePageToSDCache() will build cache
+    // files on first use instead, which avoids multi-second startup stalls on
+    // first launch when every texture page is decoded up front.
+    mkdir("sdmc:/cinnamon/cache", 0777); // idempotent, safe if already exists
+    printf("CRenderer3DS: deferring SD cache generation until textures are first used\n");
+
+    bool isNew3DS = false;
+    if (APT_CheckNew3DS(&isNew3DS) == 0 && isNew3DS) {
+        //printf("CRenderer3DS: running on New 3DS - preloading font glyphs\n");
+        //preloadFontGlyphs(C, dataWin);
+    } else {
+        //printf("CRenderer3DS: running on Old 3DS - skipping font glyph preload\n");
+    }
+
+    preloadFontGlyphs(C, dataWin);
+
+    printf("CRenderer3DS: initialized (%lu pages, region-cache mode)\n",
+           (unsigned long)pageCount);
+
+    logMemory("renderer ready");
+}
+
+static void CDestroy(Renderer* renderer) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    g_renderer = NULL;
+    for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+        TexCachePage* page = &C->pageCache[i];
+        if (page->pixels) {
+            free(page->pixels);
+            page->pixels = NULL;
+        }
+        // Free pinned font glyph textures
+        for (uint32_t r = 0; r < page->pinnedRegionCount; r++) {
+            if (page->pinnedRegions[r].loaded)
+                C3D_TexDelete(&page->pinnedRegions[r].tex);
+        }
+        free(page->pinnedRegions);
+        // Free sprite region textures
+        for (uint32_t r = 0; r < page->regionCount; r++) {
+            if (page->regions[r].loaded)
+                C3D_TexDelete(&page->regions[r].tex);
+        }
+        free(page->regions);
+    }
+    free(C->pageCache);
+
+    if (C->spriteSheets) {
+        for (uint32_t i = 0; i < C->spriteSheetCount; i++) {
+            if (C->spriteSheets[i]) {
+                C2D_SpriteSheetFree(C->spriteSheets[i]);
+            }
+        }
+    }
+    free(C->spriteSheets);
+    free(C->spriteSheetState);
+    if (C->backgroundSheets) {
+        for (uint32_t i = 0; i < C->backgroundSheetCount; i++) {
+            if (C->backgroundSheets[i]) {
+                C2D_SpriteSheetFree(C->backgroundSheets[i]);
+            }
+        }
+    }
+    free(C->backgroundSheets);
+    free(C->backgroundSheetState);
+    free(C->tpagToSpriteIndex);
+    free(C->tpagToFrameIndex);
+    free(C->tpagToBackgroundIndex);
+    free(C->tpagFallbackLogged);
+
+    free(C);
+}
+
+static void CBeginView(Renderer* renderer,
+    int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH,
+    int32_t portX, int32_t portY, int32_t portW, int32_t portH,
+    float viewAngle, uint32_t viewIndex)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+    C->viewX = viewX;
+    C->viewY = viewY;
+    C->viewIndex = viewIndex;
+    CSelectRenderTargetForView(C, viewIndex);
+
+    if (viewW > 0 && viewH > 0 && portW > 0 && portH > 0) {
+        // Scale the view to fit the port, preserving aspect ratio (letterbox/pillarbox)
+        float scale = fminf((float)portW / (float)viewW, (float)portH / (float)viewH);
+        C->scaleX  = scale;
+        C->scaleY  = scale;
+        // Center within the port, then offset by the port's own origin
+        C->offsetX = (float)portX + ((float)portW - (float)viewW * scale) * 0.5f;
+        C->offsetY = (float)portY + ((float)portH - (float)viewH * scale) * 0.5f;
+    } else {
+        C->scaleX  = 1.0f;
+        C->scaleY  = 1.0f;
+        C->offsetX = (float)portX;
+        C->offsetY = (float)portY;
+    }
+}
+
+//static u64 lastframetime = 0;
+
+void CRenderer3DS_setLagMode(Renderer* renderer, bool enabled) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    C->lagMode = enabled;
+}
+
+static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
+{
+    (void) speed;
+    (void) gameW;
+    (void) gameH;
+    (void) windowW;
+    (void) windowH;
+
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+    C->zCounter = 0.5f;
+    C->rectCmdCount = 0;
+    C->rectCmdMerged = 0;
+    C->frameClearColor = clearColor;
+    C->topClearedThisFrame = false;
+    C->bottomClearedThisFrame = false;
+    C->activeScreen = -1;
+    if (C->lagMode) {
+        C->lagSpriteTicks = C->lagSpritePartTicks = C->lagTextTicks = 0;
+        C->lagRectTicks   = C->lagLineTicks      = C->lagRegionTicks = 0;
+        C->lagSpriteN = C->lagSpritePartN = C->lagTextN = 0;
+        C->lagRectN   = C->lagLineN       = C->lagRegionN = 0;
+    }
+    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
+    // Clear both once per frame so each screen remains valid even if only one
+    // receives draws in this room/frame.
+    C2D_TargetClear(C->top, C->frameClearColor);
+    C2D_TargetClear(C->bottom, C->frameClearColor);
+    C->topClearedThisFrame = true;
+    C->bottomClearedThisFrame = true;
+}
+
+static void CEndFrame(Renderer* renderer) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+
+    // Unneeded we just get rid of oldest if space is needed
+    // Free decoded pixels that AREN'T on the hot list (keep some for next frame)
+    //uint32_t currentFrame = C->frameCounter;
+    //for (uint32_t i = 0; i < C->pageCacheCount; i++) {
+    //    TexCachePage* page = &C->pageCache[i];
+        
+        // Only free if it's older than our desired timeout
+        //if (page->pixels &&
+        //    (currentFrame - page->lastDecodeFrame > page->decodeTimeout)) {
+        //    free(page->pixels);
+        //    page->pixels = NULL;
+        //    DBG_LOG("CRenderer3DS: Freed decoded pixels for page %lu (age: %u frames)\n",
+        //            (unsigned long)i, currentFrame - page->lastDecodeFrame);
+        //}
+    //}
+
+    //C2D_DrawImageAt(C->border, 0, 0, 0.5f, NULL, 1.0f, 1.0f);
+
+    if (C->lagMode) {
+        // Convert ARM11 ticks to ms: SYSCLOCK_ARM11 = 268111856 Hz
+        double tpms = 1000.0 / 268111856.0;
+        fprintf(stderr,
+            "[LAG] Sprite=%.2fms(%u) SpritePart=%.2fms(%u) "
+            "Text=%.2fms(%u) Rect=%.2fms(%u) Line=%.2fms(%u) Region=%.2fms(%u) RectMerge=%lu\n",
+            (double)C->lagSpriteTicks     * tpms, C->lagSpriteN,
+            (double)C->lagSpritePartTicks * tpms, C->lagSpritePartN,
+            (double)C->lagTextTicks       * tpms, C->lagTextN,
+            (double)C->lagRectTicks       * tpms, C->lagRectN,
+            (double)C->lagLineTicks       * tpms, C->lagLineN,
+            (double)C->lagRegionTicks     * tpms, C->lagRegionN,
+            (unsigned long)C->rectCmdMerged);
+    }
+    C->frameCounter++;
+    C3D_FrameEnd(0);
+}
+
+static void CEndView(Renderer* renderer) { /* no-op */ }
+
+static C2D_SpriteSheet CLoadSpriteSheet(const char* spriteName) {
+    if (!spriteName) return NULL;
+
+    char path[320];
+    snprintf(path, sizeof(path), "romfs:/gfx/%s/%s.t3x", spriteName, spriteName);
+    return C2D_SpriteSheetLoad(path);
+}
+
+static void CLogSpriteFallback(CRenderer3DS* C, int32_t tpagIndex,
+    const char* reason, const char* spriteName, int32_t frameIdx)
+{
+    if (!C || tpagIndex < 0 || !C->tpagFallbackLogged) return;
+    if (C->tpagFallbackLogged[tpagIndex]) return;
+
+    C->tpagFallbackLogged[tpagIndex] = 1;
+    printf("CRenderer3DS: romfs sprite fallback tpag=%d sprite=%s frame=%d reason=%s\n",
+           tpagIndex,
+           spriteName ? spriteName : "<unknown>",
+           frameIdx,
+           reason ? reason : "unspecified");
+}
+
+static C2D_SpriteSheet CEnsureSpriteSheetLoaded(CRenderer3DS* C, Sprite* sprite, int32_t spriteIdx) {
+    if (!C || !sprite || spriteIdx < 0 || (uint32_t)spriteIdx >= C->spriteSheetCount) {
+        return NULL;
+    }
+
+    if (C->spriteSheetState && C->spriteSheetState[spriteIdx] == 2) {
+        return NULL;
+    }
+
+    if (!C->spriteSheets[spriteIdx]) {
+        C->spriteSheets[spriteIdx] = CLoadSpriteSheet(sprite->name);
+        if (C->spriteSheets[spriteIdx]) {
+            if (C->spriteSheetState) C->spriteSheetState[spriteIdx] = 1;
+            printf("CRenderer3DS: loaded romfs sprite sheet %s\n", sprite->name ? sprite->name : "<unknown>");
+        } else {
+            if (C->spriteSheetState) C->spriteSheetState[spriteIdx] = 2;
+            LOG_ERR("CRenderer3DS: failed to load romfs sprite sheet for %s\n",
+                    sprite->name ? sprite->name : "<unknown>");
+        }
+    }
+
+    return C->spriteSheets[spriteIdx];
+}
+
+static void CBuildTpagToSpriteMapping(CRenderer3DS* C, DataWin* dw) {
+    if (!dw || !dw->sprt.sprites || !C->tpagToSpriteIndex || !C->tpagToFrameIndex) {
+        return;
+    }
+
+    uint32_t mapped = 0;
+    for (uint32_t spriteIdx = 0; spriteIdx < dw->sprt.count; spriteIdx++) {
+        Sprite* sprite = &dw->sprt.sprites[spriteIdx];
+        if (!sprite->textureOffsets || sprite->textureCount == 0) continue;
+
+        for (uint32_t frameIdx = 0; frameIdx < sprite->textureCount; frameIdx++) {
+            int32_t resolved = DataWin_resolveTPAG(dw, sprite->textureOffsets[frameIdx]);
+            if (resolved < 0 || (uint32_t)resolved >= dw->tpag.count) continue;
+
+            C->tpagToSpriteIndex[resolved] = (int32_t)spriteIdx;
+            C->tpagToFrameIndex[resolved] = (int32_t)frameIdx;
+            mapped++;
+        }
+    }
+
+    printf("CRenderer3DS: mapped %lu TPAG entries to sprites\n", (unsigned long)mapped);
+
+    if (dw->bgnd.backgrounds && C->tpagToBackgroundIndex) {
+        uint32_t bgMapped = 0;
+        for (uint32_t bgIdx = 0; bgIdx < dw->bgnd.count; bgIdx++) {
+            Background* bg = &dw->bgnd.backgrounds[bgIdx];
+            int32_t resolved = DataWin_resolveTPAG(dw, bg->textureOffset);
+            if (resolved < 0 || (uint32_t)resolved >= dw->tpag.count) continue;
+
+            // Prefer explicit sprite mapping when a TPAG entry is shared.
+            if (C->tpagToSpriteIndex[resolved] < 0) {
+                C->tpagToBackgroundIndex[resolved] = (int32_t)bgIdx;
+                bgMapped++;
+            }
+        }
+        printf("CRenderer3DS: mapped %lu TPAG entries to backgrounds\n", (unsigned long)bgMapped);
+    }
+}
+
+static C2D_SpriteSheet CEnsureBackgroundSheetLoaded(CRenderer3DS* C, Background* bg, int32_t bgIdx) {
+    if (!C || !bg || bgIdx < 0 || (uint32_t)bgIdx >= C->backgroundSheetCount) {
+        return NULL;
+    }
+
+    if (C->backgroundSheetState && C->backgroundSheetState[bgIdx] == 2) {
+        return NULL;
+    }
+
+    if (!C->backgroundSheets[bgIdx]) {
+        C->backgroundSheets[bgIdx] = CLoadSpriteSheet(bg->name);
+        if (C->backgroundSheets[bgIdx]) {
+            if (C->backgroundSheetState) C->backgroundSheetState[bgIdx] = 1;
+            printf("CRenderer3DS: loaded romfs background sheet %s\n", bg->name ? bg->name : "<unknown>");
+        } else {
+            if (C->backgroundSheetState) C->backgroundSheetState[bgIdx] = 2;
+            LOG_ERR("CRenderer3DS: failed to load romfs background sheet for %s\n",
+                    bg->name ? bg->name : "<unknown>");
+        }
+    }
+
+    return C->backgroundSheets[bgIdx];
+}
+
+static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
+    float x, float y, float originX, float originY,
+    float xscale, float yscale, float angleDeg, uint32_t color, float alpha)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    DataWin* dw = renderer->dataWin;
+    CFlushQueuedRects(C);
+
+    if (alpha <= 0.0f || xscale == 0.0f || yscale == 0.0f) return;
+
+    if (tpagIndex < 0 || (uint32_t)tpagIndex >= dw->tpag.count) {
+        DBG_LOG("CDrawSprite: ERROR - Invalid tpag index %d (max count %d)\n",
+                tpagIndex, dw->tpag.count);
+        C2D_DrawRectSolid(x * C->scaleX, y * C->scaleY, C->zCounter,
+                          10, 10, C2D_Color32(255, 0, 0, 255));
+        C->zCounter += 0.001f;
+        return;
+    }
+
+    TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
+
+    // Legacy TPAG atlas path uses trimmed source rect + target offset.
+    float dstX = (x + ((float)tpag->targetX - originX) * xscale - (float)C->viewX) * C->scaleX + C->offsetX;
+    float dstY = (y + ((float)tpag->targetY - originY) * yscale - (float)C->viewY) * C->scaleY + C->offsetY;
+    float dstW = (float)tpag->sourceWidth  * xscale * C->scaleX;
+    float dstH = (float)tpag->sourceHeight * yscale * C->scaleY;
+
+    // ROMFS sprite-sheet path uses full bounding-size frames with padding baked in.
+    float sheetDstX = (x - originX * xscale - (float)C->viewX) * C->scaleX + C->offsetX;
+    float sheetDstY = (y - originY * yscale - (float)C->viewY) * C->scaleY + C->offsetY;
+    float sheetDstW = (float)tpag->boundingWidth  * xscale * C->scaleX;
+    float sheetDstH = (float)tpag->boundingHeight * yscale * C->scaleY;
+    float angleRad = angleDeg * (float)(M_PI / 180.0);
+
+    if (isRotatedRectOffscreen(C, sheetDstX, sheetDstY, sheetDstW, sheetDstH, angleRad)) {
+        return;
+    }
+
+    u64 _lagST0 = C->lagMode ? svcGetSystemTick() : 0;
+
+    // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
+    if (C->tpagToSpriteIndex && C->tpagToFrameIndex && (uint32_t)tpagIndex < dw->tpag.count) {
+        int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
+        int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
+
+        if (spriteIdx < 0 || frameIdx < 0) {
+            int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
+            if (bgIdx >= 0 && (uint32_t)bgIdx < dw->bgnd.count) {
+                Background* bg = &dw->bgnd.backgrounds[bgIdx];
+                if (!bg->name) {
+                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, 0);
+                } else {
+                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
+                    if (sheet) {
+                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
+                        if (image.tex && image.tex->data) {
+                            C2D_ImageTint tint;
+                            C2D_PlainImageTint(&tint,
+                                C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                            (uint8_t)(alpha * 255.0f)),
+                                0.0f);
+
+                            C2D_DrawParams params = {
+                                .pos    = {
+                                    sheetDstX + (angleDeg != 0.0f ? sheetDstW * 0.5f : 0.0f),
+                                    sheetDstY + (angleDeg != 0.0f ? sheetDstH * 0.5f : 0.0f),
+                                    sheetDstW,
+                                    sheetDstH
+                                },
+                                .center = {
+                                    (angleDeg != 0.0f ? sheetDstW * 0.5f : 0.0f),
+                                    (angleDeg != 0.0f ? sheetDstH * 0.5f : 0.0f)
+                                },
+                                .depth  = C->zCounter,
+                                .angle  = angleRad,
+                            };
+
+                            C2D_DrawImage(image, &params, &tint);
+                            C->zCounter += 0.0001f;
+                            if (C->lagMode) { C->lagSpriteTicks += svcGetSystemTick() - _lagST0; C->lagSpriteN++; }
+                            return;
+                        }
+                        CLogSpriteFallback(C, tpagIndex, "background sheet image/frame is invalid", bg->name, 0);
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, 0);
+                    }
+                }
+            } else {
+                CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
+            }
+        } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
+            CLogSpriteFallback(C, tpagIndex, "mapped sprite index is out of range", NULL, frameIdx);
+        } else {
+            Sprite* sprite = &dw->sprt.sprites[spriteIdx];
+            if (!sprite->name) {
+                CLogSpriteFallback(C, tpagIndex, "sprite has no name", NULL, frameIdx);
+            } else if ((uint32_t)spriteIdx >= C->spriteSheetCount) {
+                CLogSpriteFallback(C, tpagIndex, "sprite sheet cache index is out of range", sprite->name, frameIdx);
+            } else {
+                C2D_SpriteSheet sheet = CEnsureSpriteSheetLoaded(C, sprite, spriteIdx);
+                if (sheet) {
+                    C2D_Image image = C2D_SpriteSheetGetImage(sheet, frameIdx);
+                    if (image.tex && image.tex->data) {
+                        C2D_ImageTint tint;
+                        C2D_PlainImageTint(&tint,
+                            C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                        (uint8_t)(alpha * 255.0f)),
+                            0.0f);
+
+                        C2D_DrawParams params = {
+                            .pos    = {
+                                sheetDstX + (angleDeg != 0.0f ? sheetDstW * 0.5f : 0.0f),
+                                sheetDstY + (angleDeg != 0.0f ? sheetDstH * 0.5f : 0.0f),
+                                sheetDstW,
+                                sheetDstH
+                            },
+                            .center = {
+                                (angleDeg != 0.0f ? sheetDstW * 0.5f : 0.0f),
+                                (angleDeg != 0.0f ? sheetDstH * 0.5f : 0.0f)
+                            },
+                            .depth  = C->zCounter,
+                            .angle  = angleRad,
+                        };
+
+                        C2D_DrawImage(image, &params, &tint);
+                        C->zCounter += 0.0001f;
+                        if (C->lagMode) { C->lagSpriteTicks += svcGetSystemTick() - _lagST0; C->lagSpriteN++; }
+                        return;
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "sprite sheet image/frame is invalid", sprite->name, frameIdx);
+                    }
+                } else {
+                    CLogSpriteFallback(C, tpagIndex, "sprite sheet failed to load from romfs", sprite->name, frameIdx);
+                }
+            }
+        }
+    }
+
+    // Fallback to legacy atlas cache path when a per-sprite sheet is missing.
+    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
+    if (pageIdx < C->pageCacheCount) {
+        u32 tintColor = C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                     (uint8_t)(alpha * 255.0f));
+        drawRegion(C, pageIdx,
+                   (float)tpag->sourceX,    (float)tpag->sourceY,
+                   (float)tpag->sourceWidth, (float)tpag->sourceHeight,
+                   dstX, dstY, dstW, dstH,
+                   angleRad, tintColor, 0.0f);
+    } else {
+        DBG_LOG("CDrawSprite: ERROR - pageIdx %lu out of range (count %lu)\n",
+                (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
+        C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH,
+                          C2D_Color32(255, 0, 0, 255));
+        C->zCounter += 0.001f;
+    }
+    if (C->lagMode) { C->lagSpriteTicks += svcGetSystemTick() - _lagST0; C->lagSpriteN++; }
+}
+
+static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
+    int32_t srcOffX, int32_t srcOffY, int32_t srcW, int32_t srcH,
+    float x, float y, float xscale, float yscale, uint32_t color, float alpha)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    DataWin* dw = renderer->dataWin;
+    CFlushQueuedRects(C);
+
+    if (alpha <= 0.0f || xscale == 0.0f || yscale == 0.0f || srcW <= 0 || srcH <= 0) return;
+
+    if (tpagIndex < 0 || (uint32_t)tpagIndex >= dw->tpag.count) {
+        DBG_LOG("CDrawSpritePart: ERROR - Invalid tpag index %d\n", tpagIndex);
+        C2D_DrawRectSolid(x, y, C->zCounter, 10, 10, C2D_Color32(255, 0, 0, 255));
+        C->zCounter += 0.001f;
+        return;
+    }
+
+    TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
+
+    float dstX = (x - (float)C->viewX) * C->scaleX + C->offsetX;
+    float dstY = (y - (float)C->viewY) * C->scaleY + C->offsetY;
+    float dstW = (float)srcW * xscale * C->scaleX;
+    float dstH = (float)srcH * yscale * C->scaleY;
+
+    if (isRectOffscreen(C, dstX, dstY, dstW, dstH)) return;
+
+    u64 _lagSPT0 = C->lagMode ? svcGetSystemTick() : 0;
+
+    // New path: load per-sprite sheet from romfs:/gfx/(sprite)/(sprite).t3x
+    if (srcW > 0 && srcH > 0 && C->tpagToSpriteIndex && C->tpagToFrameIndex) {
+        int32_t spriteIdx = C->tpagToSpriteIndex[tpagIndex];
+        int32_t frameIdx = C->tpagToFrameIndex[tpagIndex];
+
+        if (spriteIdx < 0 || frameIdx < 0) {
+            int32_t bgIdx = C->tpagToBackgroundIndex ? C->tpagToBackgroundIndex[tpagIndex] : -1;
+            if (bgIdx >= 0 && (uint32_t)bgIdx < dw->bgnd.count) {
+                Background* bg = &dw->bgnd.backgrounds[bgIdx];
+                if (!bg->name) {
+                    CLogSpriteFallback(C, tpagIndex, "background has no name", NULL, 0);
+                } else {
+                    C2D_SpriteSheet sheet = CEnsureBackgroundSheetLoaded(C, bg, bgIdx);
+                    if (sheet) {
+                        C2D_Image image = C2D_SpriteSheetGetImage(sheet, 0);
+                        if (image.tex && image.tex->data && image.subtex) {
+                            float frameW = (float)image.subtex->width;
+                            float frameH = (float)image.subtex->height;
+                            if (frameW > 0.0f && frameH > 0.0f) {
+                                float partX0 = fmaxf(0.0f, (float)srcOffX);
+                                float partY0 = fmaxf(0.0f, (float)srcOffY);
+                                float partX1 = fminf(frameW, (float)(srcOffX + srcW));
+                                float partY1 = fminf(frameH, (float)(srcOffY + srcH));
+                                if (partX1 > partX0 && partY1 > partY0) {
+                                    Tex3DS_SubTexture partSubtex = *image.subtex;
+                                    float invW = 1.0f / frameW;
+                                    float invH = 1.0f / frameH;
+                                    float uSpan = image.subtex->right - image.subtex->left;
+                                    float vSpan = image.subtex->bottom - image.subtex->top;
+
+                                    partSubtex.width  = (uint16_t)(partX1 - partX0);
+                                    partSubtex.height = (uint16_t)(partY1 - partY0);
+                                    partSubtex.left   = image.subtex->left + uSpan * (partX0 * invW);
+                                    partSubtex.right  = image.subtex->left + uSpan * (partX1 * invW);
+                                    partSubtex.top    = image.subtex->top + vSpan * (partY0 * invH);
+                                    partSubtex.bottom = image.subtex->top + vSpan * (partY1 * invH);
+
+                                    C2D_Image partImage = { .tex = image.tex, .subtex = &partSubtex };
+                                    C2D_ImageTint tint;
+                                    C2D_PlainImageTint(&tint,
+                                        C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                                    (uint8_t)(alpha * 255.0f)),
+                                        0.0f);
+
+                                    C2D_DrawParams params = {
+                                        .pos    = { dstX, dstY, dstW, dstH },
+                                        .center = { 0.0f, 0.0f },
+                                        .depth  = C->zCounter,
+                                        .angle  = 0.0f,
+                                    };
+
+                                    C2D_DrawImage(partImage, &params, &tint);
+                                    C->zCounter += 0.0001f;
+                                    if (C->lagMode) { C->lagSpritePartTicks += svcGetSystemTick() - _lagSPT0; C->lagSpritePartN++; }
+                                    return;
+                                }
+                                CLogSpriteFallback(C, tpagIndex, "requested background part is fully outside frame bounds", bg->name, 0);
+                            } else {
+                                CLogSpriteFallback(C, tpagIndex, "background sheet frame has invalid dimensions", bg->name, 0);
+                            }
+                        } else {
+                            CLogSpriteFallback(C, tpagIndex, "background sheet image/frame is invalid", bg->name, 0);
+                        }
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "background sheet failed to load from romfs", bg->name, 0);
+                    }
+                }
+            } else {
+                CLogSpriteFallback(C, tpagIndex, "tpag is not mapped to a romfs sprite or background", NULL, frameIdx);
+            }
+        } else if ((uint32_t)spriteIdx >= dw->sprt.count) {
+            CLogSpriteFallback(C, tpagIndex, "mapped sprite index is out of range", NULL, frameIdx);
+        } else {
+            Sprite* sprite = &dw->sprt.sprites[spriteIdx];
+            if (!sprite->name) {
+                CLogSpriteFallback(C, tpagIndex, "sprite has no name", NULL, frameIdx);
+            } else if ((uint32_t)spriteIdx >= C->spriteSheetCount) {
+                CLogSpriteFallback(C, tpagIndex, "sprite sheet cache index is out of range", sprite->name, frameIdx);
+            } else {
+                C2D_SpriteSheet sheet = CEnsureSpriteSheetLoaded(C, sprite, spriteIdx);
+                if (sheet) {
+                    C2D_Image image = C2D_SpriteSheetGetImage(sheet, frameIdx);
+                    if (image.tex && image.tex->data && image.subtex) {
+                        float frameW = (float)image.subtex->width;
+                        float frameH = (float)image.subtex->height;
+
+                        if (frameW > 0.0f && frameH > 0.0f) {
+                            float partX0 = fmaxf(0.0f, (float)srcOffX);
+                            float partY0 = fmaxf(0.0f, (float)srcOffY);
+                            float partX1 = fminf(frameW, (float)(srcOffX + srcW));
+                            float partY1 = fminf(frameH, (float)(srcOffY + srcH));
+
+                            if (partX1 > partX0 && partY1 > partY0) {
+                                Tex3DS_SubTexture partSubtex = *image.subtex;
+                                float invW = 1.0f / frameW;
+                                float invH = 1.0f / frameH;
+                                float uSpan = image.subtex->right - image.subtex->left;
+                                float vSpan = image.subtex->bottom - image.subtex->top;
+
+                                partSubtex.width  = (uint16_t)(partX1 - partX0);
+                                partSubtex.height = (uint16_t)(partY1 - partY0);
+                                partSubtex.left   = image.subtex->left + uSpan * (partX0 * invW);
+                                partSubtex.right  = image.subtex->left + uSpan * (partX1 * invW);
+                                partSubtex.top    = image.subtex->top + vSpan * (partY0 * invH);
+                                partSubtex.bottom = image.subtex->top + vSpan * (partY1 * invH);
+
+                                C2D_Image partImage = { .tex = image.tex, .subtex = &partSubtex };
+
+                                C2D_ImageTint tint;
+                                C2D_PlainImageTint(&tint,
+                                    C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                                                (uint8_t)(alpha * 255.0f)),
+                                    0.0f);
+
+                                C2D_DrawParams params = {
+                                    .pos    = { dstX, dstY, dstW, dstH },
+                                    .center = { 0.0f, 0.0f },
+                                    .depth  = C->zCounter,
+                                    .angle  = 0.0f,
+                                };
+
+                                C2D_DrawImage(partImage, &params, &tint);
+                                C->zCounter += 0.0001f;
+                                if (C->lagMode) { C->lagSpritePartTicks += svcGetSystemTick() - _lagSPT0; C->lagSpritePartN++; }
+                                return;
+                            }
+                            CLogSpriteFallback(C, tpagIndex, "requested sprite part is fully outside frame bounds", sprite->name, frameIdx);
+                        } else {
+                            CLogSpriteFallback(C, tpagIndex, "sprite sheet frame has invalid dimensions", sprite->name, frameIdx);
+                        }
+                    } else {
+                        CLogSpriteFallback(C, tpagIndex, "sprite sheet image/frame is invalid", sprite->name, frameIdx);
+                    }
+                } else {
+                    CLogSpriteFallback(C, tpagIndex, "sprite sheet failed to load from romfs", sprite->name, frameIdx);
+                }
+            }
+        }
+    }
+
+    // Fallback to legacy atlas cache path when per-sprite sheet is missing.
+    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
+    if (pageIdx < C->pageCacheCount) {
+        drawRegion(C, pageIdx,
+                   (float)(tpag->sourceX + srcOffX),
+                   (float)(tpag->sourceY + srcOffY),
+                   (float)srcW, (float)srcH,
+                   dstX, dstY, dstW, dstH, 0.0f,
+                   C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
+                               (uint8_t)(alpha * 255.0f)),
+                   1.0f); // blend=1: multiply texture by tint (c_white = no change)
+    } else {
+        DBG_LOG("CDrawSpritePart: ERROR - Page %lu out of range\n", (unsigned long)pageIdx);
+        C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH, C2D_Color32(255, 0, 0, 255));
+        C->zCounter += 0.0001f;
+    }
+    if (C->lagMode) { C->lagSpritePartTicks += svcGetSystemTick() - _lagSPT0; C->lagSpritePartN++; }
+}
+
+static void CDrawRectangle(Renderer* renderer,
+    float x1, float y1, float x2, float y2,
+    uint32_t color, float alpha, bool outline)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    u64 _lagRT0 = C->lagMode ? svcGetSystemTick() : 0;
+    uint8_t r = BGR_R(color), g = BGR_G(color), b = BGR_B(color);
+    uint8_t a = (uint8_t)(alpha * 255.0f);
+    u32 col = C2D_Color32(r, g, b, a);
+
+    // Normalize the rectangle in view space    
+    float left   = fminf(x1, x2);
+    float right  = fmaxf(x1, x2);
+    float bottom    = fminf(y1, y2);
+    float top = fmaxf(y1, y2);
+
+    right  += 1.0f;
+    bottom += 1.0f;
+
+    // Transform to screen space
+    float sx1 = (left   - (float)C->viewX) * C->scaleX + C->offsetX;
+    float sy1 = (top    - (float)C->viewY) * C->scaleY + C->offsetY;
+    float sx2 = (right  - (float)C->viewX) * C->scaleX + C->offsetX;
+    float sy2 = (bottom - (float)C->viewY) * C->scaleY + C->offsetY;
+
+    RectDrawCmd cmd = {
+        .x1 = sx1,
+        .y1 = sy1,
+        .x2 = sx2,
+        .y2 = sy2,
+        .z = C->zCounter,
+        .color = col,
+        .outline = outline,
+    };
+    queueRectCmd(C, &cmd);
+    C->zCounter += 0.0001f;
+    if (C->lagMode) { C->lagRectTicks += svcGetSystemTick() - _lagRT0; C->lagRectN++; }
+}
+
+static void CDrawLine(Renderer* renderer,
+    float x1, float y1, float x2, float y2,
+    float width, uint32_t color, float alpha)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+    u64 _lagLT0 = C->lagMode ? svcGetSystemTick() : 0;
+    uint8_t r = BGR_R(color), g = BGR_G(color), b = BGR_B(color);
+    uint8_t a = (uint8_t)(alpha * 255.0f);
+    C2D_DrawLine((x1 - C->viewX) * C->scaleX + C->offsetX,
+                 (y1 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r, g, b, a),
+                 (x2 - C->viewX) * C->scaleX + C->offsetX,
+                 (y2 - C->viewY) * C->scaleY + C->offsetY, C2D_Color32(r, g, b, a),
+                 width, C->zCounter);
+    C->zCounter += 0.0001f;
+    if (C->lagMode) { C->lagLineTicks += svcGetSystemTick() - _lagLT0; C->lagLineN++; }
+}
+
+static void CDrawLineColor(Renderer* renderer,
+    float x1, float y1, float x2, float y2,
+    float width, uint32_t color1, uint32_t color2, float alpha)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+    u64 _lagLT0 = C->lagMode ? svcGetSystemTick() : 0;
+    uint8_t a = (uint8_t)(alpha * 255.0f);
+    u32 c1 = C2D_Color32(BGR_R(color1), BGR_G(color1), BGR_B(color1), a);
+    u32 c2 = C2D_Color32(BGR_R(color2), BGR_G(color2), BGR_B(color2), a);
+    C2D_DrawLine((x1 - C->viewX) * C->scaleX + C->offsetX,
+                 (y1 - C->viewY) * C->scaleY + C->offsetY, c1,
+                 (x2 - C->viewX) * C->scaleX + C->offsetX,
+                 (y2 - C->viewY) * C->scaleY + C->offsetY, c2,
+                 width, C->zCounter);
+    C->zCounter += 0.0001f;
+    if (C->lagMode) { C->lagLineTicks += svcGetSystemTick() - _lagLT0; C->lagLineN++; }
+}
+
+static void CDrawText(Renderer* renderer, const char* text,
+    float x, float y, float xscale, float yscale, float angleDeg)
+{
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    DataWin* dw = renderer->dataWin;
+    CFlushQueuedRects(C);
+    u64 _lagTXT0 = C->lagMode ? svcGetSystemTick() : 0;
+
+    if (renderer->drawFont < 0 || (uint32_t)renderer->drawFont >= dw->font.count) {
+        if (C->lagMode) { C->lagTextTicks += svcGetSystemTick() - _lagTXT0; C->lagTextN++; }
+        return;
+    }
+
+    Font* font = &dw->font.fonts[renderer->drawFont];
+
+    // Resolve which texture page the font lives on
+    int32_t fontTpagIndex = DataWin_resolveTPAG(dw, font->textureOffset);
+    if (fontTpagIndex < 0 || (uint32_t)fontTpagIndex >= dw->tpag.count) {
+        if (C->lagMode) { C->lagTextTicks += svcGetSystemTick() - _lagTXT0; C->lagTextN++; }
+        return;
+    }
+
+    TexturePageItem* tpag = &dw->tpag.items[fontTpagIndex];
+    uint32_t pageIdx = (uint32_t)tpag->texturePageId;
+
+    // Preprocess GML text (# -> newline, \# -> #)
+    char* processed = TextUtils_preprocessGmlText(text);
+    int32_t textLen = (int32_t)strlen(processed);
+
+    // Vertical alignment
+    int32_t lineCount   = TextUtils_countLines(processed, textLen);
+    float   totalHeight = (float)lineCount * (float)font->emSize;
+    float   valignOffset = 0.0f;
+    if      (renderer->drawValign == 1) valignOffset = -totalHeight / 2.0f;
+    else if (renderer->drawValign == 2) valignOffset = -totalHeight;
+
+    float cursorY  = valignOffset;
+    int32_t lineStart = 0;
+
+    while (lineStart <= textLen) {
+        // Find end of current line
+        int32_t lineEnd = lineStart;
+        while (lineEnd < textLen && !TextUtils_isNewlineChar(processed[lineEnd]))
+            lineEnd++;
+
+        int32_t    lineLen = lineEnd - lineStart;
+        const char* line   = processed + lineStart;
+
+        // Horizontal alignment
+        float lineWidth   = TextUtils_measureLineWidth(font, line, lineLen);
+        float halignOffset = 0.0f;
+        if      (renderer->drawHalign == 1) halignOffset = -lineWidth / 2.0f;
+        else if (renderer->drawHalign == 2) halignOffset = -lineWidth;
+
+        float cursorX = halignOffset;
+        int32_t pos   = 0;
+
+        while (pos < lineLen) {
+            uint16_t ch    = TextUtils_decodeUtf8(line, lineLen, &pos);
+            FontGlyph* glyph = TextUtils_findGlyph(font, ch);
+            if (!glyph) continue;
+
+            if (glyph->sourceWidth > 0 && glyph->sourceHeight > 0) {
+                // Screen-space destination rect for this glyph
+                float glyphX = x + (cursorX + (float)glyph->offset) * xscale * font->scaleX;
+                float glyphY = y + cursorY * yscale * font->scaleY;
+                float glyphW = (float)glyph->sourceWidth  * xscale * font->scaleX;
+                float glyphH = (float)glyph->sourceHeight * yscale * font->scaleY;
+
+                float dstX = (glyphX - (float)C->viewX) * C->scaleX + C->offsetX;
+                float dstY = (glyphY - (float)C->viewY) * C->scaleY + C->offsetY;
+                float dstW = glyphW * C->scaleX;
+                float dstH = glyphH * C->scaleY;
+
+                // Source rect within the atlas page: tpag origin + glyph offset
+                float srcX = (float)(tpag->sourceX + glyph->sourceX);
+                float srcY = (float)(tpag->sourceY + glyph->sourceY);
+                float srcW = (float)glyph->sourceWidth;
+                float srcH = (float)glyph->sourceHeight;
+
+                drawRegion(C, pageIdx, srcX, srcY, srcW, srcH,
+                        dstX, dstY, dstW, dstH, 0.0f,
+                        C2D_Color32(BGR_R(renderer->drawColor), BGR_G(renderer->drawColor),
+                                    BGR_B(renderer->drawColor),
+                                    (uint8_t)(renderer->drawAlpha * 255.0f)),
+                        1.0f); // blend=1: replace glyph pixels with drawColor
+            }
+
+            cursorX += (float)glyph->shift;
+
+            // Kerning lookahead
+            if (pos < lineLen) {
+                int32_t savedPos = pos;
+                uint16_t nextCh  = TextUtils_decodeUtf8(line, lineLen, &pos);
+                pos = savedPos;
+                cursorX += TextUtils_getKerningOffset(glyph, nextCh);
+            }
+        }
+
+        // Advance to next line
+        cursorY += (float)font->emSize;
+        if (lineEnd < textLen)
+            lineStart = TextUtils_skipNewline(processed, lineEnd, textLen);
+        else
+            break;
+    }
+
+    free(processed);
+    if (C->lagMode) { C->lagTextTicks += svcGetSystemTick() - _lagTXT0; C->lagTextN++; }
+}
+//
+// Evict all non-pinned region cache entries across every page.  Called when
+// the game switches rooms so stale sprite textures from the previous room are
+// freed, making linear RAM available for the new room's assets.
+//
+// Pinned entries (font glyphs preloaded at init) are kept - they compact to
+// the front of each page's region array so the slot space they vacate is
+// immediately reusable.
+static void COnRoomEnd(Renderer* renderer) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+    uint32_t totalEvicted = 0;
+
+    for (uint32_t pi = 0; pi < C->pageCacheCount; pi++) {
+        TexCachePage* page = &C->pageCache[pi];
+        if (page->regionCount == 0) continue;
+
+        // Evict and discard all sprite regions - pinnedRegions (font glyphs) are untouched
+        for (uint32_t r = 0; r < page->regionCount; r++) {
+            if (page->regions[r].loaded) {
+                C3D_TexDelete(&page->regions[r].tex);
+                totalEvicted++;
+            }
+        }
+        memset(page->regions, 0, page->regionCount * sizeof(RegionCacheEntry));
+        page->regionCount = 0;
+    }
+
+    printf("CRenderer3DS: room end - evicted %lu sprite textures, font glyphs retained\n",
+           totalEvicted);
+    logMemory("after room eviction");
+}
+
+static void COnRoomStart(Renderer* renderer) { /* no-op */ }
+
+static void CFlush(Renderer* renderer) {
+    CRenderer3DS* C = (CRenderer3DS*) renderer;
+    CFlushQueuedRects(C);
+}
+
+static int32_t CCreateSpriteFromSurface(Renderer* renderer,
+    int32_t x, int32_t y, int32_t w, int32_t h,
+    bool removeback, bool smooth, int32_t xorig, int32_t yorig)
+{
+    LOG_ERR("CRenderer3DS: createSpriteFromSurface not supported\n");
+    return -1;
+}
+
+static void CDeleteSprite(Renderer* renderer, int32_t spriteIndex) { /* no-op */ }
+
+static RendererVtable CVtable = {
+    .init                    = CInit,
+    .destroy                 = CDestroy,
+    .beginFrame              = CBeginFrame,
+    .endFrame                = CEndFrame,
+    .beginView               = CBeginView,
+    .endView                 = CEndView,
+    .drawSprite              = CDrawSprite,
+    .drawSpritePart          = CDrawSpritePart,
+    .drawRectangle           = CDrawRectangle,
+    .drawLine                = CDrawLine,
+    .drawLineColor           = CDrawLineColor,
+    .drawText                = CDrawText,
+    .flush                   = CFlush,
+    .createSpriteFromSurface = CCreateSpriteFromSurface,
+    .deleteSprite            = CDeleteSprite,
+    .onRoomEnd               = COnRoomEnd,
+    .onRoomStart             = COnRoomStart,
+};
+
+Renderer* CRenderer3DS_create(void) {
+    CRenderer3DS* C = safeCalloc(1, sizeof(CRenderer3DS));
+    C->base.vtable  = &CVtable;
+    C->scaleX       = 2.0f;
+    C->scaleY       = 2.0f;
+    C->zCounter     = 0.5f;
+    C->frameCounter = 1;
+    return (Renderer*) C;
+}
