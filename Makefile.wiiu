@@ -28,22 +28,16 @@ APP_ICON        := resources/icon.png
 APP_CONTENT     := $(CONTENT_DIR)
 
 ifeq ($(OS),Windows_NT)
-DEFAULT_UNDERTALE_ASSET_DIR := $(USERPROFILE)/AppData/Local/Steam/steamapps/common/Undertale
 CAFEGLSL        ?= $(TOPDIR)/tools/CafeGLSL/glslcompiler.exe
 else
-DEFAULT_UNDERTALE_ASSET_DIR := /home/gray/.local/share/Steam/steamapps/common/Undertale
 CAFEGLSL        ?= $(TOPDIR)/tools/CafeGLSL/glslcompiler.elf
 endif
-
-UNDERTALE_ASSET_DIR ?= $(DEFAULT_UNDERTALE_ASSET_DIR)
 
 WIIU_SHADER_DIR := $(TOPDIR)/resources/wiiu/shaders
 WIIU_SHADERS    := $(WIIU_SHADER_DIR)/textured_quad.gsh $(WIIU_SHADER_DIR)/pos_col.gsh
 WIIU_SHADER_HDR := $(TOPDIR)/src/wiiu/textured_quad_gsh.h $(TOPDIR)/src/wiiu/pos_col_gsh.h
 WIIU_SHADER_PREBUILT := $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
 HAVE_CAFEGLSL := $(if $(wildcard $(CAFEGLSL)),1,0)
-UNDERTALE_OGG_FILES := $(wildcard $(UNDERTALE_ASSET_DIR)/*.ogg)
-UNDERTALE_WAV_FILES := $(wildcard $(UNDERTALE_ASSET_DIR)/*.wav)
 
 COMMON      := -Wall -O2 -ffunction-sections -fdata-sections $(MACHDEP) $(INCLUDE) -D__WIIU__
 CFLAGS      := $(COMMON) -std=gnu99 -Wno-unused-function
@@ -93,18 +87,6 @@ all: wuhb
 stage-assets:
 	@[ -d $(OUTPUT_DIR) ] || mkdir -p $(OUTPUT_DIR)
 	@[ -d $(CONTENT_DIR) ] || mkdir -p $(CONTENT_DIR)
-	@if [ -f "$(UNDERTALE_ASSET_DIR)/data.win" ]; then \
-		cp -f "$(UNDERTALE_ASSET_DIR)/data.win" "$(OUTPUT_DIR)/data.win"; \
-		cp -f "$(UNDERTALE_ASSET_DIR)/data.win" "$(CONTENT_DIR)/data.win"; \
-	fi
-	@if [ -n "$(strip $(UNDERTALE_OGG_FILES))" ]; then \
-		cp -f $(UNDERTALE_OGG_FILES) "$(OUTPUT_DIR)/"; \
-		cp -f $(UNDERTALE_OGG_FILES) "$(CONTENT_DIR)/"; \
-	fi
-	@if [ -n "$(strip $(UNDERTALE_WAV_FILES))" ]; then \
-		cp -f $(UNDERTALE_WAV_FILES) "$(OUTPUT_DIR)/"; \
-		cp -f $(UNDERTALE_WAV_FILES) "$(CONTENT_DIR)/"; \
-	fi
 
 ifeq ($(HAVE_CAFEGLSL),1)
 shaders: $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
