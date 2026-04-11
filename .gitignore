@@ -47,3 +47,8 @@ crash_dump_*.dmp
 crash_dump_*.dmp
 output/cinnamon.3dsx
 >>>>>>> 318c09a12fa285796319b38390def1947681b82f
+output-wiiu/cinnamon.wuhb
+output-wiiu/cinnamon.elf
+output-wiiu/data.win
+.gitignore
+.gitignore

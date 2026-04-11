@@ -763,40 +763,6 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
-<<<<<<< HEAD
-=======
-
-    // -----------------------------------------------------------------
-    // TEXTURE PRELOAD: load all textures referenced by sprites of the
-    // instances that are now active in this room.
-    // -----------------------------------------------------------------    
-    if (dataWin->txtr.count > 0) {
-#if defined(__3DS__)
-        // 3DS renderer now prefers romfs sprite/background sheets and only
-        // falls back to TPAG pages lazily when needed. Eager room-time page
-        // preloading here causes noisy logs and unnecessary cache churn.
-#else
-        for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
-            Instance* inst = runner->instances[i];
-            if (!inst->active || inst->spriteIndex < 0) continue;
-
-            Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
-            for (uint32_t t = 0; t < spr->textureCount; ++t) {
-                uint32_t tpagOffset = spr->textureOffsets[t];
-                int32_t tpagIndex = DataWin_resolveTPAG(dataWin, tpagOffset);
-                if (tpagIndex < 0) continue;
-
-                TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
-                uint32_t texPageIdx = (uint32_t)tpagItem->texturePageId;
-                if (texPageIdx >= dataWin->txtr.count) continue;
-
-                DataWin_loadTexture(dataWin, texPageIdx);
-                dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
-            }
-        }
-#endif
-    }
->>>>>>> 318c09a12fa285796319b38390def1947681b82f
 }
 
 // ===[ Public API ]===
@@ -1365,6 +1331,7 @@ void Runner_step(Runner* runner) {
         Runner_bootLogFirstFrame(runner, "runner: step after room end events");
 
         int32_t newRoomIndex = runner->pendingRoom;
+        runner->pendingRoom = -1;
         require(runner->dataWin->room.count > (uint32_t) newRoomIndex);
         const char* newRoomName = runner->dataWin->room.rooms[newRoomIndex].name;
 
@@ -1430,7 +1397,6 @@ void Runner_step(Runner* runner) {
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
         Runner_bootLogFirstFrame(runner, "runner: step after pending room start");
 
-        runner->pendingRoom = -1;
     }
     Runner_bootLogFirstFrame(runner, "runner: step after room transition");
 
