@@ -1,6 +1,6 @@
-APP_TITLE = Undertale
-APP_DESCRIPTION = Welcome to UNDERTALE. In this RPG, you control a human who falls underground into the world of monsters. Now you must find your way out... or stay trapped forever.
-APP_AUTHOR = Owen
+APP_TITLE = UNDERTALE
+APP_DESCRIPTION = OG game by Toby Fox.
+APP_AUTHOR = Sunshine Dev Team
 APP_PRODUCT_CODE = 000400000B0E2A00
 APP_UNIQUE_ID = 0x1929
 APP_VERSION_MAJOR = 0
