@@ -89,7 +89,6 @@ typedef struct RunnerKeyboardState {
     int32_t currentKey;              // Current active key (for keyboard_key)
 #endif
     int32_t lastKey;                 // Last key pressed (for keyboard_key variable)
-    int32_t keyMap[GML_KEY_COUNT];   // Key remapping table (identity by default)
 } RunnerKeyboardState;
 
 // Lifecycle
@@ -114,6 +113,3 @@ void RunnerKeyboard_simulateRelease(RunnerKeyboardState* kb, int32_t gmlKeyCode)
 
 // Clear a specific key's state
 void RunnerKeyboard_clear(RunnerKeyboardState* kb, int32_t gmlKeyCode);
-
-// Remap fromKey so it fires as toKey (keyboard_set_map)
-void RunnerKeyboard_setMap(RunnerKeyboardState* kb, int32_t fromKey, int32_t toKey);

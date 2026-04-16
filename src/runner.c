@@ -305,11 +305,8 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
         if (bg->stretch) {
             // Stretch to fill room dimensions
             TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
-            float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
-            float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
-            if (baseW <= 0.0f || baseH <= 0.0f) continue;
-            float xscale = roomW / baseW;
-            float yscale = roomH / baseH;
+            float xscale = roomW / (float) tpag->boundingWidth;
+            float yscale = roomH / (float) tpag->boundingHeight;
             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, bg->alpha);
         } else if (bg->tileX || bg->tileY) {
             Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, visibleX, visibleY, visibleW, visibleH, bg->alpha);
@@ -513,12 +510,6 @@ void Runner_draw(Runner* runner) {
             if (codeId >= 0) {
                 Runner_executeEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL);
             } else if (runner->renderer != nullptr) {
-                if (runner->drawSpriteDecimationEnabled && inst->spriteIndex >= 0) {
-                    uint8_t spriteHalf = (uint8_t)(inst->instanceId & 1u);
-                    if (spriteHalf != runner->drawSpriteDecimationPhase) {
-                        continue;
-                    }
-                }
                 Renderer_drawSelf(runner->renderer, inst);
             }
         }
