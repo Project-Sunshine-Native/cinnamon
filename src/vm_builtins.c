@@ -1268,58 +1268,6 @@ static RValue builtinVariableGlobalSet(VMContext* ctx, RValue* args, int32_t arg
     return RValue_makeUndefined();
 }
 
-static RValue builtinVariableInstanceExists(VMContext* ctx, RValue* args, int32_t argCount) {
-    if (2 > argCount || args[1].type != RVALUE_STRING) return RValue_makeBool(false);
-    const char* varName = args[1].string;
-    Runner* runner = (Runner*) ctx->runner;
-
-    // Resolve target instance
-    Instance* inst = nullptr;
-    int32_t id = RValue_toInt32(args[0]);
-    if (id == INSTANCE_SELF) {
-        inst = (Instance*) ctx->currentInstance;
-    } else if (id == INSTANCE_OTHER) {
-        inst = (Instance*) ctx->otherInstance;
-    } else {
-        int32_t instanceCount = (int32_t) arrlen(runner->instances);
-        if (id >= 100000) {
-            // Instance ID
-            repeat(instanceCount, i) {
-                Instance* candidate = runner->instances[i];
-                if (candidate->active && (int32_t) candidate->instanceId == id) {
-                    inst = candidate;
-                    break;
-                }
-            }
-        } else if (id >= 0 && runner->dataWin->objt.count > (uint32_t) id) {
-            // Object index: first active instance of that type
-            repeat(instanceCount, i) {
-                Instance* candidate = runner->instances[i];
-                if (candidate->active && VM_isObjectOrDescendant(ctx->dataWin, candidate->objectIndex, id)) {
-                    inst = candidate;
-                    break;
-                }
-            }
-        }
-    }
-    if (inst == nullptr) return RValue_makeBool(false);
-
-    // Check VARI table for a matching variable name
-    DataWin* dw = ctx->dataWin;
-    repeat(dw->vari.variableCount, i) {
-        Variable* var = &dw->vari.variables[i];
-        if (strcmp(var->name, varName) != 0) continue;
-        if (var->varID == -6) {
-            // Built-in variable: exists on all instances
-            return RValue_makeBool(true);
-        }
-        if (var->instanceType == INSTANCE_SELF && var->varID >= 0) {
-            return RValue_makeBool(hmgeti(inst->selfVars, var->varID) >= 0);
-        }
-    }
-    return RValue_makeBool(false);
-}
-
 // ===[ SCRIPT EXECUTE ]===
 
 static RValue builtinScriptExecute(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -1665,70 +1613,6 @@ static AudioSystem* getAudioSystem(VMContext* ctx) {
 // Track the last music instance for legacy audio_play_music / audio_stop_music
 static int32_t lastMusicInstance = -1;
 
-static const char* basenameNoPath(const char* path) {
-    if (!path) return "";
-    const char* base = path;
-    const char* slash = strrchr(base, '/');
-    if (slash) base = slash + 1;
-    const char* bslash = strrchr(base, '\\');
-    if (bslash) base = bslash + 1;
-    return base;
-}
-
-static void stemFromPath(const char* path, char* out, size_t outSize) {
-    if (!out || outSize == 0) return;
-    out[0] = '\0';
-    if (!path || path[0] == '\0') return;
-
-    const char* base = basenameNoPath(path);
-    size_t len = strlen(base);
-    if (len >= outSize) len = outSize - 1;
-    memcpy(out, base, len);
-    out[len] = '\0';
-
-    char* dot = strrchr(out, '.');
-    if (dot) *dot = '\0';
-}
-
-static int32_t resolveSoundIndexArg(AudioSystem* audio, RValue arg) {
-    if (!audio || !audio->dataWin) return -1;
-
-    // Numeric paths keep legacy behavior.
-    if (arg.type != RVALUE_STRING) {
-        return RValue_toInt32(arg);
-    }
-
-    const char* raw = arg.string ? arg.string : "";
-    if (raw[0] == '\0') return -1;
-
-    DataWin* dw = audio->dataWin;
-    char rawStem[256];
-    stemFromPath(raw, rawStem, sizeof(rawStem));
-
-    for (uint32_t i = 0; i < dw->sond.count; i++) {
-        Sound* s = &dw->sond.sounds[i];
-
-        if (s->name && (strcmp(s->name, raw) == 0 || (rawStem[0] != '\0' && strcmp(s->name, rawStem) == 0))) {
-            return (int32_t) i;
-        }
-
-        if (s->file) {
-            char fileStem[256];
-            stemFromPath(s->file, fileStem, sizeof(fileStem));
-            const char* fileBase = basenameNoPath(s->file);
-
-            if (strcmp(s->file, raw) == 0
-                    || strcmp(fileBase, raw) == 0
-                    || (rawStem[0] != '\0' && strcmp(fileStem, rawStem) == 0)
-                    || strcmp(fileStem, raw) == 0) {
-                return (int32_t) i;
-            }
-        }
-    }
-
-    return -1;
-}
-
 static RValue builtin_audioChannelNum(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeUndefined();
@@ -1740,13 +1624,7 @@ static RValue builtin_audioChannelNum(VMContext* ctx, RValue* args, [[maybe_unus
 static RValue builtin_audioPlaySound(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeReal(-1.0);
-    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
-    if (soundIndex < 0) {
-        if (args[0].type == RVALUE_STRING) {
-            printf("audio_play_sound: could not resolve sound '%s'\n", args[0].string ? args[0].string : "<null>");
-        }
-        return RValue_makeReal(-1.0);
-    }
+    int32_t soundIndex = RValue_toInt32(args[0]);
     int32_t priority = RValue_toInt32(args[1]);
     bool loop = RValue_toBool(args[2]);
     int32_t instanceId = audio->vtable->playSound(audio, soundIndex, priority, loop);
@@ -1766,25 +1644,6 @@ static RValue builtin_audioStopAll([[maybe_unused]] VMContext* ctx, [[maybe_unus
     if (audio == nullptr) return RValue_makeUndefined();
     audio->vtable->stopAll(audio);
     lastMusicInstance = -1;
-    return RValue_makeUndefined();
-}
-
-// Legacy GML sound functions
-static RValue builtin_soundPlay(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    AudioSystem* audio = getAudioSystem(ctx);
-    if (audio == nullptr) return RValue_makeUndefined();
-    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
-    if (soundIndex < 0) return RValue_makeUndefined();
-    audio->vtable->playSound(audio, soundIndex, 0, false);
-    return RValue_makeUndefined();
-}
-
-static RValue builtin_soundStop(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    AudioSystem* audio = getAudioSystem(ctx);
-    if (audio == nullptr) return RValue_makeUndefined();
-    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
-    if (soundIndex < 0) return RValue_makeUndefined();
-    audio->vtable->stopSound(audio, soundIndex);
     return RValue_makeUndefined();
 }
 
@@ -1858,28 +1717,9 @@ static RValue builtin_audioGroupIsLoaded(VMContext* ctx, RValue* args, [[maybe_u
 static RValue builtin_audioPlayMusic(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     AudioSystem* audio = getAudioSystem(ctx);
     if (audio == nullptr) return RValue_makeReal(-1.0);
-    int32_t soundIndex = resolveSoundIndexArg(audio, args[0]);
+    int32_t soundIndex = RValue_toInt32(args[0]);
     int32_t priority = RValue_toInt32(args[1]);
     bool loop = RValue_toBool(args[2]);
-
-    if (soundIndex < 0) {
-        if (args[0].type == RVALUE_STRING) {
-            printf("audio_play_music: could not resolve music '%s'\n", args[0].string ? args[0].string : "<null>");
-        } else {
-            printf("audio_play_music: invalid sound index %ld\n", (long) soundIndex);
-        }
-        lastMusicInstance = -1;
-        return RValue_makeReal(-1.0);
-    }
-
-    if (audio->dataWin && (uint32_t) soundIndex < audio->dataWin->sond.count) {
-        Sound* s = &audio->dataWin->sond.sounds[soundIndex];
-        printf("audio_play_music: resolved idx=%ld name='%s' file='%s'\n",
-               (long) soundIndex,
-               s->name ? s->name : "",
-               s->file ? s->file : "");
-    }
-
     int32_t instanceId = audio->vtable->playSound(audio, soundIndex, priority, loop);
     lastMusicInstance = instanceId;
     return RValue_makeReal((double) instanceId);
@@ -2448,15 +2288,6 @@ static RValue builtinKeyboardClear(VMContext* ctx, RValue* args, int32_t argCoun
     return RValue_makeUndefined();
 }
 
-static RValue builtinKeyboardSetMap(VMContext* ctx, RValue* args, int32_t argCount) {
-    if (2 > argCount) return RValue_makeUndefined();
-    Runner* runner = (Runner*) ctx->runner;
-    int32_t fromKey = RValue_toInt32(args[0]);
-    int32_t toKey = RValue_toInt32(args[1]);
-    RunnerKeyboard_setMap(runner->keyboard, fromKey, toKey);
-    return RValue_makeUndefined();
-}
-
 // Joystick stubs
 STUB_RETURN_ZERO(joystick_exists)
 STUB_RETURN_ZERO(joystick_xpos)
@@ -2776,116 +2607,6 @@ static RValue builtinActionSetRelative(VMContext* ctx, [[maybe_unused]] RValue* 
     return RValue_makeUndefined();
 }
 
-static RValue actionResolveNamedVariable(VMContext* ctx, const char* varName) {
-    if (varName == nullptr || varName[0] == '\0') return RValue_makeUndefined();
-
-    DataWin* dw = ctx->dataWin;
-    Instance* inst = (Instance*) ctx->currentInstance;
-
-    repeat(dw->vari.variableCount, i) {
-        Variable* var = &dw->vari.variables[i];
-        if (strcmp(var->name, varName) != 0) continue;
-
-        if (var->varID == -6) {
-            return VMBuiltins_getVariable(ctx, varName, -1);
-        }
-
-        if (var->instanceType == INSTANCE_SELF && inst != nullptr && var->varID >= 0) {
-            return Instance_getSelfVar(inst, var->varID);
-        }
-
-        if (var->instanceType == INSTANCE_GLOBAL && var->varID >= 0 && (uint32_t) var->varID < ctx->globalVarCount) {
-            RValue val = ctx->globalVars[var->varID];
-            val.ownsString = false;
-            return val;
-        }
-    }
-
-    if (strcmp(varName, "true") == 0 || strcmp(varName, "false") == 0 || strcmp(varName, "pi") == 0 || strcmp(varName, "undefined") == 0) {
-        return VMBuiltins_getVariable(ctx, varName, -1);
-    }
-
-    return RValue_makeUndefined();
-}
-
-static bool actionCompareRValues(RValue lhs, RValue rhs, int cmpKind) {
-    if (lhs.type == RVALUE_STRING && rhs.type == RVALUE_STRING) {
-        int cmp = strcmp(lhs.string != nullptr ? lhs.string : "", rhs.string != nullptr ? rhs.string : "");
-        switch (cmpKind) {
-            case CMP_LT:  return cmp < 0;
-            case CMP_LTE: return cmp <= 0;
-            case CMP_EQ:  return cmp == 0;
-            case CMP_NEQ: return cmp != 0;
-            case CMP_GTE: return cmp >= 0;
-            case CMP_GT:  return cmp > 0;
-            default:      return false;
-        }
-    }
-
-    double da = RValue_toReal(lhs);
-    double db = RValue_toReal(rhs);
-    double diff = da - db;
-    int cmp = fabs(diff) <= GML_MATH_EPSILON ? 0 : (diff < 0 ? -1 : 1);
-    switch (cmpKind) {
-        case CMP_LT:  return cmp < 0;
-        case CMP_LTE: return cmp <= 0;
-        case CMP_EQ:  return cmp == 0;
-        case CMP_NEQ: return cmp != 0;
-        case CMP_GTE: return cmp >= 0;
-        case CMP_GT:  return cmp > 0;
-        default:      return false;
-    }
-}
-
-static int actionParseComparisonKind(RValue opArg) {
-    if (opArg.type == RVALUE_STRING) {
-        const char* op = opArg.string != nullptr ? opArg.string : "";
-        if (strcmp(op, "<") == 0) return CMP_LT;
-        if (strcmp(op, "<=") == 0) return CMP_LTE;
-        if (strcmp(op, "=") == 0 || strcmp(op, "==") == 0) return CMP_EQ;
-        if (strcmp(op, "<>") == 0 || strcmp(op, "!=") == 0) return CMP_NEQ;
-        if (strcmp(op, ">=") == 0) return CMP_GTE;
-        if (strcmp(op, ">") == 0) return CMP_GT;
-        if (strcasecmp(op, "lt") == 0) return CMP_LT;
-        if (strcasecmp(op, "lte") == 0 || strcasecmp(op, "le") == 0) return CMP_LTE;
-        if (strcasecmp(op, "eq") == 0) return CMP_EQ;
-        if (strcasecmp(op, "neq") == 0 || strcasecmp(op, "ne") == 0) return CMP_NEQ;
-        if (strcasecmp(op, "gte") == 0 || strcasecmp(op, "ge") == 0) return CMP_GTE;
-        if (strcasecmp(op, "gt") == 0) return CMP_GT;
-        return CMP_EQ;
-    }
-
-    int op = RValue_toInt32(opArg);
-    if (op >= CMP_LT && op <= CMP_GT) return op;
-    switch (op) {
-        case 0: return CMP_EQ;
-        case 1: return CMP_LT;
-        case 2: return CMP_LTE;
-        case 3: return CMP_GT;
-        case 4: return CMP_GTE;
-        case 5: return CMP_NEQ;
-        default:
-            return CMP_EQ;
-    }
-}
-
-static RValue builtinActionIfVariable(VMContext* ctx, RValue* args, int32_t argCount) {
-    if (argCount <= 0) return RValue_makeBool(false);
-
-    char* varName = RValue_toString(args[0]);
-    RValue lhs = actionResolveNamedVariable(ctx, varName);
-    free(varName);
-
-    if (argCount == 1) {
-        bool result = RValue_toBool(lhs);
-        return RValue_makeBool(result);
-    }
-
-    int cmpKind = (argCount >= 3) ? actionParseComparisonKind(args[2]) : CMP_EQ;
-    bool result = actionCompareRValues(lhs, args[1], cmpKind);
-    return RValue_makeBool(result);
-}
-
 static RValue builtinActionMove(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
     // action_move(direction_string, speed)
     // Direction string is 9 chars of '0'/'1' encoding a 3x3 direction grid:
@@ -3172,36 +2893,6 @@ static RValue builtin_drawRectangle(VMContext* ctx, RValue* args, [[maybe_unused
     return RValue_makeUndefined();
 }
 
-// draw_rectangle_color(x1, y1, x2, y2, c1, c2, c3, c4, outline)
-// The renderer API only supports a flat rectangle color today. For Undertale's
-// UI boxes this is typically enough because all four colors usually match.
-static RValue builtin_drawRectangleColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    Runner* runner = (Runner*) ctx->runner;
-    if (runner->renderer == nullptr || argCount < 9) return RValue_makeUndefined();
-
-    float x1 = (float) RValue_toReal(args[0]);
-    float y1 = (float) RValue_toReal(args[1]);
-    float x2 = (float) RValue_toReal(args[2]);
-    float y2 = (float) RValue_toReal(args[3]);
-    uint32_t c1 = (uint32_t) RValue_toInt32(args[4]);
-    uint32_t c2 = (uint32_t) RValue_toInt32(args[5]);
-    uint32_t c3 = (uint32_t) RValue_toInt32(args[6]);
-    uint32_t c4 = (uint32_t) RValue_toInt32(args[7]);
-    bool outline = RValue_toBool(args[8]);
-
-    // TODO: true 4-corner gradient rectangles. For now, use c1 directly rather
-    // than averaging, which keeps saturated UI borders crisp.
-    (void)c2;
-    (void)c3;
-    (void)c4;
-    runner->renderer->vtable->drawRectangle(runner->renderer, x1, y1, x2, y2, c1, runner->renderer->drawAlpha, outline);
-    return RValue_makeUndefined();
-}
-
-static RValue builtin_drawRectangleColour(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    return builtin_drawRectangleColor(ctx, args, argCount);
-}
-
 static RValue builtin_drawSetColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
     if (runner->renderer != nullptr) {
@@ -3272,106 +2963,34 @@ static RValue builtin_drawTextTransformed(VMContext* ctx, RValue* args, [[maybe_
 }
 STUB_RETURN_UNDEFINED(draw_text_ext)
 STUB_RETURN_UNDEFINED(draw_text_ext_transformed)
-
-static uint32_t pickTextColor(uint32_t c1, uint32_t c2, uint32_t c3, uint32_t c4) {
-    if (c1 == c2 && c1 == c3 && c1 == c4) return c1;
-
-    uint32_t corners[4] = { c1, c2, c3, c4 };
-    int bestIdx = 0;
-    int bestSat = -1;
-    int bestVal = -1;
-
-    for (int i = 0; i < 4; i++) {
-        int r = (int)(corners[i] & 0xFF);
-        int g = (int)((corners[i] >> 8) & 0xFF);
-        int b = (int)((corners[i] >> 16) & 0xFF);
-
-        int maxc = r;
-        if (g > maxc) maxc = g;
-        if (b > maxc) maxc = b;
-
-        int minc = r;
-        if (g < minc) minc = g;
-        if (b < minc) minc = b;
-
-        int sat = maxc - minc;
-        int val = maxc;
-        if (sat > bestSat || (sat == bestSat && val > bestVal)) {
-            bestSat = sat;
-            bestVal = val;
-            bestIdx = i;
-        }
+static RValue builtin_draw_surface(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    if (surfaceId == -1) {
+        // Application surface already effectively renders directly on Wii U.
+        return RValue_makeUndefined();
     }
 
-    return corners[bestIdx];
-}
+    if (!VMBuiltins_surfaceExists(surfaceId)) return RValue_makeUndefined();
 
-// draw_text_ext_color(x, y, str, sep, w, c1, c2, c3, c4, alpha)
-// We currently ignore sep/w wrapping but preserve color + alpha behavior.
-static RValue builtin_draw_text_ext_color(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    Runner* runner = (Runner*) ctx->runner;
-    if (runner->renderer == nullptr || argCount < 10) return RValue_makeUndefined();
-
-    float x   = (float) RValue_toReal(args[0]);
-    float y   = (float) RValue_toReal(args[1]);
-    char* str = RValue_toString(args[2]);
-    uint32_t c1 = (uint32_t) RValue_toInt32(args[5]);
-    uint32_t c2 = (uint32_t) RValue_toInt32(args[6]);
-    uint32_t c3 = (uint32_t) RValue_toInt32(args[7]);
-    uint32_t c4 = (uint32_t) RValue_toInt32(args[8]);
-    float alpha = (float) RValue_toReal(args[9]);
-
-    // TODO: true 4-corner gradient text tint.
-    // Until then, choose a representative corner color that preserves vivid hues.
-    uint32_t avgColor = pickTextColor(c1, c2, c3, c4);
-
-    uint32_t savedColor = runner->renderer->drawColor;
-    float    savedAlpha = runner->renderer->drawAlpha;
-    runner->renderer->drawColor = avgColor;
-    runner->renderer->drawAlpha = alpha;
-    runner->renderer->vtable->drawText(runner->renderer, str, x, y, 1.0f, 1.0f, 0.0f);
-    runner->renderer->drawColor = savedColor;
-    runner->renderer->drawAlpha = savedAlpha;
-    free(str);
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: draw_surface sid=%d", surfaceId);
+    VMBuiltins_bootLog(logBuffer);
     return RValue_makeUndefined();
 }
 
-static RValue builtin_draw_text_ext_colour(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    return builtin_draw_text_ext_color(ctx, args, argCount);
-}
+static RValue builtin_draw_surface_ext(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
+    int32_t surfaceId = RValue_toInt32(args[0]);
+    if (surfaceId == -1) {
+        return RValue_makeUndefined();
+    }
 
-// draw_text_color(x, y, str, c1, c2, c3, c4, alpha)
-// GML draws text with four corner colors; we use the average of all four.
-static RValue builtin_drawTextColor(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
-    Runner* runner = (Runner*) ctx->runner;
-    if (runner->renderer == nullptr || argCount < 8) return RValue_makeUndefined();
+    if (!VMBuiltins_surfaceExists(surfaceId)) return RValue_makeUndefined();
 
-    float x   = (float) RValue_toReal(args[0]);
-    float y   = (float) RValue_toReal(args[1]);
-    char* str = RValue_toString(args[2]);
-    uint32_t c1 = (uint32_t) RValue_toInt32(args[3]);
-    uint32_t c2 = (uint32_t) RValue_toInt32(args[4]);
-    uint32_t c3 = (uint32_t) RValue_toInt32(args[5]);
-    uint32_t c4 = (uint32_t) RValue_toInt32(args[6]);
-    float alpha = (float) RValue_toReal(args[7]);
-
-    // TODO: true 4-corner gradient text tint.
-    // Until then, choose a representative corner color that preserves vivid hues.
-    uint32_t avgColor = pickTextColor(c1, c2, c3, c4);
-
-    uint32_t savedColor = runner->renderer->drawColor;
-    float    savedAlpha = runner->renderer->drawAlpha;
-    runner->renderer->drawColor = avgColor;
-    runner->renderer->drawAlpha = alpha;
-    runner->renderer->vtable->drawText(runner->renderer, str, x, y, 1.0f, 1.0f, 0.0f);
-    runner->renderer->drawColor = savedColor;
-    runner->renderer->drawAlpha = savedAlpha;
-    free(str);
+    char logBuffer[128];
+    snprintf(logBuffer, sizeof(logBuffer), "wiiu_vm: draw_surface_ext sid=%d", surfaceId);
+    VMBuiltins_bootLog(logBuffer);
     return RValue_makeUndefined();
 }
-
-STUB_RETURN_UNDEFINED(draw_surface)
-STUB_RETURN_UNDEFINED(draw_surface_ext)
 static RValue builtin_drawBackground(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
     Runner* runner = (Runner*) ctx->runner;
     if (runner->renderer == nullptr || 3 > argCount) return RValue_makeUndefined();
@@ -3421,11 +3040,8 @@ static RValue builtin_drawBackgroundStretched(VMContext* ctx, RValue* args, [[ma
     if (0 > tpagIndex) return RValue_makeUndefined();
 
     TexturePageItem* tpag = &runner->dataWin->tpag.items[tpagIndex];
-    float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
-    float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
-    if (baseW <= 0.0f || baseH <= 0.0f) return RValue_makeUndefined();
-    float xscale = w / baseW;
-    float yscale = h / baseH;
+    float xscale = w / (float) tpag->boundingWidth;
+    float yscale = h / (float) tpag->boundingHeight;
 
     runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, x, y, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, runner->renderer->drawAlpha);
     return RValue_makeUndefined();
@@ -3463,8 +3079,7 @@ static RValue builtinBackgroundGetWidth(VMContext* ctx, RValue* args, [[maybe_un
     int32_t bgIndex = RValue_toInt32(args[0]);
     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
     if (0 > tpagIndex) return RValue_makeReal(0.0);
-    TexturePageItem* tpag = &ctx->dataWin->tpag.items[tpagIndex];
-    return RValue_makeReal((double) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth));
+    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingWidth);
 }
 
 static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_unused]] int32_t argCount) {
@@ -3472,8 +3087,7 @@ static RValue builtinBackgroundGetHeight(VMContext* ctx, RValue* args, [[maybe_u
     int32_t bgIndex = RValue_toInt32(args[0]);
     int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(ctx->dataWin, bgIndex);
     if (0 > tpagIndex) return RValue_makeReal(0.0);
-    TexturePageItem* tpag = &ctx->dataWin->tpag.items[tpagIndex];
-    return RValue_makeReal((double) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight));
+    return RValue_makeReal((double) ctx->dataWin->tpag.items[tpagIndex].boundingHeight);
 }
 
 static RValue builtin_draw_self(VMContext* ctx, [[maybe_unused]] RValue* args, [[maybe_unused]] int32_t argCount) {
@@ -3944,7 +3558,7 @@ static RValue builtinCollisionLine(VMContext* ctx, RValue* args, int32_t argCoun
             int32_t endY   = (int32_t) fmin(bbox.bottom, yb);
             for (int32_t py = startY; endY >= py && !found; py++) {
                 double px = (fabs(vdy) > 0.0001) ? xt + ((double) py - yt) * vdx / vdy : xt;
-                if (Collision_pointInInstance(spr, inst, px + 0.5, (double) py + 0.5)) {
+                if (Collision_pointInMask(spr, inst, px + 0.5, (double) py + 0.5)) {
                     found = true;
                 }
             }
@@ -3954,7 +3568,7 @@ static RValue builtinCollisionLine(VMContext* ctx, RValue* args, int32_t argCoun
             int32_t endX   = (int32_t) fmin(bbox.right, xr);
             for (int32_t px = startX; endX >= px && !found; px++) {
                 double py = (fabs(cdx) > 0.0001) ? yl + ((double) px - xl) * cdy / cdx : yl;
-                if (Collision_pointInInstance(spr, inst, (double) px + 0.5, py + 0.5)) {
+                if (Collision_pointInMask(spr, inst, (double) px + 0.5, py + 0.5)) {
                     found = true;
                 }
             }
@@ -4005,7 +3619,7 @@ static RValue builtinCollisionRectangle(VMContext* ctx, RValue* args, int32_t ar
         // Precise check if requested and sprite has precise masks
         if (prec != 0) {
             Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
-            if (Collision_hasFrameMasks(spr)) {
+            if (spr != nullptr && spr->sepMasks == 1 && spr->masks != nullptr && spr->maskCount > 0) {
                 // Check if any pixel in the overlap region hits the mask
                 double iLeft   = fmax(x1, bbox.left);
                 double iRight  = fmin(x2, bbox.right);
@@ -4020,7 +3634,7 @@ static RValue builtinCollisionRectangle(VMContext* ctx, RValue* args, int32_t ar
 
                 for (int32_t py = startY; endY > py && !found; py++) {
                     for (int32_t px = startX; endX > px && !found; px++) {
-                        if (Collision_pointInInstance(spr, inst, (double) px + 0.5, (double) py + 0.5)) {
+                        if (Collision_pointInMask(spr, inst, (double) px + 0.5, (double) py + 0.5)) {
                             found = true;
                         }
                     }
@@ -4067,8 +3681,8 @@ static RValue builtinCollisionPoint(VMContext* ctx, RValue* args, int32_t argCou
         // Precise check if requested
         if (prec != 0) {
             Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
-            if (Collision_hasFrameMasks(spr)) {
-                if (!Collision_pointInInstance(spr, inst, px, py)) continue;
+            if (spr != nullptr && spr->sepMasks == 1 && spr->masks != nullptr && spr->maskCount > 0) {
+                if (!Collision_pointInMask(spr, inst, px, py)) continue;
             }
         }
 
@@ -4315,7 +3929,6 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("variable_global_exists", builtinVariableGlobalExists);
     registerBuiltin("variable_global_get", builtinVariableGlobalGet);
     registerBuiltin("variable_global_set", builtinVariableGlobalSet);
-    registerBuiltin("variable_instance_exists", builtinVariableInstanceExists);
 
     // Script
     registerBuiltin("script_execute", builtinScriptExecute);
@@ -4363,8 +3976,6 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("audio_sound_pitch", builtin_audioSoundPitch);
     registerBuiltin("audio_sound_get_gain", builtin_audioSoundGetGain);
     registerBuiltin("audio_sound_get_pitch", builtin_audioSoundGetPitch);
-    registerBuiltin("sound_play", builtin_soundPlay);
-    registerBuiltin("sound_stop", builtin_soundStop);
     registerBuiltin("audio_master_gain", builtin_audioMasterGain);
     registerBuiltin("audio_group_load", builtin_audioGroupLoad);
     registerBuiltin("audio_group_is_loaded", builtin_audioGroupIsLoaded);
@@ -4424,7 +4035,6 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("keyboard_key_press", builtinKeyboardKeyPress);
     registerBuiltin("keyboard_key_release", builtinKeyboardKeyRelease);
     registerBuiltin("keyboard_clear", builtinKeyboardClear);
-    registerBuiltin("keyboard_set_map", builtinKeyboardSetMap);
 
     // Joystick
     registerBuiltin("joystick_exists", builtin_joystick_exists);
@@ -4462,7 +4072,6 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("action_kill_object", builtinActionKillObject);
     registerBuiltin("action_create_object", builtinActionCreateObject);
     registerBuiltin("action_set_relative", builtinActionSetRelative);
-    registerBuiltin("action_if_variable", builtinActionIfVariable);
     registerBuiltin("action_move", builtinActionMove);
     registerBuiltin("action_move_to", builtinActionMoveTo);
     registerBuiltin("action_set_friction", builtinActionSetFriction);
@@ -4496,8 +4105,6 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("draw_sprite_part", builtin_drawSpritePart);
     registerBuiltin("draw_sprite_part_ext", builtin_drawSpritePartExt);
     registerBuiltin("draw_rectangle", builtin_drawRectangle);
-    registerBuiltin("draw_rectangle_color", builtin_drawRectangleColor);
-    registerBuiltin("draw_rectangle_colour", builtin_drawRectangleColour);
     registerBuiltin("draw_set_color", builtin_drawSetColor);
     registerBuiltin("draw_set_alpha", builtin_drawSetAlpha);
     registerBuiltin("draw_set_font", builtin_drawSetFont);
@@ -4505,12 +4112,8 @@ void VMBuiltins_registerAll(void) {
     registerBuiltin("draw_set_valign", builtin_drawSetValign);
     registerBuiltin("draw_text", builtin_drawText);
     registerBuiltin("draw_text_transformed", builtin_drawTextTransformed);
-    registerBuiltin("draw_text_color", builtin_drawTextColor);
-    registerBuiltin("draw_text_colour", builtin_drawTextColor);
     registerBuiltin("draw_text_ext", builtin_draw_text_ext);
     registerBuiltin("draw_text_ext_transformed", builtin_draw_text_ext_transformed);
-    registerBuiltin("draw_text_ext_color", builtin_draw_text_ext_color);
-    registerBuiltin("draw_text_ext_colour", builtin_draw_text_ext_colour);
     registerBuiltin("draw_surface", builtin_draw_surface);
     registerBuiltin("draw_surface_ext", builtin_draw_surface_ext);
     registerBuiltin("draw_background", builtin_drawBackground);
