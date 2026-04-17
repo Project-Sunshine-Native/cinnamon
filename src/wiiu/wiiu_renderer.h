@@ -62,10 +62,6 @@ typedef struct {
     WHBGfxShaderGroup shaderGroup;
     GX2Sampler sampler;
     GX2ContextState* offscreenContextState;
-    GX2ColorBuffer drcSceneBuffer;
-    bool drcSceneReady;
-    GX2Texture drcCopyTexture;
-    bool drcCopyReady;
     uint32_t textureUnit;
     bool shaderReady;
 
