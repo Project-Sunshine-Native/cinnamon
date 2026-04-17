@@ -1296,7 +1296,7 @@ static void CDestroy(Renderer* renderer) {
 static void CBeginView(Renderer* renderer,
     int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH,
     int32_t portX, int32_t portY, int32_t portW, int32_t portH,
-    float viewAngle, uint32_t viewIndex)
+    float viewAngle, int32_t viewIndex)
 {
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->viewX = viewX;
@@ -1321,10 +1321,10 @@ static void CBeginView(Renderer* renderer,
 
 //static u64 lastframetime = 0;
 
-static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
+static void CBeginFrame(Renderer* renderer, uint32_t bgColor, int32_t roomSpeed, int32_t gameW, int32_t gameH, int32_t fbWidth, int32_t fbHeight)
 {
     osTickCounterUpdate(&timer);
-    double targetMs = 1000.0 / speed;
+    double targetMs = 1000.0 / roomSpeed;
     double elapsedMs = osTickCounterRead(&timer);
 
     if (elapsedMs < targetMs) {
@@ -1336,16 +1336,16 @@ static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int3
 
     CRenderer3DS* C = (CRenderer3DS*) renderer;
     C->zCounter = 0.5f;
-    //CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, windowW, windowH, 0.0f, C->viewIndex);
+    //CBeginView(renderer, 0, 0, gameW, gameH, 50, 0, fbWidth, fbHeight, 0.0f, C->viewIndex);
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     if (C->viewIndex == 1)
     {
-        C2D_TargetClear(C->bottom, clearColor);
+        C2D_TargetClear(C->bottom, bgColor);
         C2D_SceneBegin(C->bottom);
     }
     else
     {
-        C2D_TargetClear(C->top, clearColor);
+        C2D_TargetClear(C->top, bgColor);
         C2D_SceneBegin(C->top);
     }
 }
@@ -1710,7 +1710,6 @@ static RendererVtable CVtable = {
     .createSpriteFromSurface = CCreateSpriteFromSurface,
     .deleteSprite            = CDeleteSprite,
     .onRoomEnd               = COnRoomEnd,
-    .onRoomStart             = COnRoomStart,
 };
 
 Renderer* CRenderer3DS_create(void) {
