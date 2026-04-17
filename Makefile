@@ -34,7 +34,8 @@ include $(DEVKITARM)/3ds_rules
 #     - <libctru folder>/default_icon.png
 #---------------------------------------------------------------------------------
 TARGET      := $(notdir $(CURDIR))
-BUILD       := build-n3ds
+PROFILE ?= 0
+BUILD       := build-n3ds$(if $(filter 0,$(PROFILE)),,-profile)
 SOURCES     := src src/n3ds
 DATA        := data
 INCLUDES    := include src src/n3ds 
@@ -56,12 +57,24 @@ RSF             := $(TOPDIR)/$(RESOURCES)/template.rsf
 # options for code generation
 #---------------------------------------------------------------------------------
 ARCH 		:= -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp
-COMMON      := -Wall -O2 -mword-relocations -fomit-frame-pointer -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__ -DLODEPNG_NO_COMPILE_ALLOCATORS
+COMMON      := -Wall -O3 -mword-relocations -fomit-frame-pointer -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__ -DLODEPNG_NO_COMPILE_ALLOCATORS
 # TODO: Fix unused functions
 CFLAGS 		:= $(COMMON) -std=gnu99 -Wno-unused-function -DLODEPNG_NO_COMPILE_ALLOCATORS
 CXXFLAGS    := $(COMMON) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS     := $(ARCH)
 LDFLAGS     := $(ARCH) -Wl,-Map,$(notdir $*.map)
+
+PROFILE_REPORT_EVERY ?= 120
+PROFILE_SPIKE_MS ?= 25.0
+
+ifneq ($(PROFILE),0)
+CFLAGS += -DCINNAMON_PROFILE=1 \
+		  -DCINNAMON_PROFILE_REPORT_EVERY=$(PROFILE_REPORT_EVERY) \
+		  -DCINNAMON_PROFILE_SPIKE_MS=$(PROFILE_SPIKE_MS)
+CXXFLAGS += -DCINNAMON_PROFILE=1 \
+		    -DCINNAMON_PROFILE_REPORT_EVERY=$(PROFILE_REPORT_EVERY) \
+		    -DCINNAMON_PROFILE_SPIKE_MS=$(PROFILE_SPIKE_MS)
+endif
 
 ifneq (,$(filter cia,$(MAKECMDGOALS)))
   LDFLAGS += -specs=cia.specs
@@ -100,8 +113,9 @@ CPPFILES           := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)
 SFILES             := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 PICAFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.v.pica)))
 SHLISTFILES        := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
-GFXFILES           := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
-BINFILES           := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+# Recursively discover .t3s files under each GRAPHICS root, preserving subpaths.
+GFXFILES           := $(foreach dir,$(GRAPHICS),$(shell cd $(CURDIR)/$(dir) 2>/dev/null && find . -type f -name '*.t3s' -print | sed 's|^./||'))
+BINFILES           := $(foreach dir,$(DATA),$(shell cd $(CURDIR)/$(dir) 2>/dev/null && find . -type f -print | sed 's|^./||'))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -224,7 +238,7 @@ endif
 
 COMMON_MAKEROM_PARAMS := -rsf $(RSF) -target t -exefslogo -elf $(OUTPUT_FILE).elf -icon icon.icn \
 -banner banner.bnr -DAPP_TITLE="$(APP_TITLE)" -DAPP_PRODUCT_CODE="$(APP_PRODUCT_CODE)" \
--DAPP_UNIQUE_ID="$(APP_UNIQUE_ID)" -DAPP_ROMFS="$(APP_ROMFS)" -DAPP_SYSTEM_MODE="96MB" \
+-DAPP_UNIQUE_ID="$(APP_UNIQUE_ID)" -DAPP_ROMFS="$(APP_ROMFS)" -DAPP_SYSTEM_MODE="64MB" \
 -DAPP_SYSTEM_MODE_EXT="Legacy" -major "$(APP_VERSION_MAJOR)" -minor "$(APP_VERSION_MINOR)" \
 -micro "$(APP_VERSION_MICRO)"
 
@@ -236,8 +250,8 @@ ifeq ($(OS),Windows_NT)
 	SMDHTOOL = smdhtool.exe
 	TEX3DS = tex3ds.exe
 else
-	MAKEROM = makerom
-	BANNERTOOL = bannertool
+	MAKEROM = $(TOPDIR)/tools/makerom
+	BANNERTOOL = $(TOPDIR)/tools/bannertool
 	CITRA = citra
 	_3DSXTOOL = 3dsxtool
 	SMDHTOOL = smdhtool
@@ -305,11 +319,13 @@ release : $(OUTPUT_FILE).zip cia 3ds
 %.bin.o	%_bin.h : %.bin
 #---------------------------------------------------------------------------------
 	@echo $(notdir $<)
+	@mkdir -p $(dir $@)
 	@$(bin2o)
 #---------------------------------------------------------------------------------
 .PRECIOUS : %.t3x
 %.t3x.o	%_t3x.h : %.t3x
 #---------------------------------------------------------------------------------
+	@mkdir -p $(dir $@)
 	@$(bin2o)
 
 #---------------------------------------------------------------------------------
@@ -339,10 +355,21 @@ endef
 	@$(call shader-as,$(foreach file,$(shell cat $<),$(dir $<)$(file)))
 
 #---------------------------------------------------------------------------------
-%.t3x %.h :  %.t3s
-#---------------------------------------------------------------------------------
-	@echo $(notdir $<)
-	@$(TEX3DS) -i $< -H $*.h -d $*.d -o $(TOPDIR)/$(GFXBUILD)/$*.t3x
+# Generate explicit tex3ds rules for every discovered .t3s file.
+# Explicit targets beat the generic %.t3x %.h : %.t3s rule from 3ds_rules.
+define make-gfx-rule
+$(1) $(1:.t3x=.h): $(1:.t3x=.t3s)
+	@echo $$(notdir $$<)
+	@mkdir -p $$(dir $(1:.t3x=.h)) $$(dir $(1:.t3x=.d)) $$(dir $$(TOPDIR)/$$(GFXBUILD)/$(1))
+	@$$(TEX3DS) -i $$< -H $(1:.t3x=.h) -d $(1:.t3x=.d) -o $$(TOPDIR)/$$(GFXBUILD)/$(1) || { \
+		echo "warning: tex3ds failed for $$< (likely oversized/unsupported); using runtime fallback"; \
+		: > $(1:.t3x=.h); \
+		: > $(1:.t3x=.d); \
+		: > $(1); \
+	}
+endef
+
+$(foreach f,$(T3XFILES),$(eval $(call make-gfx-rule,$(f))))
 
 -include $(DEPSDIR)/*.d
 

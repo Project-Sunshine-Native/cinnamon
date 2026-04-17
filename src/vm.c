@@ -12,22 +12,6 @@
 
 #include "stb_ds.h"
 
-__attribute__((weak)) void VM_platformBootLog(const char* message) {
-    (void) message;
-}
-
-static void VM_bootLog(const char* message) {
-    VM_platformBootLog(message);
-}
-
-static bool VM_shouldProfileBlackScreenBuiltins(VMContext* ctx) {
-    if (ctx == NULL || ctx->currentCodeName == NULL) return false;
-    return
-        strncmp(ctx->currentCodeName, "gml_Object_obj_time_", 20) == 0 ||
-        strncmp(ctx->currentCodeName, "gml_Object_obj_screen_", 22) == 0 ||
-        strncmp(ctx->currentCodeName, "gml_Object_obj_f_gamestart_", 27) == 0;
-}
-
 // ===[ Stack Operations ]===
 
 static bool shouldTraceStack(VMContext* ctx) {
@@ -1431,13 +1415,6 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
     // Check built-in functions first
     BuiltinFunc builtin = VMBuiltins_find(funcName);
     if (builtin != nullptr) {
-        static int32_t blackScreenBuiltinLogCount = 0;
-        if (VM_shouldProfileBlackScreenBuiltins(ctx) && blackScreenBuiltinLogCount < 256) {
-            char logBuffer[256];
-            snprintf(logBuffer, sizeof(logBuffer), "vm_scene: code=%s builtin=%s argc=%d", ctx->currentCodeName, funcName, argCount);
-            VM_bootLog(logBuffer);
-            blackScreenBuiltinLogCount++;
-        }
         RValue result = builtin(ctx, args, argCount);
         // Free arguments
         if (args != nullptr) {
