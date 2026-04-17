@@ -592,11 +592,12 @@ static bool WiiUAudio_decodeSound(WiiUAudioSystem* wiiu, Sound* sound, WiiUDecod
 }
 
 static WiiUSoundInstance* WiiUAudio_findInstanceById(WiiUAudioSystem* wiiu, int32_t instanceId) {
-    int32_t slotIndex = instanceId - WIIU_SOUND_INSTANCE_ID_BASE;
-    if (slotIndex < 0 || slotIndex >= MAX_WIIU_SOUND_INSTANCES) return NULL;
-    WiiUSoundInstance* inst = &wiiu->instances[slotIndex];
-    if (!inst->active || inst->instanceId != instanceId) return NULL;
-    return inst;
+    if (instanceId < WIIU_SOUND_INSTANCE_ID_BASE) return NULL;
+    repeat(MAX_WIIU_SOUND_INSTANCES, i) {
+        WiiUSoundInstance* inst = &wiiu->instances[i];
+        if (inst->active && inst->instanceId == instanceId) return inst;
+    }
+    return NULL;
 }
 
 static WiiUSoundInstance* WiiUAudio_findFreeSlot(WiiUAudioSystem* wiiu) {
@@ -725,7 +726,8 @@ static int32_t WiiUAudioSystem_playSound(AudioSystem* audio, int32_t soundIndex,
     slot->active = true;
     slot->loop = loop;
     slot->soundIndex = soundIndex;
-    slot->instanceId = WIIU_SOUND_INSTANCE_ID_BASE + (int32_t) (slot - wiiu->instances);
+    slot->instanceId = WIIU_SOUND_INSTANCE_ID_BASE + wiiu->nextInstanceCounter++;
+    if (wiiu->nextInstanceCounter < 0) wiiu->nextInstanceCounter = 0; /* wraparound guard */
     slot->priority = priority;
     slot->position = 0.0;
     slot->currentGain = 1.0f;
