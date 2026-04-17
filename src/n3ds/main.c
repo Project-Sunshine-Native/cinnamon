@@ -845,16 +845,7 @@ int main(int argc, char* argv[]) {
         // internally, and calling it twice per loop causes GPU command-buffer corruption on
         // real hardware (the duplicate C3D_FrameBegin was the source of the hardware crash).
 
-        // Clear FBO with room background color
-        if (runner->drawBackgroundColor) {
-            int rInt = BGR_R(runner->backgroundColor);
-            int gInt = BGR_G(runner->backgroundColor);
-            int bInt = BGR_B(runner->backgroundColor);
-            // glClearColor(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f);
-            //C2D_TargetClear(window, C2D_Color32f(rInt / 255.0f, gInt / 255.0f, bInt / 255.0f, 1.0f));
-        } else {
-            // glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        }
+        // Clear FBO with room background color (handled by beginFrame via bgColor)
         // glClear(GL_COLOR_BUFFER_BIT);
 
         // Render each enabled view (or a default full-screen view if views are disabled)
