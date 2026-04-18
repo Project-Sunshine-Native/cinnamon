@@ -3743,7 +3743,7 @@ static RValue builtinCollisionLine(VMContext* ctx, RValue* args, int32_t argCoun
             int32_t endY   = (int32_t) fmin(bbox.bottom, yb);
             for (int32_t py = startY; endY >= py && !found; py++) {
                 double px = (fabs(vdy) > 0.0001) ? xt + ((double) py - yt) * vdx / vdy : xt;
-                if (Collision_pointInMask(spr, inst, px + 0.5, (double) py + 0.5)) {
+                if (Collision_pointInInstance(spr, inst, px + 0.5, (double) py + 0.5)) {
                     found = true;
                 }
             }
@@ -3753,7 +3753,7 @@ static RValue builtinCollisionLine(VMContext* ctx, RValue* args, int32_t argCoun
             int32_t endX   = (int32_t) fmin(bbox.right, xr);
             for (int32_t px = startX; endX >= px && !found; px++) {
                 double py = (fabs(cdx) > 0.0001) ? yl + ((double) px - xl) * cdy / cdx : yl;
-                if (Collision_pointInMask(spr, inst, (double) px + 0.5, py + 0.5)) {
+                if (Collision_pointInInstance(spr, inst, (double) px + 0.5, py + 0.5)) {
                     found = true;
                 }
             }
@@ -3804,7 +3804,7 @@ static RValue builtinCollisionRectangle(VMContext* ctx, RValue* args, int32_t ar
         // Precise check if requested and sprite has precise masks
         if (prec != 0) {
             Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
-            if (spr != nullptr && spr->sepMasks == 1 && spr->masks != nullptr && spr->maskCount > 0) {
+            if (Collision_hasFrameMasks(spr)) {
                 // Check if any pixel in the overlap region hits the mask
                 double iLeft   = fmax(x1, bbox.left);
                 double iRight  = fmin(x2, bbox.right);
@@ -3819,7 +3819,7 @@ static RValue builtinCollisionRectangle(VMContext* ctx, RValue* args, int32_t ar
 
                 for (int32_t py = startY; endY > py && !found; py++) {
                     for (int32_t px = startX; endX > px && !found; px++) {
-                        if (Collision_pointInMask(spr, inst, (double) px + 0.5, (double) py + 0.5)) {
+                        if (Collision_pointInInstance(spr, inst, (double) px + 0.5, (double) py + 0.5)) {
                             found = true;
                         }
                     }
@@ -3866,8 +3866,8 @@ static RValue builtinCollisionPoint(VMContext* ctx, RValue* args, int32_t argCou
         // Precise check if requested
         if (prec != 0) {
             Sprite* spr = Collision_getSprite(ctx->dataWin, inst);
-            if (spr != nullptr && spr->sepMasks == 1 && spr->masks != nullptr && spr->maskCount > 0) {
-                if (!Collision_pointInMask(spr, inst, px, py)) continue;
+            if (Collision_hasFrameMasks(spr)) {
+                if (!Collision_pointInInstance(spr, inst, px, py)) continue;
             }
         }
 

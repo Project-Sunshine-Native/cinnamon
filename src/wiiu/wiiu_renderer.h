@@ -29,8 +29,8 @@ typedef struct {
 } WiiUBatchVertex;
 
 typedef struct {
-    uint32_t targetWidth;
-    uint32_t targetHeight;
+    float targetWidth;
+    float targetHeight;
     uint32_t xOffset;
     uint32_t yOffset;
 } WiiUPresentLayout;
@@ -78,6 +78,7 @@ typedef struct {
 
     int32_t frameWidth;
     int32_t frameHeight;
+    WiiUPresentLayout presentLayout;
 
     int32_t viewX;
     int32_t viewY;

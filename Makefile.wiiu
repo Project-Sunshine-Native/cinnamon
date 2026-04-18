@@ -13,20 +13,20 @@ endif
 TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/wut/share/wut_rules
 
-TARGET      := cinnamon
+TARGET      := undertale
 BUILD       := build-wiiu
 SOURCES     := src src/wiiu
 INCLUDES    := include src src/wiiu
 OUTPUT      := output-wiiu
 CONTENT_DIR := $(TOPDIR)/$(OUTPUT)/content
 
-APP_NAME        := Cinnamon
-APP_SHORTNAME   := Cinnamon
-APP_AUTHOR      := MrPowerGamerBR
-APP_ICON        := resources/icon.png
-APP_TV_IMAGE    := resources/wiiu/tv.png
-APP_DRC_IMAGE   := resources/wiiu/drc.png
-APP_CONTENT     := $(CONTENT_DIR)
+export APP_NAME        := Undertale
+export APP_SHORTNAME   := Undertale
+export APP_AUTHOR      := Grayforz2468
+export APP_ICON        := $(TOPDIR)/resources/wiiu/icon.png
+export APP_TV_IMAGE    := $(TOPDIR)/resources/wiiu/tv.png
+export APP_DRC_IMAGE   := $(TOPDIR)/resources/wiiu/drc.png
+export APP_CONTENT     := $(CONTENT_DIR)
 
 ifeq ($(OS),Windows_NT)
 CAFEGLSL        ?= $(TOPDIR)/tools/CafeGLSL/glslcompiler.exe

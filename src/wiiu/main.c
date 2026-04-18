@@ -52,13 +52,12 @@ static const WiiUKeyMap WIIU_KEY_MAPS[] = {
     { VPAD_BUTTON_A, 'Z' },
     { VPAD_BUTTON_B, 'X' },
     { VPAD_BUTTON_X, 'C' },
-    { VPAD_BUTTON_Y, VK_ESCAPE },
+    { VPAD_BUTTON_Y, 'C' },
     { VPAD_BUTTON_PLUS, VK_ENTER },
     { VPAD_BUTTON_MINUS, VK_BACKSPACE },
     { VPAD_BUTTON_L, VK_PAGEDOWN },
     { VPAD_BUTTON_R, VK_PAGEUP },
     { VPAD_BUTTON_ZL, VK_SHIFT },
-    { VPAD_BUTTON_ZR, VK_CONTROL },
 };
 
 static void bootLog(const char* message) {
@@ -144,16 +143,36 @@ static double elapsedMs(const struct timespec* start, const struct timespec* end
     return seconds * 1000.0 + nanos / 1000000.0;
 }
 
+static void syncKeyState(RunnerKeyboardState* keyboard, int32_t gmlKey, bool isHeld) {
+    bool wasHeld = RunnerKeyboard_check(keyboard, gmlKey);
+    if (isHeld && !wasHeld) {
+        RunnerKeyboard_onKeyDown(keyboard, gmlKey);
+    } else if (!isHeld && wasHeld) {
+        RunnerKeyboard_onKeyUp(keyboard, gmlKey);
+    }
+}
+
 static void syncButtonsToKeyboard(RunnerKeyboardState* keyboard, uint32_t held) {
     repeat(sizeof(WIIU_KEY_MAPS) / sizeof(WIIU_KEY_MAPS[0]), i) {
-        bool isHeld = (held & WIIU_KEY_MAPS[i].vpadButton) != 0;
-        bool wasHeld = RunnerKeyboard_check(keyboard, WIIU_KEY_MAPS[i].gmlKey);
-        if (isHeld && !wasHeld) {
-            RunnerKeyboard_onKeyDown(keyboard, WIIU_KEY_MAPS[i].gmlKey);
-        } else if (!isHeld && wasHeld) {
-            RunnerKeyboard_onKeyUp(keyboard, WIIU_KEY_MAPS[i].gmlKey);
+        int32_t gmlKey = WIIU_KEY_MAPS[i].gmlKey;
+        if (gmlKey == VK_LEFT || gmlKey == VK_RIGHT || gmlKey == VK_UP || gmlKey == VK_DOWN) {
+            continue;
         }
+        syncKeyState(keyboard, gmlKey, (held & WIIU_KEY_MAPS[i].vpadButton) != 0);
     }
+}
+
+static void syncDirectionalInputToKeyboard(RunnerKeyboardState* keyboard, uint32_t held, const VPADStatus* status) {
+    const float deadzone = 0.35f;
+    bool leftHeld = (held & VPAD_BUTTON_LEFT) != 0 || status->leftStick.x <= -deadzone;
+    bool rightHeld = (held & VPAD_BUTTON_RIGHT) != 0 || status->leftStick.x >= deadzone;
+    bool upHeld = (held & VPAD_BUTTON_UP) != 0 || status->leftStick.y >= deadzone;
+    bool downHeld = (held & VPAD_BUTTON_DOWN) != 0 || status->leftStick.y <= -deadzone;
+
+    syncKeyState(keyboard, VK_LEFT, leftHeld);
+    syncKeyState(keyboard, VK_RIGHT, rightHeld);
+    syncKeyState(keyboard, VK_UP, upHeld);
+    syncKeyState(keyboard, VK_DOWN, downHeld);
 }
 
 void Runner_platformBootLog(const char* message) { bootLog(message); }
@@ -402,6 +421,7 @@ int main(int argc, char* argv[]) {
         memset(&vpadStatus, 0, sizeof(vpadStatus));
         if (VPADRead(VPAD_CHAN_0, &vpadStatus, 1, &error) > 0 && error == VPAD_READ_SUCCESS) {
             syncButtonsToKeyboard(runner->keyboard, vpadStatus.hold);
+            syncDirectionalInputToKeyboard(runner->keyboard, vpadStatus.hold, &vpadStatus);
         }
 
         struct timespec vmStart;
