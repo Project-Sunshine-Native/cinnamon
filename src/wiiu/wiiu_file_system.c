@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 __attribute__((weak)) void WiiUFileSystem_platformBootLog(const char* message) {
     (void) message;
@@ -71,15 +70,8 @@ static bool WiiUFileSystem_writeFileText(FileSystem* fs, const char* relativePat
 
     size_t length = strlen(contents);
     size_t written = fwrite(contents, 1, length, file);
-    bool ok = written == length;
-    if (ok) {
-        ok = fflush(file) == 0;
-    }
-    if (ok) {
-        ok = fsync(fileno(file)) == 0;
-    }
-    bool closeOk = fclose(file) == 0;
-    return ok && closeOk;
+    fclose(file);
+    return written == length;
 }
 
 static bool WiiUFileSystem_deleteFile(FileSystem* fs, const char* relativePath) {

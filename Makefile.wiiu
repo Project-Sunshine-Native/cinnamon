@@ -24,6 +24,8 @@ APP_NAME        := Cinnamon
 APP_SHORTNAME   := Cinnamon
 APP_AUTHOR      := MrPowerGamerBR
 APP_ICON        := resources/icon.png
+APP_TV_IMAGE    := resources/wiiu/tv.png
+APP_DRC_IMAGE   := resources/wiiu/drc.png
 APP_CONTENT     := $(CONTENT_DIR)
 
 ifeq ($(OS),Windows_NT)
