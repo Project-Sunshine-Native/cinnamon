@@ -4,7 +4,6 @@
 
 #include <gx2/context.h>
 #include <gx2/sampler.h>
-#include <gx2/surface.h>
 #include <gx2/texture.h>
 #include <gx2r/buffer.h>
 #include <whb/gfx.h>
@@ -61,7 +60,6 @@ typedef struct {
 
     WHBGfxShaderGroup shaderGroup;
     GX2Sampler sampler;
-    GX2ContextState* offscreenContextState;
     uint32_t textureUnit;
     bool shaderReady;
 

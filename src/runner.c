@@ -1241,8 +1241,6 @@ void Runner_step(Runner* runner) {
         // Load new room
         initRoom(runner, newRoomIndex);
 
-        runner->renderer->vtable->onRoomStart(runner->renderer);
-
         // Fire Room Start for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
 #ifndef __WIIU__
