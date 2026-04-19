@@ -1,14 +1,15 @@
 # Cinnamon
-A fork of butterscotch with 3DS and Wii U support!
+A fork of Butterscotch with 3DS and Wii U support!
 
 ### TO-DO:
-- Replace all glfw references with citro3d (not using citro2d because citro3d is closer) in n3ds/main.c
-- Dynamically split textures bigger than 1024x1024
-- Pad textures that do not have resolutions ^2
-- Add audio
-- Remove controller stubs and use them for input
-- Force second camera to always render to bottom screen
-- Make touchscreen register mouse click and mouse movements
+- Optimize 3DS
+- Fix room advancing on 3DS
+- Convert Asriel background into an animation
+- Fix Muffet pet attack
+- Fix rotation
+- Add colored sprites (3DS)
+- Disable lava_object or turn it into an animation
+- # UPDATE SRC!!
 
 ### File Explanations:
 - runner.c handles events, rooms, instances, etc.
