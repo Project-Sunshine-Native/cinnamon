@@ -1189,6 +1189,7 @@ void Runner_step(Runner* runner) {
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_END);
 
         int32_t newRoomIndex = runner->pendingRoom;
+        runner->pendingRoom = -1;
         require(runner->dataWin->room.count > (uint32_t) newRoomIndex);
         const char* newRoomName = runner->dataWin->room.rooms[newRoomIndex].name;
 
@@ -1251,7 +1252,6 @@ void Runner_step(Runner* runner) {
         }
 #endif
 
-        runner->pendingRoom = -1;
     }
 
     Runner_cleanupDestroyedInstances(runner);
