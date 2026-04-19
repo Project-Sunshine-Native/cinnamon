@@ -9,7 +9,7 @@ A fork of Butterscotch with 3DS and Wii U support!
 - Fix rotation
 - Add colored sprites (3DS)
 - Disable lava_object or turn it into an animation
-- # UPDATE SRC!!
+- UPDATE SRC!!
 
 ### File Explanations:
 - runner.c handles events, rooms, instances, etc.
