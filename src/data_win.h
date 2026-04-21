@@ -1,24 +1,12 @@
 #pragma once
 
+#include "common.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <stdio.h>   // FILE, fseek, fread, SEEK_SET
-#include <stdlib.h>  // malloc, free
+#include <stdio.h>
 
-// Write errors to both stderr (on-screen console) and stdout (file log).
-#define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); printf(__VA_ARGS__); } while(0)
-
-// Define DATAWIN_DEBUG_LOGGING to re-enable per-load verbose traces.
-// Leave undefined in production — DataWin_loadTexture is called multiple
-// times per frame and each printf flushes to the SD card via line-buffered
-// stdout, adding many milliseconds per call.
-// #define DATAWIN_DEBUG_LOGGING
-#ifdef DATAWIN_DEBUG_LOGGING
-#  define DW_DBG(...) printf(__VA_ARGS__)
-#else
-#  define DW_DBG(...) ((void)0)
-#endif
+#include "utils.h"
 
 // Forward declaration for progress callback
 typedef struct DataWin DataWin;
@@ -49,6 +37,12 @@ typedef struct {
     bool parseAudo;
     // If true, precise masks will be skipped when the sprite does not have a precise state set
     bool skipLoadingPreciseMasksForNonPreciseSprites;
+
+    // If true, Room payloads (backgrounds, views, gameObjects, tiles, layers) are parsed on demand via DataWin_loadRoomPayload during gameplay.
+    bool lazyLoadRooms;
+
+    // When lazyLoadRooms is true, this list indicates which rooms should be loaded during load time instead of demand. They will also not be freed.
+    StringBooleanEntry* eagerlyLoadedRooms;
 
     // Optional progress callback, called before each chunk is parsed.
     // chunkName: 4-character chunk name (e.g. "GEN8", "SPRT")
@@ -88,6 +82,7 @@ typedef struct {
     uint32_t debuggerPort;
     uint32_t roomOrderCount;
     int32_t* roomOrder;
+    float gms2FPS;
 } Gen8;
 
 // ===[ OPTN - Options ]===
@@ -206,6 +201,11 @@ typedef struct {
     uint32_t sepMasks;
     int32_t originX;
     int32_t originY;
+    uint32_t sVersion;
+    uint32_t sSpriteType;
+    float gms2PlaybackSpeed;
+    bool gms2PlaybackSpeedType;
+    bool specialType;
     uint32_t textureCount;
     uint32_t* textureOffsets; // absolute file offsets to TexturePageItems
     uint32_t maskCount;       // number of collision masks (one per frame, or 0)
@@ -224,6 +224,19 @@ typedef struct {
     bool smooth;
     bool preload;
     uint32_t textureOffset; // absolute file offset to TexturePageItem
+    uint32_t gms2UnknownAlways2;
+    uint32_t gms2TileWidth;
+    uint32_t gms2TileHeight;
+    uint32_t gms2TileSeparationX;
+    uint32_t gms2TileSeparationY;
+    uint32_t gms2OutputBorderX;
+    uint32_t gms2OutputBorderY;
+    uint32_t gms2TileColumns;
+    uint32_t gms2ItemsPerTileCount;
+    uint32_t gms2TileCount;
+    int gms2ExportedSpriteIndex;
+    int64_t gms2FrameLength;
+    uint32_t *gms2TileIds;
 } Background;
 
 typedef struct {
@@ -350,8 +363,13 @@ typedef struct {
     uint32_t textureOffset; // absolute file offset to TexturePageItem
     float scaleX;
     float scaleY;
+    int32_t ascenderOffset; // bytecodeVersion >= 17 only
     uint32_t glyphCount;
     FontGlyph* glyphs;
+    uint32_t maxGlyphHeight; // Computed after glyph parse: max sourceHeight across glyphs; HTML5 runner uses this for line stride (see yyFont.TextHeight)
+    // Sprite font fields (only valid when isSpriteFont is true)
+    bool isSpriteFont;
+    int32_t spriteIndex; // source sprite index (-1 for regular fonts)
 } Font;
 
 typedef struct {
@@ -396,7 +414,7 @@ typedef struct {
 } Tmln;
 
 // ===[ OBJT - Game Objects ]===
-#define OBJT_EVENT_TYPE_COUNT 12
+#define OBJT_EVENT_TYPE_COUNT 15
 
 typedef struct {
     uint32_t eventSubtype;
@@ -483,6 +501,8 @@ typedef struct {
     int32_t creationCode;
     float scaleX;
     float scaleY;
+    float imageSpeed; // GMS >= 2.2.2.302 only, otherwise 0.0f
+    int32_t imageIndex; // GMS >= 2.2.2.302 only, otherwise 0
     uint32_t color;
     float rotation;
     int32_t preCreateCode;
@@ -491,6 +511,7 @@ typedef struct {
 typedef struct {
     int32_t x;
     int32_t y;
+    bool useSpriteDefinition;
     int32_t backgroundDefinition;
     int32_t sourceX;
     int32_t sourceY;
@@ -503,7 +524,81 @@ typedef struct {
     uint32_t color;
 } RoomTile;
 
+enum RoomLayerType : uint32_t
+{
+    RoomLayerType_Path = 0,
+    RoomLayerType_Background = 1,
+    RoomLayerType_Instances = 2,
+    RoomLayerType_Assets = 3,
+    RoomLayerType_Tiles = 4,
+    RoomLayerType_Effect = 6,
+    RoomLayerType_Path2 = 7
+};
+
 typedef struct {
+    const char* name;
+    int32_t spriteIndex; // Direct index into SPRT chunk
+    int32_t x;
+    int32_t y;
+    float scaleX;
+    float scaleY;
+    uint32_t color;
+    float animationSpeed;
+    uint32_t animationSpeedType;
+    float frameIndex;
+    float rotation;
+} SpriteInstance;
+
+typedef struct {
+    uint32_t legacyTileCount;
+    RoomTile *legacyTiles;
+    uint32_t spriteCount;
+    SpriteInstance *sprites;
+} RoomLayerAssetsData;
+
+typedef struct {
+    bool visible;
+    bool foreground;
+    int32_t spriteIndex; // into SPRT (-1 = none)
+    bool hTiled;
+    bool vTiled;
+    bool stretch;
+    uint32_t color;
+    float firstFrame;
+    float animSpeed;
+    uint32_t animSpeedType;
+} RoomLayerBackgroundData;
+
+typedef struct {
+    uint32_t instanceCount;
+    uint32_t* instanceIds;
+} RoomLayerInstancesData;
+
+typedef struct {
+    int32_t backgroundIndex; // tileset (BGND index)
+    uint32_t tilesX; // grid width in tiles
+    uint32_t tilesY; // grid height in tiles
+    uint32_t* tileData; // flat array of tilesX * tilesY tile values (row-major)
+} RoomLayerTilesData;
+
+typedef struct {
+    const char* name;
+    uint32_t id;
+    uint32_t type;
+    int32_t depth;
+    float xOffset;
+    float yOffset;
+    float hSpeed;
+    float vSpeed;
+    bool visible;
+    RoomLayerAssetsData *assetsData;
+    RoomLayerBackgroundData *backgroundData;
+    RoomLayerInstancesData *instancesData;
+    RoomLayerTilesData *tilesData;
+} RoomLayer;
+
+typedef struct {
+    // Scalar header: always valid regardless of payloadLoaded.
     const char* name;
     const char* caption;
     uint32_t width;
@@ -522,12 +617,26 @@ typedef struct {
     float gravityX;
     float gravityY;
     float metersPerPixel;
-    RoomBackground backgrounds[8];
-    RoomView views[8];
+
+    // Lazy-load offsets: absolute file offsets to the PointerList head for each payload section.
+    // Captured during the header pass of parseROOM so DataWin_loadRoomPayload can seek directly.
+    uint32_t backgroundsFileOffset;
+    uint32_t viewsFileOffset;
+    uint32_t gameObjectsFileOffset;
+    uint32_t tilesFileOffset;
+    uint32_t layersFileOffset; // 0 if pre-GMS2
+    bool payloadLoaded;
+    bool eagerlyLoaded; // set if this room's name matched DataWinParserOptions.eagerlyLoadedRooms; payload is preserved across transitions
+
+    // Payload: valid only when payloadLoaded is true. Zeroed/null otherwise. Backgrounds/views point to a heap array of 8 entries when loaded.
+    RoomBackground* backgrounds;
+    RoomView* views;
     uint32_t gameObjectCount;
     RoomGameObject* gameObjects;
     uint32_t tileCount;
     RoomTile* tiles;
+    uint32_t layerCount;
+    RoomLayer* layers;
 } Room;
 
 typedef struct {
@@ -577,6 +686,7 @@ typedef struct {
     int32_t varID;
     uint32_t occurrences;
     uint32_t firstAddress;
+    int16_t builtinVarId; // Pre-resolved enum ID for built-in variables (varID == -6), -1 otherwise
 } Variable;
 
 typedef struct {
@@ -595,7 +705,9 @@ typedef struct {
 } Function;
 
 typedef struct {
-    uint32_t index;
+    // UndertaleModTool calls this field "Index", but that's because that's how it seemingly worked in pre-bytecode version 17
+    // After bytecode version 17+, this has shown that this is actually the varID of the local variable (it matches the Variable.varID)
+    uint32_t varID;
     const char* name;
 } LocalVar;
 
@@ -621,10 +733,11 @@ typedef struct {
 // ===[ TXTR - Embedded Textures ]===
 typedef struct {
     uint32_t scaled;
-    uint32_t blobOffset; // absolute file offset in the file
-    uint32_t blobSize;   // size of PNG data
-    uint8_t* blobData;   // NULL until loaded
-    bool loaded;         // true if blobData is currently in RAM
+    uint32_t generatedMips; // GMS 2.0.6+: number of generated mipmaps (0 for GMS 1.x)
+    uint32_t blobOffset; // absolute file offset to PNG data
+    uint32_t blobSize; // computed size of blob data
+    uint8_t* blobData; // owned copy of PNG data (always populated after parse)
+    bool loaded;       // true if blobData is non-null (kept for 3DS renderer compatibility)
 } Texture;
 
 typedef struct {
@@ -634,10 +747,9 @@ typedef struct {
 
 // ===[ AUDO - Embedded Audio ]===
 typedef struct {
-    uint32_t dataOffset; // absolute file offset in the file
-    uint32_t dataSize;   // size of audio data
-    uint8_t* data;       // NULL until loaded
-    bool loaded;         // true if data is currently in RAM
+    uint32_t dataOffset; // absolute file offset to audio data
+    uint32_t dataSize;   // length of audio data
+    uint8_t* data;       // owned copy of audio data
 } AudioEntry;
 
 typedef struct {
@@ -645,12 +757,18 @@ typedef struct {
     AudioEntry* entries;
 } Audo;
 
+// ===[ Detected Format ]===
+// The effective GMS version after heuristic detection. GEN8.version is unreliable since GM:S 2,
+// so chunk parsers probe the data and bump these fields upward when they detect newer-format features.
+typedef struct {
+    uint32_t major;
+    uint32_t minor;
+    uint32_t release;
+    uint32_t build;
+} DetectedFormat;
+
 // ===[ Top-level DataWin container ]===
 typedef struct DataWin {
-    FILE* file;               // handle to the open data.win for streaming
-    const char* filePath;     // path, optional for reopening
-    size_t fileSize;
-
     uint8_t* strgBuffer;        // owned copy of STRG chunk raw data
     // Absolute file offset of strgBuffer[0], we need this because data.win stores absolute offsets (from the beginning of the data.win file) instead of relative offsets
     size_t strgBufferBase;
@@ -684,198 +802,52 @@ typedef struct DataWin {
     Txtr txtr;
     Audo audo;
 
-
-    // Streaming state for TXTR/AUDO
-    uint32_t txtrCacheSize;   // max number of textures in RAM
-    uint32_t audoCacheSize;   // max number of audio entries in RAM
-
-    // LRU tracking (simple)
-    uint32_t* txtrLastUsed;   // size = txtr.count, stores "frame counters"
-    uint32_t* audoLastUsed;   // size = audo.count
-
-    uint32_t frameCounter;    // increments every access, used for LRU
+    DetectedFormat detectedFormat;
 
     // Lookup map: absolute file offset -> TPAG index (built during TPAG parsing)
     struct { uint32_t key; int32_t value; }* tpagOffsetMap;
+    // Lookup map: absolute file offset -> SPRT index (built during SPRT parsing)
+    struct { uint32_t key; int32_t value; }* sprtOffsetMap;
+
+    // Held open across the whole session when DataWinParserOptions.lazyLoadRooms is true.
+    // Used by DataWin_loadRoomPayload to satisfy on-demand room payload reads.
+    // nullptr when lazy loading is disabled. Closed by DataWin_free.
+    FILE* lazyLoadFile;
+    char* lazyLoadFilePath;     // owned strdup of the original file path, for diagnostics
+    bool lazyLoadRooms;          // mirrors the parser option so Runner can branch without re-reading options
+
+    // ===[ 3DS compatibility: streaming file handle ]===
+    // n3ds_renderer.c reads texture blobs directly via dw->file.
+    // In the new data_win, textures are eagerly loaded into blobData,
+    // but we keep this pointer so renderer code compiles without changes.
+    // Points to lazyLoadFile when available, otherwise NULL.
+    FILE* file;
 } DataWin;
+
+// ===[ 3DS compatibility: DataWin_loadTexture ]===
+// In the new data_win, textures are eagerly loaded into blobData during parse.
+// This shim returns the already-loaded blobData, matching the old on-demand API.
+static inline uint8_t* DataWin_loadTexture(DataWin* dw, uint32_t index) {
+    if (!dw || index >= dw->txtr.count) return NULL;
+    Texture* tex = &dw->txtr.textures[index];
+    tex->loaded = (tex->blobData != NULL);
+    return tex->blobData;
+}
 
 DataWin* DataWin_parse(const char* filePath, DataWinParserOptions options);
 void DataWin_free(DataWin* dataWin);
 void DataWin_printDebugSummary(DataWin* dataWin);
+// Lazy room payload management. DataWin_loadRoomPayload is a no-op when the payload is already loaded.
+void DataWin_loadRoomPayload(DataWin* dw, int32_t roomIndex);
+void DataWin_freeRoomPayload(Room* room);
 int32_t DataWin_resolveTPAG(DataWin* dw, uint32_t offset);
+int32_t DataWin_resolveSPRT(DataWin* dw, uint32_t offset);
+// Compares the detected effective GMS version (not the raw GEN8 version) against a lower bound.
+// Returns true if the detected version >= (major, minor, release, build).
+//
+// Mirrors UndertaleModTool's IsVersionAtLeast.
+bool DataWin_isVersionAtLeast(const DataWin* dw, uint32_t major, uint32_t minor, uint32_t release, uint32_t build);
+// Raises the detected effective version to at least (major, minor, release, build). No-op if the detected version is already >= the target.
+void DataWin_bumpVersionTo(DataWin* dw, uint32_t major, uint32_t minor, uint32_t release, uint32_t build);
 void GamePath_computeInternal(GamePath* path);
 PathPositionResult GamePath_getPosition(GamePath* path, double t);
-
-static uint8_t* DataWin_loadTexture(DataWin* dw, uint32_t index) {
-    DW_DBG("DataWin_loadTexture: Requested texture[%u] (count=%u)\n", index, dw->txtr.count);
-
-    if (index >= dw->txtr.count) {
-        LOG_ERR("DataWin_loadTexture: ERROR - Invalid texture index %u (max %u)\n",
-                index, dw->txtr.count);
-        return NULL;
-    }
-
-    DW_DBG("DataWin_loadTexture: State - textures[%u] = {data=%p, size=%u, offset=%llu, loaded=%s}\n",
-           index,
-           dw->txtr.textures[index].blobData,
-           dw->txtr.textures[index].blobSize,
-           (unsigned long long)dw->txtr.textures[index].blobOffset,
-           dw->txtr.textures[index].loaded ? "yes" : "NO");
-
-    // Fast path: blob already in RAM and valid.
-    if (dw->txtr.textures[index].loaded &&
-        dw->txtr.textures[index].blobData != NULL &&
-        dw->txtr.textures[index].blobSize > 0 &&
-        dw->txtr.textures[index].blobOffset > 0) {
-        DW_DBG("DataWin_loadTexture: Texture[%u] already in cache\n", index);
-        dw->txtrLastUsed[index] = dw->frameCounter++;
-        return dw->txtr.textures[index].blobData;
-    }
-
-    DW_DBG("DataWin_loadTexture: Texture[%u] needs loading, size=%u offset=%llu\n",
-           index, dw->txtr.textures[index].blobSize,
-           (unsigned long long)dw->txtr.textures[index].blobOffset);
-
-    // Validate before loading.
-    if (dw->txtr.textures[index].blobSize == 0) {
-        LOG_ERR("DataWin_loadTexture: ERROR - Texture[%u] has zero blobSize\n", index);
-        return NULL;
-    }
-    if (dw->txtr.textures[index].blobOffset == 0) {
-        LOG_ERR("DataWin_loadTexture: ERROR - Texture[%u] has zero blobOffset\n", index);
-        return NULL;
-    }
-
-    // LRU eviction if cache is full.
-    uint32_t loadedCount = 0;
-    for (uint32_t i = 0; i < dw->txtr.count; i++)
-        if (dw->txtr.textures[i].loaded && dw->txtr.textures[i].blobData != NULL) loadedCount++;
-
-    if (loadedCount >= dw->txtrCacheSize) {
-        uint32_t lruIndex = 0xFFFFFFFF;
-        uint32_t minFrame = UINT32_MAX;
-        for (uint32_t i = 0; i < dw->txtr.count; i++) {
-            if (dw->txtr.textures[i].loaded &&
-                dw->txtr.textures[i].blobData != NULL &&
-                dw->txtrLastUsed[i] < minFrame) {
-                minFrame = dw->txtrLastUsed[i];
-                lruIndex = i;
-            }
-        }
-        if (lruIndex != 0xFFFFFFFF) {
-            DW_DBG("DataWin_loadTexture: Evicting texture[%u]\n", lruIndex);
-            free(dw->txtr.textures[lruIndex].blobData);
-            dw->txtr.textures[lruIndex].blobData = NULL;
-            dw->txtr.textures[lruIndex].loaded    = false;
-        }
-    }
-
-    if (fseek(dw->file, (long)dw->txtr.textures[index].blobOffset, SEEK_SET) != 0) {
-        LOG_ERR("DataWin_loadTexture: ERROR - fseek failed for texture[%u]\n", index);
-        return NULL;
-    }
-
-    if (dw->txtr.textures[index].blobSize > 50 * 1024 * 1024) {
-        LOG_ERR("DataWin_loadTexture: ERROR - Texture[%u] too large: %u bytes\n",
-                index, dw->txtr.textures[index].blobSize);
-        return NULL;
-    }
-
-    dw->txtr.textures[index].blobData = malloc(dw->txtr.textures[index].blobSize);
-    if (!dw->txtr.textures[index].blobData) {
-        LOG_ERR("DataWin_loadTexture: ERROR - malloc failed for texture[%u] (%u bytes)\n",
-                index, dw->txtr.textures[index].blobSize);
-        return NULL;
-    }
-
-    size_t bytesRead = fread(dw->txtr.textures[index].blobData, 1,
-                             dw->txtr.textures[index].blobSize, dw->file);
-    if (bytesRead != dw->txtr.textures[index].blobSize) {
-        LOG_ERR("DataWin_loadTexture: ERROR - short read for texture[%u]: got %zu/%u bytes\n",
-                index, bytesRead, dw->txtr.textures[index].blobSize);
-        free(dw->txtr.textures[index].blobData);
-        dw->txtr.textures[index].blobData = NULL;
-        return NULL;
-    }
-
-    dw->txtr.textures[index].loaded = true;
-    DW_DBG("DataWin_loadTexture: Loaded texture[%u] (%u bytes)\n",
-           index, dw->txtr.textures[index].blobSize);
-    dw->txtrLastUsed[index] = dw->frameCounter++;
-    return dw->txtr.textures[index].blobData;
-}
-
-static uint8_t* DataWin_loadAudio(DataWin* dw, uint32_t index) {
-    if (index >= dw->audo.count) {
-        printf("DataWin_loadAudio: Invalid audio index %u (max %u)\n", index, dw->audo.count);
-        return NULL;
-    }
-
-    if (!dw->audo.entries[index].loaded) {
-        // Validate the audio entry before loading
-        if (dw->audo.entries[index].dataSize == 0 || dw->audo.entries[index].dataOffset == 0) {
-            printf("DataWin_loadAudio: Audio[%u] has invalid size (%lu) or offset (%llu)\n", 
-                   index, dw->audo.entries[index].dataSize, 
-                   (unsigned long long)dw->audo.entries[index].dataOffset);
-            return NULL;
-        }
-
-        uint32_t loadedCount = 0;
-        for (uint32_t i = 0; i < dw->audo.count; i++)
-            if (dw->audo.entries[i].loaded) loadedCount++;
-
-        if (loadedCount >= dw->audoCacheSize) {
-            uint32_t lruIndex = 0xFFFFFFFF;
-            uint32_t minFrame = UINT32_MAX;
-            for (uint32_t i = 0; i < dw->audo.count; i++) {
-                if (dw->audo.entries[i].loaded && dw->audoLastUsed[i] < minFrame) {
-                    minFrame = dw->audoLastUsed[i];
-                    lruIndex = i;
-                }
-            }
-            if (lruIndex != 0xFFFFFFFF) {
-                free(dw->audo.entries[lruIndex].data);
-                dw->audo.entries[lruIndex].data = NULL;
-                dw->audo.entries[lruIndex].loaded = false;
-            }
-        }
-
-        // Seek to the correct position in the file
-        if (fseek(dw->file, (long)dw->audo.entries[index].dataOffset, SEEK_SET) != 0) {
-            printf("DataWin_loadAudio: Failed to seek to offset %llu\n", 
-                   (unsigned long long)dw->audo.entries[index].dataOffset);
-            return NULL;
-        }
-
-        // Validate the data size to prevent huge allocations
-        if (dw->audo.entries[index].dataSize > 100 * 1024 * 1024) { // 100MB max
-            printf("DataWin_loadAudio: Audio[%lu] too large: %lu bytes\n", 
-                   index, dw->audo.entries[index].dataSize);
-            return NULL;
-        }
-
-        dw->audo.entries[index].data = malloc(dw->audo.entries[index].dataSize);
-        if (!dw->audo.entries[index].data) {
-            printf("DataWin_loadAudio: Failed to allocate %lu bytes for audio[%lu]\n", 
-                   dw->audo.entries[index].dataSize, index);
-            return NULL;
-        }
-
-        size_t bytesRead = fread(dw->audo.entries[index].data, 1, dw->audo.entries[index].dataSize, dw->file);
-        if (bytesRead != dw->audo.entries[index].dataSize) {
-            printf("DataWin_loadAudio: Failed to read full audio data for [%lu]: got %zu/%lu bytes\n", 
-                   index, bytesRead, dw->audo.entries[index].dataSize);
-            free(dw->audo.entries[index].data);
-            dw->audo.entries[index].data = NULL;
-            return NULL;
-        }
-
-        dw->audo.entries[index].loaded = true;
-        printf("DataWin_loadAudio: Successfully loaded audio[%lu] size=%lu offset=%llu\n", 
-               index, dw->audo.entries[index].dataSize, 
-               (unsigned long long)dw->audo.entries[index].dataOffset);
-    }
-
-    dw->audoLastUsed[index] = dw->frameCounter++;
-    return dw->audo.entries[index].data;
-}

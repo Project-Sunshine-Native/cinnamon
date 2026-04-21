@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common.h"
 #include <stdint.h>
 #include <math.h>
 
@@ -13,33 +14,29 @@ typedef struct Renderer Renderer;
 typedef struct {
     void (*init)(Renderer* renderer, DataWin* dataWin);
     void (*destroy)(Renderer* renderer);
-#ifdef __WIIU__
-    void (*beginFrame)(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH);
-#else
+    // clearColor: platform-specific clear color (ignored on some platforms), speed: room speed
     void (*beginFrame)(Renderer* renderer, uint32_t clearColor, uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH);
-#endif
     void (*endFrame)(Renderer* renderer);
-#ifdef __WIIU__
-    void (*beginView)(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle);
-#else
     void (*beginView)(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle, uint32_t viewIndex);
-#endif
     void (*endView)(Renderer* renderer);
+    // GUI pass: coordinates are (0,0)..(guiW,guiH) mapped to the current view's port rect. Called after endView.
+    void (*beginGUI)(Renderer* renderer, int32_t guiW, int32_t guiH, int32_t portX, int32_t portY, int32_t portW, int32_t portH);
+    void (*endGUI)(Renderer* renderer);
     void (*drawSprite)(Renderer* renderer, int32_t tpagIndex, float x, float y, float originX, float originY, float xscale, float yscale, float angleDeg, uint32_t color, float alpha);
     void (*drawSpritePart)(Renderer* renderer, int32_t tpagIndex, int32_t srcOffX, int32_t srcOffY, int32_t srcW, int32_t srcH, float x, float y, float xscale, float yscale, uint32_t color, float alpha);
     void (*drawRectangle)(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color, float alpha, bool outline);
     void (*drawLine)(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color, float alpha);
+    void (*drawTriangle)(Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, bool outline);
     void (*drawLineColor)(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color1, uint32_t color2, float alpha);
     void (*drawText)(Renderer* renderer, const char* text, float x, float y, float xscale, float yscale, float angleDeg);
+    void (*drawTextColor)(Renderer* renderer, const char* text, float x, float y, float xscale, float yscale, float angleDeg, int32_t c1, int32_t c2, int32_t c3, int32_t c4, float alpha);
     void (*flush)(Renderer* renderer);
     int32_t (*createSpriteFromSurface)(Renderer* renderer, int32_t x, int32_t y, int32_t w, int32_t h, bool removeback, bool smooth, int32_t xorig, int32_t yorig);
     void (*deleteSprite)(Renderer* renderer, int32_t spriteIndex);
     // Optional: platform-specific tile rendering (nullptr = use default drawSpritePart path)
     void (*drawTile)(Renderer* renderer, RoomTile* tile, float offsetX, float offsetY);
-    void (*onRoomEnd)(Renderer* renderer);
-#ifndef __WIIU__
-    void (*onRoomStart)(Renderer* renderer);
-#endif
+    void (*onRoomEnd)(Renderer* renderer);    // called when a room ends (optional, may be NULL)
+    void (*onRoomStart)(Renderer* renderer);  // called when a room starts (optional, may be NULL)
 } RendererVtable;
 
 // ===[ Renderer Base Struct ]===
@@ -179,39 +176,20 @@ static int32_t Renderer_resolveBackgroundTPAGIndex(DataWin* dataWin, int32_t bgn
     return DataWin_resolveTPAG(dataWin, bg->textureOffset);
 }
 
-#ifdef __WIIU__
-static void Renderer_drawBackgroundPartExt(Renderer* renderer, int32_t bgndIndex, int32_t left, int32_t top, int32_t width, int32_t height, float x, float y, float xscale, float yscale, uint32_t color, float alpha) {
-    DataWin* dw = renderer->dataWin;
-    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(dw, bgndIndex);
-    if (0 > tpagIndex) return;
-
-    TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
-
-    if (left < tpag->targetX) {
-        int32_t off = tpag->targetX - left;
-        x += (float) off * xscale;
-        width -= off;
-        left = 0;
-    } else {
-        left -= tpag->targetX;
-    }
-
-    if (top < tpag->targetY) {
-        int32_t off = tpag->targetY - top;
-        y += (float) off * yscale;
-        height -= off;
-        top = 0;
-    } else {
-        top -= tpag->targetY;
-    }
-
-    if (width > tpag->sourceWidth - left) width = tpag->sourceWidth - left;
-    if (height > tpag->sourceHeight - top) height = tpag->sourceHeight - top;
-    if (0 >= width || 0 >= height) return;
-
-    renderer->vtable->drawSpritePart(renderer, tpagIndex, left, top, width, height, x, y, xscale, yscale, color, alpha);
+// Resolves a SPRT index to a TPAG index via Sprite.textureOffset -> DataWin_resolveTPAG()
+static int32_t Renderer_resolveSpriteTPAGIndex(DataWin* dataWin, int32_t sprtIndex) {
+    if (0 > sprtIndex || (uint32_t) sprtIndex >= dataWin->sprt.count) return -1;
+    Sprite* bg = &dataWin->sprt.sprites[sprtIndex];
+    return DataWin_resolveTPAG(dataWin, bg->textureOffsets[0]);
 }
-#endif
+
+// Resolves a SPRT or BGND index to a TPAG index
+static int32_t Renderer_resolveObjectTPAGIndex(DataWin* dataWin, RoomTile *tile) {
+    if(!tile->useSpriteDefinition)
+        return Renderer_resolveBackgroundTPAGIndex(dataWin, tile->backgroundDefinition);
+    else
+        return Renderer_resolveSpriteTPAGIndex(dataWin, tile->backgroundDefinition);
+}
 
 // Draws a tiled background
 static void Renderer_drawBackgroundTiled(Renderer* renderer, int32_t tpagIndex, float bgX, float bgY, bool tileX, bool tileY, float roomW, float roomH, float alpha) {
@@ -219,8 +197,8 @@ static void Renderer_drawBackgroundTiled(Renderer* renderer, int32_t tpagIndex, 
     if (0 > tpagIndex || (uint32_t) tpagIndex >= dw->tpag.count) return;
 
     TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
-    float bgW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
-    float bgH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
+    float bgW = (float) tpag->boundingWidth;
+    float bgH = (float) tpag->boundingHeight;
     if (0 >= bgW || 0 >= bgH) return;
 
     // Compute start/end for each axis
@@ -253,6 +231,37 @@ static void Renderer_drawBackgroundTiled(Renderer* renderer, int32_t tpagIndex, 
     }
 }
 
+// Draws a tiled sprite across the room
+static void Renderer_drawSpriteTiled(Renderer* renderer, int32_t spriteIndex, int32_t subimg, float x, float y, float xscale, float yscale, float roomW, float roomH, uint32_t color, float alpha) {
+    DataWin* dw = renderer->dataWin;
+    int32_t tpagIndex = Renderer_resolveTPAGIndex(dw, spriteIndex, subimg);
+    if (0 > tpagIndex) return;
+
+    Sprite* sprite = &dw->sprt.sprites[spriteIndex];
+    TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
+
+    float originX = (float) sprite->originX;
+    float originY = (float) sprite->originY;
+
+    // The tile size is the original sprite dimensions scaled
+    float tileW = (float) tpag->boundingWidth * fabsf(xscale);
+    float tileH = (float) tpag->boundingHeight * fabsf(yscale);
+    if (0 >= tileW || 0 >= tileH) return;
+
+    // Compute the start position so tiles cover the entire room
+    // The origin-adjusted position wraps into the tile grid
+    float startX = fmodf(x - originX * fabsf(xscale), tileW);
+    if (startX > 0) startX -= tileW;
+    float startY = fmodf(y - originY * fabsf(yscale), tileH);
+    if (startY > 0) startY -= tileH;
+
+    for (float dy = startY; roomH > dy; dy += tileH) {
+        for (float dx = startX; roomW > dx; dx += tileW) {
+            renderer->vtable->drawSprite(renderer, tpagIndex, dx + originX * fabsf(xscale), dy + originY * fabsf(yscale), originX, originY, xscale, yscale, 0.0f, color, alpha);
+        }
+    }
+}
+
 // Default draw: draws instance's sprite using its image_* properties
 static void Renderer_drawSelf(Renderer* renderer, Instance* instance) {
     if (0 > instance->spriteIndex) return;
@@ -280,7 +289,7 @@ static void Renderer_drawTile(Renderer* renderer, RoomTile* tile, float offsetX,
         return;
     }
 
-    int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(renderer->dataWin, tile->backgroundDefinition);
+    int32_t tpagIndex = Renderer_resolveObjectTPAGIndex(renderer->dataWin, tile);
     if (0 > tpagIndex) return;
 
     TexturePageItem* tpag = &renderer->dataWin->tpag.items[tpagIndex];
@@ -334,4 +343,19 @@ static void Renderer_drawTile(Renderer* renderer, RoomTile* tile, float offsetX,
     uint32_t bgr = tile->color & 0x00FFFFFF;
 
     renderer->vtable->drawSpritePart(renderer, tpagIndex, atlasOffX, atlasOffY, srcW, srcH, drawX, drawY, tile->scaleX, tile->scaleY, bgr, alpha);
+}
+
+// Mixes 2 colors with a blend factor
+static uint32_t Renderer_mixColors(uint32_t color1, uint32_t color2, float blending) {
+    // Extracts the color values out of each color
+    uint8_t r1 = BGR_R(color1), g1 = BGR_G(color1), b1 = BGR_B(color1);
+    uint8_t r2 = BGR_R(color2), g2 = BGR_G(color2), b2 = BGR_B(color2);
+
+    // mixes each color together using linear interpolation
+    uint8_t mixr = (uint8_t)(r1 * (1 - blending) + r2 * blending);
+    uint8_t mixg = (uint8_t)(g1 * (1 - blending) + g2 * blending);
+    uint8_t mixb = (uint8_t)(b1 * (1 - blending) + b2 * blending);
+
+    uint32_t resultColor = ((mixr << 0) | (mixg << 8) | (mixb << 16)) & 0x00FFFFFF;
+    return resultColor;
 }

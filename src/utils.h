@@ -1,12 +1,12 @@
 #pragma once
 
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
 
-#define nullptr NULL
+#include "real_type.h"
 
 #define forEach(type, item, array, count) \
     for (typeof(count) item##_i_ = 0; item##_i_ < (count); item##_i_++) \
@@ -54,22 +54,6 @@ abort(); \
 _val; \
 })
 
-static size_t gHeapUsed = 0;
-
-// todo: finish this and make gHeapUsed track all allocations and not just malloc and calloc
-static void logMemUse(const char* tag)
-{
-    printf("[MEM] %-40s tracked used: %lu KB\n",
-        tag ? tag : "(null)",
-        (unsigned long)(gHeapUsed / 1024));
-}
-
-#ifdef FULL_MEM_LOG
-  #define LOG_MEM_USE(action) logMemUse(action)
-#else
-  #define LOG_MEM_USE(action) ((void)0)
-#endif
-
 // Safe allocation macros - check for nullptr and abort with file/line info
 #define safeMalloc(size) ({ \
     void* _ptr = malloc(size); \
@@ -77,7 +61,6 @@ static void logMemUse(const char* tag)
         fprintf(stderr, "FATAL: malloc(%zu) failed at %s:%d\n", (size_t)(size), __FILE__, __LINE__); \
         abort(); \
     } \
-    gHeapUsed += size; \
     _ptr; \
 })
 
@@ -87,12 +70,10 @@ static void logMemUse(const char* tag)
         fprintf(stderr, "FATAL: calloc(%zu, %zu) failed at %s:%d\n", (size_t)(count), (size_t)(size), __FILE__, __LINE__); \
         abort(); \
     } \
-    gHeapUsed += (size_t)(count) * (size_t)(size); \
     _ptr; \
 })
 
 #define safeRealloc(ptr, size) ({ \
-    size_t oldSize = sizeof(ptr); \
     void* _ptr = realloc(ptr, size); \
     if (_ptr == nullptr) { \
         fprintf(stderr, "FATAL: realloc(%zu) failed at %s:%d\n", (size_t)(size), __FILE__, __LINE__); \
@@ -119,17 +100,9 @@ static void logMemUse(const char* tag)
     _ptr; \
 })
 
-#define safeFree(ptr) do { \
-    if (ptr) { \
-        free(ptr); \
-        ptr = NULL; \
-        gHeapUsed -= sizeof(ptr); \
-    } \
-} while (0)
-
 // Truncates to 6 decimal places, matching the HTML5 runner's ClampFloat
-static inline double clampFloat(double f) {
-    return ((double) ((int64_t) (f * 1000000.0))) / 1000000.0;
+static inline GMLReal clampFloat(GMLReal f) {
+    return ((GMLReal) ((int64_t) (f * 1000000.0))) / 1000000.0;
 }
 
 #define BGR_B(c) (((c) >> 16) & 0xFF)

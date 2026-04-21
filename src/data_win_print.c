@@ -158,7 +158,12 @@ void DataWin_printDebugSummary(DataWin* dataWin) {
     if (dataWin->room.count > 0) {
         uint32_t show = dataWin->room.count < 3 ? dataWin->room.count : 3;
         forEachIndexed(Room, rm, idx, dataWin->room.rooms, show) {
-            printf("    [%u] %s (%ux%u, %u objects, %u tiles)\n", idx, rm->name ? rm->name : "?", rm->width, rm->height, rm->gameObjectCount, rm->tileCount);
+            if (rm->payloadLoaded) {
+                printf("    [%u] %s (%ux%u, %u objects, %u tiles)\n", idx, rm->name ? rm->name : "?", rm->width, rm->height, rm->gameObjectCount, rm->tileCount);
+            } else {
+                // Lazy room with payload not yet loaded: gameObjectCount/tileCount would be 0 and misleading.
+                printf("    [%u] %s (%ux%u, payload not loaded)\n", idx, rm->name ? rm->name : "?", rm->width, rm->height);
+            }
         }
         if (dataWin->room.count > 3) printf("    ... and %u more\n", dataWin->room.count - 3);
     }
@@ -255,6 +260,11 @@ void DataWin_printDebugSummary(DataWin* dataWin) {
     printf("-- Room Instances --\n");
     forEach(Room, room, dataWin->room.rooms, dataWin->room.count) {
         printf("Room %s\n", room->name);
+
+        if (!room->payloadLoaded) {
+            printf("  (payload not loaded)\n");
+            continue;
+        }
 
         forEachIndexed(RoomGameObject, roomGameObject, idx, room->gameObjects, room->gameObjectCount) {
             int32_t objectDefinitionId = roomGameObject->objectDefinition;

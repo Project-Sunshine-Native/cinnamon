@@ -1,15 +1,50 @@
 #include "runner.h"
+#include "data_win.h"
+#include "instance.h"
+#include "renderer.h"
 #include "vm.h"
 #include "utils.h"
 #include "json_writer.h"
 #include "collision.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
 #include "stb_ds.h"
+
+// ===[ Runtime Layer Teardown Helpers ]===
+void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer) {
+    if (runtimeLayer->dynamicName != nullptr) {
+        free(runtimeLayer->dynamicName);
+        runtimeLayer->dynamicName = nullptr;
+    }
+    size_t elementCount = arrlenu(runtimeLayer->elements);
+    repeat(elementCount, i) {
+        RuntimeLayerElement* el = &runtimeLayer->elements[i];
+        if (el->backgroundElement != nullptr) {
+            free(el->backgroundElement);
+            el->backgroundElement = nullptr;
+        }
+        if (el->spriteElement != nullptr) {
+            free(el->spriteElement);
+            el->spriteElement = nullptr;
+        }
+    }
+    arrfree(runtimeLayer->elements);
+    runtimeLayer->elements = nullptr;
+}
+
+static void freeRuntimeLayersArray(RuntimeLayer** runtimeLayerArray) {
+    size_t count = arrlenu(*runtimeLayerArray);
+    repeat(count, i) {
+        Runner_freeRuntimeLayer(&(*runtimeLayerArray)[i]);
+    }
+    arrfree(*runtimeLayerArray);
+    *runtimeLayerArray = nullptr;
+}
 
 // ===[ Helper: Find event action in object hierarchy ]===
 // Walks the parent chain starting from objectIndex to find an event handler.
@@ -75,7 +110,8 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     const char* savedCodeName = vm->currentCodeName;
     RValue* savedLocalVars = vm->localVars;
     uint32_t savedLocalVarCount = vm->localVarCount;
-    ArrayMapEntry* savedLocalArrayMap = vm->localArrayMap;
+    CodeLocals* savedCodeLocals = vm->currentCodeLocals;
+    LocalSlotEntry* savedCodeLocalsSlotMap = vm->currentCodeLocalsSlotMap;
     int32_t savedStackTop = vm->stack.top;
 
     // Save stack values (VM_executeCode resets stack.top to 0, which would let
@@ -103,7 +139,8 @@ static void executeCode(Runner* runner, Instance* instance, int32_t codeId) {
     vm->currentCodeName = savedCodeName;
     vm->localVars = savedLocalVars;
     vm->localVarCount = savedLocalVarCount;
-    vm->localArrayMap = savedLocalArrayMap;
+    vm->currentCodeLocals = savedCodeLocals;
+    vm->currentCodeLocalsSlotMap = savedCodeLocalsSlotMap;
     vm->stack.top = savedStackTop;
 
     // Restore stack values
@@ -166,6 +203,7 @@ const char* Runner_getEventName(int32_t eventType, int32_t eventSubtype) {
             }
         case EVENT_KEYPRESS:   return "KeyPress";
         case EVENT_KEYRELEASE: return "KeyRelease";
+        case EVENT_PRECREATE:  return "PreCreate";
         default: return "Unknown";
     }
 }
@@ -183,6 +221,7 @@ void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t s
     vm->currentEventSubtype = eventSubtype;
     vm->currentEventObjectIndex = ownerObjectIndex;
 
+#ifndef DISABLE_VM_TRACING
     if (codeId >= 0 && shlen(vm->eventsToBeTraced) != -1) {
         const char* eventName = Runner_getEventName(eventType, eventSubtype);
         const char* objectName = runner->dataWin->objt.objects[instance->objectIndex].name;
@@ -197,6 +236,7 @@ void Runner_executeEventFromObject(Runner* runner, Instance* instance, int32_t s
             }
         }
     }
+#endif
 
     executeCode(runner, instance, codeId);
 
@@ -209,15 +249,49 @@ void Runner_executeEvent(Runner* runner, Instance* instance, int32_t eventType, 
     Runner_executeEventFromObject(runner, instance, instance->objectIndex, eventType, eventSubtype);
 }
 
+// Pair used for stable sorting: holds the instance pointer and its original array position.
+typedef struct {
+    Instance* inst;
+    int32_t originalIndex;
+} IndexedInstance;
+
+// Comparator for per-object-type event dispatch (ascending objectIndex).
+static int compareInstanceByObjectIndex(const void* a, const void* b) {
+    const IndexedInstance* ia = (const IndexedInstance*) a;
+    const IndexedInstance* ib = (const IndexedInstance*) b;
+    // Primary: group by objectIndex ascending (lower object index executes first)
+    if (ia->inst->objectIndex < ib->inst->objectIndex) return -1;
+    if (ib->inst->objectIndex < ia->inst->objectIndex) return 1;
+    // Secondary: preserve creation order within the same object type
+    if (ia->originalIndex < ib->originalIndex) return -1;
+    if (ib->originalIndex < ia->originalIndex) return 1;
+    return 0;
+}
+
 void Runner_executeEventForAll(Runner* runner, int32_t eventType, int32_t eventSubtype) {
-    // Iterate over a snapshot of the current instance count to avoid issues if instances are added
+    // Dispatch events per-object-type, matching the native GMS 1.4 and 2.0 runners
+    // The native runners iterate a prebuilt array of object indices (objects that have handlers for this event),
+    // then for each object type iterate all its instances. We approximate this by sorting all active instances by
+    // objectIndex (ascending), preserving creation order as the tiebreaker within the same object type
     int32_t count = (int32_t) arrlen(runner->instances);
+    IndexedInstance* sorted = nullptr;
     repeat(count, i) {
         Instance* inst = runner->instances[i];
         if (inst->active) {
-            Runner_executeEvent(runner, inst, eventType, eventSubtype);
+            IndexedInstance ii = { .inst = inst, .originalIndex = i };
+            arrput(sorted, ii);
         }
     }
+    int32_t sortedCount = (int32_t) arrlen(sorted);
+    if (sortedCount > 1) {
+        qsort(sorted, sortedCount, sizeof(IndexedInstance), compareInstanceByObjectIndex);
+    }
+    repeat(sortedCount, i) {
+        if (sorted[i].inst->active) {
+            Runner_executeEvent(runner, sorted[i].inst, eventType, eventSubtype);
+        }
+    }
+    arrfree(sorted);
 }
 
 // ===[ Background Scrolling & Drawing ]===
@@ -248,11 +322,8 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
         if (bg->stretch) {
             // Stretch to fill room dimensions
             TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
-            float baseW = (float) (tpag->boundingWidth > 0 ? tpag->boundingWidth : tpag->sourceWidth);
-            float baseH = (float) (tpag->boundingHeight > 0 ? tpag->boundingHeight : tpag->sourceHeight);
-            if (baseW <= 0.0f || baseH <= 0.0f) continue;
-            float xscale = roomW / baseW;
-            float yscale = roomH / baseH;
+            float xscale = roomW / (float) tpag->boundingWidth;
+            float yscale = roomH / (float) tpag->boundingHeight;
             runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, bg->alpha);
         } else if (bg->tileX || bg->tileY) {
             Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, bg->x, bg->y, bg->tileX, bg->tileY, roomW, roomH, bg->alpha);
@@ -265,7 +336,7 @@ void Runner_drawBackgrounds(Runner* runner, bool foreground) {
 
 // ===[ Draw ]===
 
-typedef enum { DRAWABLE_TILE, DRAWABLE_INSTANCE } DrawableType;
+typedef enum { DRAWABLE_TILE, DRAWABLE_INSTANCE, DRAWABLE_LAYER } DrawableType;
 
 typedef struct {
     DrawableType type;
@@ -273,6 +344,7 @@ typedef struct {
     union {
         Instance* instance;
         int32_t tileIndex; // index into currentRoom->tiles
+        RuntimeLayer* runtimeLayer;
     };
 } Drawable;
 
@@ -302,13 +374,76 @@ static int compareInstanceDepth(const void* a, const void* b) {
     return 0;
 }
 
+
 static void fireDrawSubtype(Runner* runner, Instance** drawList, int32_t drawCount, int32_t subtype) {
     repeat(drawCount, i) {
         Runner_executeEvent(runner, drawList[i], EVENT_DRAW, subtype);
     }
 }
 
+// GMS2 tilemap cell bit layout (matches HTML5 Function_Layers.js TileIndex/Mirror/Flip/Rotate masks)
+#define GMS2_TILE_INDEX_MASK  0x0007FFFF // bits 0..18
+#define GMS2_TILE_MIRROR_MASK 0x10000000 // bit 28 (horizontal flip)
+#define GMS2_TILE_FLIP_MASK   0x20000000 // bit 29 (vertical flip)
+#define GMS2_TILE_ROTATE_MASK 0x40000000 // bit 30 (90 CW)
+
+static void Runner_drawTileLayer(Runner* runner, RoomLayerTilesData* data, float layerOffsetX, float layerOffsetY) {
+    if (data == nullptr || data->tileData == nullptr) return;
+    if (0 > data->backgroundIndex) return;
+
+    DataWin* dw = runner->dataWin;
+    if ((uint32_t) data->backgroundIndex >= dw->bgnd.count) return;
+
+    Background* tileset = &dw->bgnd.backgrounds[data->backgroundIndex];
+    if (tileset->gms2TileWidth == 0 || tileset->gms2TileHeight == 0 || tileset->gms2TileColumns == 0) return;
+
+    int32_t tpagIndex = DataWin_resolveTPAG(dw, tileset->textureOffset);
+    if (0 > tpagIndex) return;
+
+    uint32_t tileW = tileset->gms2TileWidth;
+    uint32_t tileH = tileset->gms2TileHeight;
+    uint32_t borderX = tileset->gms2OutputBorderX;
+    uint32_t borderY = tileset->gms2OutputBorderY;
+    uint32_t columns = tileset->gms2TileColumns;
+
+    static bool rotateWarned = false;
+
+    repeat(data->tilesY, ty) {
+        repeat(data->tilesX, tx) {
+            uint32_t cell = data->tileData[ty * data->tilesX + tx];
+            uint32_t tileIndex = cell & GMS2_TILE_INDEX_MASK;
+            if (tileIndex == 0) continue; // 0 = empty
+
+            uint32_t col = tileIndex % columns;
+            uint32_t row = tileIndex / columns;
+            int32_t srcX = (int32_t) (col * (tileW + 2 * borderX) + borderX);
+            int32_t srcY = (int32_t) (row * (tileH + 2 * borderY) + borderY);
+
+            bool mirror = (cell & GMS2_TILE_MIRROR_MASK) != 0;
+            bool flip = (cell & GMS2_TILE_FLIP_MASK) != 0;
+            bool rotate = (cell & GMS2_TILE_ROTATE_MASK) != 0;
+
+            if (rotate && !rotateWarned) {
+                fprintf(stderr, "Runner: WARNING: GMS2 tile layer has rotated tiles; rotation not yet implemented, drawing unrotated\n");
+                rotateWarned = true;
+            }
+
+            float xscale = mirror ? -1.0f : 1.0f;
+            float yscale = flip ? -1.0f : 1.0f;
+
+            // With negative scale the quad grows in the opposite direction, so shift the
+            // destination by one tile to keep the origin at the top-left of the cell.
+            float dstX = (float) (tx * tileW) + layerOffsetX + (mirror ? (float) tileW : 0.0f);
+            float dstY = (float) (ty * tileH) + layerOffsetY + (flip ? (float) tileH : 0.0f);
+
+            runner->renderer->vtable->drawSpritePart(runner->renderer, tpagIndex, srcX, srcY, (int32_t) tileW, (int32_t) tileH, dstX, dstY, xscale, yscale, 0xFFFFFF, 1.0f);
+        }
+    }
+}
+
 void Runner_draw(Runner* runner) {
+    Room* room = runner->currentRoom;
+
     // Collect active + visible instances for event dispatch
     Instance** drawList = nullptr;
     int32_t count = (int32_t) arrlen(runner->instances);
@@ -326,8 +461,9 @@ void Runner_draw(Runner* runner) {
     }
 
     // Draw non-foreground backgrounds (behind everything)
-    Runner_drawBackgrounds(runner, false);
-
+    if (!DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0))
+        Runner_drawBackgrounds(runner, false);
+ 
     // Fire draw subtypes in correct GameMaker order
     fireDrawSubtype(runner, drawList, drawCount, DRAW_PRE);
     fireDrawSubtype(runner, drawList, drawCount, DRAW_BEGIN);
@@ -342,15 +478,26 @@ void Runner_draw(Runner* runner) {
     }
 
     // Add tiles (skip hidden layers)
-    Room* room = runner->currentRoom;
-    repeat(room->tileCount, i) {
-        RoomTile* tile = &room->tiles[i];
-        // Check if this tile's layer is hidden
-        ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
-        if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
+    if (!DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
+        repeat(room->tileCount, i) {
+            RoomTile* tile = &room->tiles[i];
+            // Check if this tile's layer is hidden
+            ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
+            if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
 
-        Drawable d = { .type = DRAWABLE_TILE, .depth = tile->tileDepth, .tileIndex = (int32_t) i };
-        arrput(drawables, d);
+            Drawable d = { .type = DRAWABLE_TILE, .depth = tile->tileDepth, .tileIndex = (int32_t) i };
+            arrput(drawables, d);
+        }
+    }
+
+    if (DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
+        size_t runtimeLayersCount = arrlenu(runner->runtimeLayers);
+        repeat(runtimeLayersCount, i) {
+            RuntimeLayer* runtimeLayer = &runner->runtimeLayers[i];
+            if (!runtimeLayer->visible) continue;
+            Drawable d = { .type = DRAWABLE_LAYER, .depth = runtimeLayer->depth, .runtimeLayer = runtimeLayer };
+            arrput(drawables, d);
+        }
     }
 
     // Sort all drawables by depth
@@ -372,6 +519,7 @@ void Runner_draw(Runner* runner) {
                     offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
                 }
 
+#ifndef DISABLE_VM_TRACING
                 // Trace tile drawing if requested
                 if (shlen(runner->vmContext->tilesToBeTraced) > 0) {
                     DataWin* dataWin = runner->dataWin;
@@ -381,7 +529,7 @@ void Runner_draw(Runner* runner) {
                     bool shouldTrace = shgeti(runner->vmContext->tilesToBeTraced, "*") != -1 || shgeti(runner->vmContext->tilesToBeTraced, bgName) != -1 || shgeti(runner->vmContext->tilesToBeTraced, roomName) != -1;
 
                     if (shouldTrace) {
-                        int32_t tpagIndex = Renderer_resolveBackgroundTPAGIndex(dataWin, tile->backgroundDefinition);
+                        int32_t tpagIndex = Renderer_resolveObjectTPAGIndex(dataWin, tile);
                         if (tpagIndex >= 0) {
                             TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
                             fprintf(stderr, "Runner: [%s] Drawing tile #%d bg=%s(%d) tpag(srcX=%d srcY=%d srcW=%d srcH=%d tgtX=%d tgtY=%d bndW=%d bndH=%d page=%d) tile(srcX=%d srcY=%d w=%u h=%u) at pos=(%d,%d) depth=%d\n", roomName, d->tileIndex, bgName, tile->backgroundDefinition, tpag->sourceX, tpag->sourceY, tpag->sourceWidth, tpag->sourceHeight, tpag->targetX, tpag->targetY, tpag->boundingWidth, tpag->boundingHeight, tpag->texturePageId, tile->sourceX, tile->sourceY, tile->width, tile->height, tile->x, tile->y, tile->tileDepth);
@@ -395,22 +543,145 @@ void Runner_draw(Runner* runner) {
                         }
                     }
                 }
+#endif
 
                 Renderer_drawTile(runner->renderer, tile, offsetX, offsetY);
             }
-        } else {
+        } else if (d->type == DRAWABLE_INSTANCE) {
             Instance* inst = d->instance;
             int32_t codeId = findEventCodeIdAndOwner(runner->dataWin, inst->objectIndex, EVENT_DRAW, DRAW_NORMAL, nullptr);
             if (codeId >= 0) {
                 Runner_executeEvent(runner, inst, EVENT_DRAW, DRAW_NORMAL);
             } else if (runner->renderer != nullptr) {
-                if (runner->drawSpriteDecimationEnabled && inst->spriteIndex >= 0) {
-                    uint8_t spriteHalf = (uint8_t)(inst->instanceId & 1u);
-                    if (spriteHalf != runner->drawSpriteDecimationPhase) {
-                        continue;
+                Renderer_drawSelf(runner->renderer, inst);
+            }
+        } else if (d->type == DRAWABLE_LAYER)
+        {
+            RuntimeLayer* runtimeLayer = d->runtimeLayer;
+            if (runtimeLayer == nullptr || !runtimeLayer->visible) continue;
+            float layerOffsetX = runtimeLayer->xOffset;
+            float layerOffsetY = runtimeLayer->yOffset;
+
+            // Dynamic layers created via layer_create have no parsed RoomLayer, render their runtime elements instead (backgrounds, in the future sprites/tilemaps).
+            if (runtimeLayer->dynamic) {
+                if (runner->renderer == nullptr) continue;
+
+                DataWin* dataWin = runner->dataWin;
+                float roomW = (float) runner->currentRoom->width;
+                float roomH = (float) runner->currentRoom->height;
+
+                size_t elementCount = arrlenu(runtimeLayer->elements);
+                repeat(elementCount, j) {
+                    RuntimeLayerElement* layerElement = &runtimeLayer->elements[j];
+                    if (layerElement->type == RuntimeLayerElementType_Background && layerElement->backgroundElement != nullptr) {
+                        RuntimeBackgroundElement* bg = layerElement->backgroundElement;
+                        if (!bg->visible) continue;
+                        int32_t tpagIndex = Renderer_resolveSpriteTPAGIndex(dataWin, bg->spriteIndex);
+                        if (0 > tpagIndex) continue;
+                        if (bg->stretch) {
+                            TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
+                            float xscale = roomW / (float) tpag->boundingWidth;
+                            float yscale = roomH / (float) tpag->boundingHeight;
+                            runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, bg->blend, bg->alpha);
+                        } else if (bg->htiled || bg->vtiled) {
+                            Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, layerOffsetX + bg->xOffset, layerOffsetY + bg->yOffset, bg->htiled, bg->vtiled, roomW, roomH, bg->alpha);
+                        } else {
+                            runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, layerOffsetX + bg->xOffset, layerOffsetY + bg->yOffset, 0.0f, 0.0f, bg->xScale, bg->yScale, 0.0f, bg->blend, bg->alpha);
+                        }
                     }
                 }
-                Renderer_drawSelf(runner->renderer, inst);
+                continue;
+            }
+
+            // Parsed layer: look up the RoomLayer by ID and render its data-driven content.
+            RoomLayer* parsedLayer = Runner_findRoomLayerById(runner, (int32_t) runtimeLayer->id);
+            if (parsedLayer == nullptr) continue;
+            if (parsedLayer->type == RoomLayerType_Assets) {
+                RoomLayerAssetsData* data = parsedLayer->assetsData;
+                repeat(data->legacyTileCount, j) {
+                    if (runner->renderer != nullptr) {
+                        RoomTile* tile = &data->legacyTiles[j];
+                        // Check if this tile's layer is hidden via tile_layer_hide()
+                        ptrdiff_t layerIdx = hmgeti(runner->tileLayerMap, tile->tileDepth);
+                        if (layerIdx >= 0 && !runner->tileLayerMap[layerIdx].value.visible) continue;
+                        float offsetX = 0.0f, offsetY = 0.0f;
+                        if (layerIdx >= 0) {
+                            offsetX = runner->tileLayerMap[layerIdx].value.offsetX;
+                            offsetY = runner->tileLayerMap[layerIdx].value.offsetY;
+                        }
+
+#ifndef DISABLE_VM_TRACING
+                        // Trace tile drawing if requested
+                        if (shlen(runner->vmContext->tilesToBeTraced) > 0) {
+                            DataWin* dataWin = runner->dataWin;
+                            const char* bgName = (tile->backgroundDefinition >= 0 && dataWin->bgnd.count > (uint32_t) tile->backgroundDefinition) ? dataWin->bgnd.backgrounds[tile->backgroundDefinition].name : "<none>";
+                            const char* roomName = room->name;
+
+                            bool shouldTrace = shgeti(runner->vmContext->tilesToBeTraced, "*") != -1 || shgeti(runner->vmContext->tilesToBeTraced, bgName) != -1 || shgeti(runner->vmContext->tilesToBeTraced, roomName) != -1;
+
+                            if (shouldTrace) {
+                                int32_t tpagIndex = Renderer_resolveObjectTPAGIndex(dataWin, tile);
+                                if (tpagIndex >= 0) {
+                                    TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
+                                    fprintf(stderr, "Runner: [%s] Drawing tile #%d bg=%s(%d) tpag(srcX=%d srcY=%d srcW=%d srcH=%d tgtX=%d tgtY=%d bndW=%d bndH=%d page=%d) tile(srcX=%d srcY=%d w=%u h=%u) at pos=(%d,%d) depth=%d\n", roomName, d->tileIndex, bgName, tile->backgroundDefinition, tpag->sourceX, tpag->sourceY, tpag->sourceWidth, tpag->sourceHeight, tpag->targetX, tpag->targetY, tpag->boundingWidth, tpag->boundingHeight, tpag->texturePageId, tile->sourceX, tile->sourceY, tile->width, tile->height, tile->x, tile->y, tile->tileDepth);
+
+                                    // Warn if tile source rect exceeds TPAG content bounds
+                                    if ((uint32_t) (tile->sourceX + tile->width) > (uint32_t) tpag->sourceWidth || (uint32_t) (tile->sourceY + tile->height) > (uint32_t) tpag->sourceHeight) {
+                                        fprintf(stderr, "Runner: [%s] WARNING: Tile #%d source rect (%d,%d %ux%u) exceeds TPAG content bounds (%dx%d)\n", roomName, d->tileIndex, tile->sourceX, tile->sourceY, tile->width, tile->height, tpag->sourceWidth, tpag->sourceHeight);
+                                    }
+                                } else {
+                                    fprintf(stderr, "Runner: [%s] Drawing tile #%d bg=%s(%d) tpag=UNRESOLVED tile(srcX=%d srcY=%d w=%u h=%u) at pos=(%d,%d) depth=%d\n", roomName, d->tileIndex, bgName, tile->backgroundDefinition, tile->sourceX, tile->sourceY, tile->width, tile->height, tile->x, tile->y, tile->tileDepth);
+                                }
+                            }
+                        }
+#endif
+
+                        Renderer_drawTile(runner->renderer, tile, offsetX, offsetY);
+                    }
+                }
+
+                // Sprite elements are rendered from the runtime element list (not the parsed data) so that layer_sprite_destroy can remove them at runtime.
+                size_t elementCount = arrlenu(runtimeLayer->elements);
+                repeat(elementCount, j) {
+                    if (runner->renderer == nullptr) break;
+                    RuntimeLayerElement* el = &runtimeLayer->elements[j];
+                    if (el->type != RuntimeLayerElementType_Sprite || el->spriteElement == nullptr) continue;
+                    RuntimeSpriteElement* spr = el->spriteElement;
+                    if (0 > spr->spriteIndex) continue;
+                    Renderer_drawSpriteExt(
+                        runner->renderer, spr->spriteIndex, (int32_t) spr->frameIndex,
+                        spr->x, spr->y, spr->scaleX,
+                        spr->scaleY, spr->rotation, spr->color,
+                        1.0);
+                }
+            } else if(parsedLayer->type == RoomLayerType_Background) {
+                if (runner->renderer == nullptr) return;
+                    DataWin* dataWin = runner->dataWin;
+                    float roomW = (float) runner->currentRoom->width;
+                    float roomH = (float) runner->currentRoom->height;
+                    RoomLayerBackgroundData* data = parsedLayer->backgroundData;
+
+                        int32_t tpagIndex = Renderer_resolveSpriteTPAGIndex(dataWin, data->spriteIndex);
+                        if (0 > tpagIndex) continue;
+
+                        if (data->stretch) {
+                            // Stretch to fill room dimensions
+                            TexturePageItem* tpag = &dataWin->tpag.items[tpagIndex];
+                            float xscale = roomW / (float) tpag->boundingWidth;
+                            float yscale = roomH / (float) tpag->boundingHeight;
+                            runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, 0.0f, 0.0f, 0.0f, 0.0f, xscale, yscale, 0.0f, 0xFFFFFF, 1.0);
+                        } else if (data->hTiled || data->vTiled) {
+                            Renderer_drawBackgroundTiled(runner->renderer, tpagIndex, layerOffsetX, layerOffsetY, data->hTiled, data->vTiled, roomW, roomH, 1.0);
+                        } else {
+                            // Single placement
+                            runner->renderer->vtable->drawSprite(runner->renderer, tpagIndex, layerOffsetX, layerOffsetY, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0xFFFFFF, 1.0);
+                        }
+            } else if(parsedLayer->type == RoomLayerType_Instances) {
+                // Instance depth is assigned from layers during room init (initRoom).
+                // Nothing to do here - instances are drawn from the DRAWABLE_INSTANCE path.
+            } else if(parsedLayer->type == RoomLayerType_Tiles) {
+                if (runner->renderer == nullptr) continue;
+                Runner_drawTileLayer(runner, parsedLayer->tilesData, layerOffsetX, layerOffsetY);
             }
         }
     }
@@ -423,6 +694,25 @@ void Runner_draw(Runner* runner) {
     Runner_drawBackgrounds(runner, true);
 
     fireDrawSubtype(runner, drawList, drawCount, DRAW_POST);
+
+    arrfree(drawList);
+}
+
+void Runner_drawGUI(Runner* runner) {
+    Instance** drawList = nullptr;
+    int32_t count = (int32_t) arrlen(runner->instances);
+    repeat(count, i) {
+        Instance* inst = runner->instances[i];
+        if (inst->active && inst->visible) {
+            arrput(drawList, inst);
+        }
+    }
+
+    int32_t drawCount = (int32_t) arrlen(drawList);
+    if (drawCount > 1) {
+        qsort(drawList, drawCount, sizeof(Instance*), compareInstanceDepth);
+    }
+
     fireDrawSubtype(runner, drawList, drawCount, DRAW_GUI_BEGIN);
     fireDrawSubtype(runner, drawList, drawCount, DRAW_GUI);
     fireDrawSubtype(runner, drawList, drawCount, DRAW_GUI_END);
@@ -438,7 +728,7 @@ static bool isObjectDisabled(Runner* runner, int32_t objectIndex) {
     return shgeti(runner->disabledObjects, name) != -1;
 }
 
-static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32_t objectIndex, double x, double y) {
+static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32_t objectIndex, GMLReal x, GMLReal y) {
     DataWin* dataWin = runner->dataWin;
     require(objectIndex >= 0 && dataWin->objt.count > (uint32_t) objectIndex);
 
@@ -454,23 +744,31 @@ static Instance* createAndInitInstance(Runner* runner, int32_t instanceId, int32
     inst->depth = objDef->depth;
     inst->maskIndex = objDef->textureMaskId;
 
+    hmput(runner->instancesToId, instanceId, inst);
     arrput(runner->instances, inst);
 
+#ifndef DISABLE_VM_TRACING
     if (shgeti(runner->vmContext->instanceLifecyclesToBeTraced, "*") != -1 || shgeti(runner->vmContext->instanceLifecyclesToBeTraced, objDef->name) != -1) {
         fprintf(stderr, "VM: Instance %s (%d) created at (%f, %f)\n", objDef->name, instanceId, x, y);
     }
+#endif
 
     return inst;
 }
 
 // ===[ Room Management ]===
 
-static void initRoom(Runner* runner, int32_t roomIndex)
-{
+static void initRoom(Runner* runner, int32_t roomIndex) {
     DataWin* dataWin = runner->dataWin;
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
 
     Room* room = &dataWin->room.rooms[roomIndex];
+
+    // Lazy-room load: if the payload wasn't loaded, read it from the data.win file now before anything touches the room's game objects/tiles/layers.
+    if (!room->payloadLoaded) {
+        DataWin_loadRoomPayload(dataWin, roomIndex);
+    }
+
     SavedRoomState* savedState = &runner->savedRoomStates[roomIndex];
 
     runner->currentRoom = room;
@@ -497,6 +795,11 @@ static void initRoom(Runner* runner, int32_t roomIndex)
         runner->tileLayerMap = savedState->tileLayerMap;
         savedState->tileLayerMap = nullptr;
 
+        // Restore runtime layers
+        freeRuntimeLayersArray(&runner->runtimeLayers);
+        runner->runtimeLayers = savedState->runtimeLayers;
+        savedState->runtimeLayers = nullptr;
+
         // Keep only persistent instances (which travel between rooms), free non-persistent
         // ones from the previous room. When the old room was also persistent, Runner_step
         // already separated them; when it was NOT persistent, they're still here.
@@ -507,6 +810,7 @@ static void initRoom(Runner* runner, int32_t roomIndex)
             if (inst->persistent) {
                 arrput(keptInstances, inst);
             } else {
+                hmdel(runner->instancesToId, inst->instanceId);
                 Instance_free(inst);
             }
         }
@@ -531,6 +835,59 @@ static void initRoom(Runner* runner, int32_t roomIndex)
     // Reset tile layer state for the new room
     hmfree(runner->tileLayerMap);
     runner->tileLayerMap = nullptr;
+
+    // Populate runtime layers from parsed room layers (GMS2+ only; empty for GMS1.x).
+    // Dynamic layers created via layer_create are appended to this array later.
+    freeRuntimeLayersArray(&runner->runtimeLayers);
+    uint32_t maxLayerId = 0;
+    repeat(room->layerCount, i) {
+        RoomLayer* layerSource = &room->layers[i];
+        RuntimeLayer runtimeLayer = {
+            .id = layerSource->id,
+            .depth = layerSource->depth,
+            .visible = layerSource->visible,
+            .xOffset = layerSource->xOffset,
+            .yOffset = layerSource->yOffset,
+            .hSpeed = layerSource->hSpeed,
+            .vSpeed = layerSource->vSpeed,
+            .dynamic = false,
+            .dynamicName = nullptr,
+            .elements = nullptr,
+        };
+        arrput(runner->runtimeLayers, runtimeLayer);
+        if (layerSource->id > maxLayerId) maxLayerId = layerSource->id;
+    }
+    // Watermark: ensure runtime-allocated IDs (layers + elements) stay above parsed IDs.
+    if (maxLayerId >= runner->nextLayerId) runner->nextLayerId = maxLayerId + 1;
+
+    // Populate runtime sprite elements for Assets layers, so they can be queried and destroyed via layer_sprite_get_sprite/layer_sprite_destroy
+    repeat(room->layerCount, i) {
+        RoomLayer* layerSource = &room->layers[i];
+        if (layerSource->type != RoomLayerType_Assets || layerSource->assetsData == nullptr) continue;
+        RoomLayerAssetsData* assets = layerSource->assetsData;
+        RuntimeLayer* runtimeLayer = &runner->runtimeLayers[i];
+        repeat(assets->spriteCount, j) {
+            SpriteInstance* src = &assets->sprites[j];
+            RuntimeSpriteElement* spriteElement = safeMalloc(sizeof(RuntimeSpriteElement));
+            spriteElement->spriteIndex = src->spriteIndex;
+            spriteElement->x = src->x;
+            spriteElement->y = src->y;
+            spriteElement->scaleX = src->scaleX;
+            spriteElement->scaleY = src->scaleY;
+            spriteElement->color = src->color;
+            spriteElement->animationSpeed = src->animationSpeed;
+            spriteElement->animationSpeedType = src->animationSpeedType;
+            spriteElement->frameIndex = src->frameIndex;
+            spriteElement->rotation = src->rotation;
+            RuntimeLayerElement el = {
+                .id = Runner_getNextLayerId(runner),
+                .type = RuntimeLayerElementType_Sprite,
+                .backgroundElement = nullptr,
+                .spriteElement = spriteElement,
+            };
+            arrput(runtimeLayer->elements, el);
+        }
+    }
 
     // Copy room background definitions into mutable runtime state
     runner->backgroundColor = room->backgroundColor;
@@ -559,6 +916,7 @@ static void initRoom(Runner* runner, int32_t roomIndex)
         if (inst->persistent) {
             arrput(keptInstances, inst);
         } else {
+            hmdel(runner->instancesToId, inst->instanceId);
             Instance_free(inst);
         }
     }
@@ -568,7 +926,8 @@ static void initRoom(Runner* runner, int32_t roomIndex)
     // Two-pass instance creation (matches HTML5 runner behavior):
     // Pass 1: Create all instance objects so they exist for cross-references
     // Pass 2: Fire preCreateCode, CREATE events, and creationCode
-    // This ensures that when an instance's Create event reads another instance    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
+    // This ensures that when an instance's Create event reads another instance
+    // (e.g. obj_mainchara reading obj_markerA.x), the target already exists.
 
     // Pass 1: Create all instances without firing events
     repeat(room->gameObjectCount, i) {
@@ -585,11 +944,28 @@ static void initRoom(Runner* runner, int32_t roomIndex)
         if (alreadyExists) continue;
         if (isObjectDisabled(runner, roomObj->objectDefinition)) continue;
 
-        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition,
-                                               (double) roomObj->x, (double) roomObj->y);
-        inst->imageXscale = (double) roomObj->scaleX;
-        inst->imageYscale = (double) roomObj->scaleY;
-        inst->imageAngle = (double) roomObj->rotation;
+        Instance* inst = createAndInitInstance(runner, roomObj->instanceID, roomObj->objectDefinition, (GMLReal) roomObj->x, (GMLReal) roomObj->y);
+        inst->imageXscale = (float) roomObj->scaleX;
+        inst->imageYscale = (float) roomObj->scaleY;
+        inst->imageAngle = (float) roomObj->rotation;
+        inst->imageSpeed = roomObj->imageSpeed;
+        inst->imageIndex = (float) roomObj->imageIndex;
+    }
+
+    // In GMS2, instances get their depth from their room layer, not the object definition.
+    // This must happen before firing Create events so scripts like scr_depth() read the layer depth.
+    if (DataWin_isVersionAtLeast(runner->dataWin, 2, 0, 0, 0)) {
+        repeat(room->layerCount, li) {
+            RoomLayer* layer = &room->layers[li];
+            if (layer->type != RoomLayerType_Instances || layer->instancesData == nullptr) continue;
+            RoomLayerInstancesData* layerData = layer->instancesData;
+            repeat(layerData->instanceCount, ii) {
+                Instance* inst = hmget(runner->instancesToId, layerData->instanceIds[ii]);
+                if (inst != nullptr) {
+                    inst->depth = layer->depth;
+                }
+            }
+        }
     }
 
     // Pass 2: Fire events for newly created instances (in room definition order)
@@ -610,6 +986,7 @@ static void initRoom(Runner* runner, int32_t roomIndex)
         if (inst->createEventFired) continue;
         inst->createEventFired = true;
 
+        Runner_executeEvent(runner, inst, EVENT_PRECREATE, 0);
         executeCode(runner, inst, roomObj->preCreateCode);
         Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
         executeCode(runner, inst, roomObj->creationCode);
@@ -626,79 +1003,232 @@ static void initRoom(Runner* runner, int32_t roomIndex)
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+}
 
-    // -----------------------------------------------------------------
-    // TEXTURE PRELOAD: load all textures referenced by sprites of the
-    // instances that are now active in this room.
-    // -----------------------------------------------------------------    
-    if (dataWin->txtr.count > 0) {
-#if defined(__3DS__)
-        // 3DS renderer now prefers romfs sprite/background sheets and only
-        // falls back to TPAG pages lazily when needed. Eager room-time page
-        // preloading here causes noisy logs and unnecessary cache churn.
-#else
-        for (int32_t i = 0; i < (int32_t) arrlen(runner->instances); ++i) {
-            Instance* inst = runner->instances[i];
-            if (!inst->active || inst->spriteIndex < 0) continue;
+// Cleans up the runner state, used when freeing the Runner or when restarting the Runner
+static void cleanupState(Runner* runner) {
+    // Free all instances
+    repeat(arrlen(runner->instances), i) {
+        hmdel(runner->instancesToId, runner->instances[i]->instanceId);
+        Instance_free(runner->instances[i]);
+    }
+    arrfree(runner->instances);
+    runner->instances = nullptr;
 
-            Sprite* spr = &dataWin->sprt.sprites[inst->spriteIndex];
-            for (uint32_t t = 0; t < spr->textureCount; ++t) {
-                uint32_t tpagOffset = spr->textureOffsets[t];
-                int32_t tpagIndex = DataWin_resolveTPAG(dataWin, tpagOffset);
-                if (tpagIndex < 0) continue;
-
-                TexturePageItem* tpagItem = &dataWin->tpag.items[tpagIndex];
-                uint32_t texPageIdx = (uint32_t)tpagItem->texturePageId;
-                if (texPageIdx >= dataWin->txtr.count) continue;
-
-                DataWin_loadTexture(dataWin, texPageIdx);
-                dataWin->txtrLastUsed[texPageIdx] = dataWin->frameCounter;
+    // Free saved room states
+    if (runner->savedRoomStates != nullptr) {
+        repeat(runner->dataWin->room.count, i) {
+            SavedRoomState* state = &runner->savedRoomStates[i];
+            int32_t savedCount = (int32_t) arrlen(state->instances);
+            repeat(savedCount, j) {
+                hmdel(runner->instancesToId, state->instances[j]->instanceId);
+                Instance_free(state->instances[j]);
             }
+            arrfree(state->instances);
+            hmfree(state->tileLayerMap);
+            freeRuntimeLayersArray(&state->runtimeLayers);
         }
-#endif
+        free(runner->savedRoomStates);
+    }
+    runner->savedRoomStates = nullptr;
+
+    hmfree(runner->instancesToId);
+    runner->instancesToId = nullptr;
+    hmfree(runner->tileLayerMap);
+    runner->tileLayerMap = nullptr;
+    freeRuntimeLayersArray(&runner->runtimeLayers);
+    shfree(runner->disabledObjects);
+    runner->disabledObjects = nullptr;
+
+    // Free ds_map pool
+    repeat((int32_t) arrlen(runner->dsMapPool), i) {
+        DsMapEntry* map = runner->dsMapPool[i];
+        if (map != nullptr) {
+            repeat(shlen(map), j) {
+                free(map[j].key);
+                RValue_free(&map[j].value);
+            }
+            shfree(map);
+        }
+    }
+    arrfree(runner->dsMapPool);
+    runner->dsMapPool = nullptr;
+
+    // Free ds_list pool
+    repeat((int32_t) arrlen(runner->dsListPool), i) {
+        DsList* list = &runner->dsListPool[i];
+        repeat(arrlen(list->items), j) {
+            RValue_free(&list->items[j]);
+        }
+        arrfree(list->items);
+    }
+    arrfree(runner->dsListPool);
+    runner->dsListPool = nullptr;
+
+    // Free INI state
+    if (runner->currentIni != nullptr) {
+        Ini_free(runner->currentIni);
+        runner->currentIni = nullptr;
+    }
+    free(runner->currentIniPath);
+    runner->currentIniPath = nullptr;
+    if (runner->cachedIni != nullptr) {
+        Ini_free(runner->cachedIni);
+        runner->cachedIni = nullptr;
+    }
+    free(runner->cachedIniPath);
+    runner->cachedIniPath = nullptr;
+
+    // Free open text files
+    repeat(MAX_OPEN_TEXT_FILES, i) {
+        OpenTextFile* file = &runner->openTextFiles[i];
+        if (file->isOpen) {
+            free(file->content);
+            free(file->writeBuffer);
+            free(file->filePath);
+            *file = (OpenTextFile) {0};
+        }
     }
 }
 
 // ===[ Public API ]===
 
-Runner* Runner_create(DataWin* dataWin, VMContext* vm, FileSystem* fileSystem) {
-    Runner* runner = safeCalloc(1, sizeof(Runner));
-    runner->dataWin = dataWin;
-    runner->vmContext = vm;
-    runner->fileSystem = fileSystem;
-    runner->frameCount = 0;
-    runner->instances = nullptr;
+void Runner_reset(Runner* runner) {
+    // This actually sets the default runner values, used for initialization and restarting
+    cleanupState(runner);
+
+    // Reset VM state
+    VM_reset(runner->vmContext);
+
     runner->pendingRoom = -1;
     runner->gameStartFired = false;
     runner->currentRoomIndex = -1;
     runner->currentRoomOrderPosition = -1;
-    runner->nextInstanceId = dataWin->gen8.lastObj + 1;
+    runner->nextInstanceId = runner->dataWin->gen8.lastObj + 1;
+    runner->savedRoomStates = safeCalloc(runner->dataWin->room.count, sizeof(SavedRoomState));
+    runner->nextLayerId = 1;
+    if (runner->audioSystem != nullptr) {
+        runner->audioSystem->vtable->stopAll(runner->audioSystem);
+    }
+
+    // Create the instance used for "self" in GLOB scripts
+    Instance_free(runner->globalScopeInstance);
+    runner->globalScopeInstance = Instance_create(0, -1, 0, 0);
+
+    // Reset builtin function state
+    runner->mpPotMaxrot = 30.0;
+    runner->mpPotStep = 10.0;
+    runner->mpPotAhead = 3.0;
+    runner->mpPotOnSpot = true;
+    runner->lastMusicInstance = -1;
+}
+
+Runner* Runner_create(DataWin* dataWin, VMContext* vm, Renderer* renderer, FileSystem* fileSystem, AudioSystem* audioSystem) {
+    requireNotNull(dataWin);
+    requireNotNull(vm);
+    // renderer and audioSystem may be NULL on platforms (e.g. 3DS) that set them after creation
+    requireNotNull(fileSystem);
+
+    Runner* runner = safeCalloc(1, sizeof(Runner));
+    runner->dataWin = dataWin;
+    runner->vmContext = vm;
+    runner->renderer = renderer;
+    runner->fileSystem = fileSystem;
+    runner->audioSystem = audioSystem;
+    runner->frameCount = 0;
+    runner->osType = OS_WINDOWS;
     runner->keyboard = RunnerKeyboard_create();
-    runner->savedRoomStates = safeCalloc(dataWin->room.count, sizeof(SavedRoomState));
+
+    Runner_reset(runner);
 
     // Link runner to VM context
     vm->runner = (struct Runner*) runner;
 
+    if (renderer != nullptr) {
+        renderer->vtable->init(renderer, dataWin);
+    }
+    if (audioSystem != nullptr) {
+        audioSystem->vtable->init(audioSystem, dataWin, fileSystem);
+    }
+
     return runner;
 }
 
-Instance* Runner_createInstance(Runner* runner, double x, double y, int32_t objectIndex) {
+Instance* Runner_createInstance(Runner* runner, GMLReal x, GMLReal y, int32_t objectIndex) {
     if (isObjectDisabled(runner, objectIndex)) return nullptr;
     Instance* inst = createAndInitInstance(runner, runner->nextInstanceId++, objectIndex, x, y);
     inst->createEventFired = true;
+    Runner_executeEvent(runner, inst, EVENT_PRECREATE, 0);
     Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
     return inst;
 }
 
-void Runner_destroyInstance(Runner* runner, Instance* inst) {
-    (void) runner;
+Instance* Runner_copyInstance(Runner* runner, Instance* source, bool performEvent) {
+    requireNotNull(source);
+    if (isObjectDisabled(runner, source->objectIndex)) return nullptr;
+
+    Instance* inst = createAndInitInstance(runner, runner->nextInstanceId++, source->objectIndex, source->x, source->y);
+    Instance_copyFields(inst, source);
+    inst->createEventFired = true;
+    if (performEvent) {
+        Runner_executeEvent(runner, inst, EVENT_PRECREATE, 0);
+        Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
+    }
+    return inst;
+}
+
+void Runner_destroyInstance(MAYBE_UNUSED Runner* runner, Instance* inst) {
     GameObject* gameObject = &runner->dataWin->objt.objects[inst->objectIndex];
     Runner_executeEvent(runner, inst, EVENT_DESTROY, 0);
+    // A destroyed instance must ALWAYS be not active
+    // If a destroyed instance is active, then well, something went VERY wrong
     inst->active = false;
+    inst->destroyed = true;
 
+#ifndef DISABLE_VM_TRACING
     if (shgeti(runner->vmContext->instanceLifecyclesToBeTraced, "*") != -1 || shgeti(runner->vmContext->instanceLifecyclesToBeTraced, gameObject->name) != -1) {
         fprintf(stderr, "VM: Instance %s (%d) destroyed\n", gameObject->name, inst->instanceId);
     }
+#endif
+}
+
+RuntimeLayer* Runner_findRuntimeLayerById(Runner* runner, int32_t id) {
+    size_t count = arrlenu(runner->runtimeLayers);
+    repeat(count, i) {
+        if ((int32_t) runner->runtimeLayers[i].id == id)
+            return &runner->runtimeLayers[i];
+    }
+    return nullptr;
+}
+
+RoomLayer* Runner_findRoomLayerById(Runner* runner, int32_t id) {
+    if (runner->currentRoom == nullptr) return nullptr;
+    repeat(runner->currentRoom->layerCount, i) {
+        if ((int32_t) runner->currentRoom->layers[i].id == id) return &runner->currentRoom->layers[i];
+    }
+    return nullptr;
+}
+
+RuntimeLayerElement* Runner_findLayerElementById(Runner* runner, int32_t elementId, RuntimeLayer** outLayer) {
+    size_t layerCount = arrlenu(runner->runtimeLayers);
+    repeat(layerCount, i) {
+        RuntimeLayer* runtimeLayer = &runner->runtimeLayers[i];
+        size_t elementCount = arrlenu(runtimeLayer->elements);
+        repeat(elementCount, j) {
+            if ((int32_t) runtimeLayer->elements[j].id == elementId) {
+                if (outLayer != nullptr)
+                    *outLayer = runtimeLayer;
+                
+                return &runtimeLayer->elements[j];
+            }
+        }
+    }
+    if (outLayer != nullptr) *outLayer = nullptr;
+    return nullptr;
+}
+
+uint32_t Runner_getNextLayerId(Runner* runner) {
+    return runner->nextLayerId++;
 }
 
 void Runner_cleanupDestroyedInstances(Runner* runner) {
@@ -706,9 +1236,10 @@ void Runner_cleanupDestroyedInstances(Runner* runner) {
     int32_t writeIdx = 0;
     repeat(count, i) {
         Instance* inst = runner->instances[i];
-        if (inst->active) {
+        if (!inst->destroyed) {
             runner->instances[writeIdx++] = inst;
         } else {
+            hmdel(runner->instancesToId, inst->instanceId);
             Instance_free(inst);
         }
     }
@@ -721,7 +1252,9 @@ void Runner_initFirstRoom(Runner* runner) {
 
     int32_t firstRoomIndex = dataWin->gen8.roomOrder[0];
 
-    // Run global init scripts first
+    // Run global init scripts with the global scope instance as "self"
+    // In GMS 2.3+ (BC17), GLOB scripts store function declarations on "self" via Pop.v.v
+    runner->vmContext->currentInstance = runner->globalScopeInstance;
     repeat(dataWin->glob.count, i) {
         int32_t codeId = dataWin->glob.codeIds[i];
         if (codeId >= 0 && dataWin->code.count > (uint32_t) codeId) {
@@ -730,6 +1263,7 @@ void Runner_initFirstRoom(Runner* runner) {
             RValue_free(&result);
         }
     }
+    runner->vmContext->currentInstance = nullptr;
 
     // Initialize the first room
     initRoom(runner, firstRoomIndex);
@@ -763,6 +1297,7 @@ static void executeCollisionEvent(Runner* runner, Instance* self, Instance* othe
 
     vm->currentEventObjectIndex = ownerObjectIndex;
 
+#ifndef DISABLE_VM_TRACING
     if (codeId >= 0 && shlen(vm->eventsToBeTraced) != -1) {
         const char* selfName = runner->dataWin->objt.objects[self->objectIndex].name;
         const char* targetName = runner->dataWin->objt.objects[targetObjectIndex].name;
@@ -771,6 +1306,7 @@ static void executeCollisionEvent(Runner* runner, Instance* self, Instance* othe
             fprintf(stderr, "Runner: [%s] Collision with %s (instanceId=%d, otherId=%d)\n", selfName, targetName, self->instanceId, other->instanceId);
         }
     }
+#endif
 
     executeCode(runner, self, codeId);
 
@@ -878,24 +1414,33 @@ static void updateViews(Runner* runner) {
     Room* room = runner->currentRoom;
     if (!(room->flags & 1)) return;
 
-    for (int32_t vi = 0; 8 > vi; vi++) {
+    repeat(8, vi) {
         RoomView* view = &room->views[vi];
-        if (!view->enabled || 0 > view->objectId) continue;
+        if (!view->enabled) continue;
 
-        // Find first active instance of the target object
-        Instance* target = nullptr;
-        int32_t count = (int32_t) arrlen(runner->instances);
-        for (int32_t i = 0; count > i; i++) {
-            Instance* inst = runner->instances[i];
-            if (inst->active && inst->objectIndex == view->objectId) { target = inst; break; }
+        if (view->objectId >= 0) {
+            // Find first active instance of the target object
+            Instance* target = nullptr;
+            int32_t count = (int32_t) arrlen(runner->instances);
+            repeat(count, i) {
+                Instance* inst = runner->instances[i];
+                if (inst->active && VM_isObjectOrDescendant(runner->dataWin, inst->objectIndex, view->objectId)) { target = inst; break; };
+            }
+
+            if (target != nullptr) {
+                int32_t ix = (int32_t) GMLReal_floor(target->x);
+                int32_t iy = (int32_t) GMLReal_floor(target->y);
+                view->viewX = followAxis(view->viewX, view->viewWidth, ix, view->borderX, view->speedX, (int32_t) room->width);
+                view->viewY = followAxis(view->viewY, view->viewHeight, iy, view->borderY, view->speedY, (int32_t) room->height);
+                continue;
+            }
         }
-        if (target == nullptr) continue;
 
-        int32_t ix = (int32_t) floor(target->x);
-        int32_t iy = (int32_t) floor(target->y);
-
-        view->viewX = followAxis(view->viewX, view->viewWidth, ix, view->borderX, view->speedX, (int32_t) room->width);
-        view->viewY = followAxis(view->viewY, view->viewHeight, iy, view->borderY, view->speedY, (int32_t) room->height);
+        // Always clamp to room bounds
+        if (view->viewX + view->viewWidth > (int32_t) room->width) view->viewX = (int32_t) room->width - view->viewWidth;
+        if (view->viewY + view->viewHeight > (int32_t) room->height) view->viewY = (int32_t) room->height - view->viewHeight;
+        if (0 > view->viewX) view->viewX = 0;
+        if (0 > view->viewY) view->viewY = 0;
     }
 }
 
@@ -946,71 +1491,76 @@ static bool adaptPath(Runner* runner, Instance* inst) {
 
     bool atPathEnd = false;
 
-    double orient = inst->pathOrientation * M_PI / 180.0;
+    GMLReal orient = inst->pathOrientation * M_PI / 180.0;
 
     // Get current position's speed factor
     PathPositionResult cur = GamePath_getPosition(path, inst->pathPosition);
-    double sp = cur.speed / (100.0 * inst->pathScale);
+    GMLReal sp = cur.speed / (100.0 * inst->pathScale);
 
-    // Advance position
-    inst->pathPosition = inst->pathPosition + inst->pathSpeed * sp / path->length;
+    // Advance position (compute in higher precision, truncate to float on store - matches native runner)
+    inst->pathPosition = (float) (inst->pathPosition + inst->pathSpeed * sp / path->length);
 
     // Handle end actions if position out of [0,1]
     PathPositionResult pos0 = GamePath_getPosition(path, 0.0);
-    if (inst->pathPosition >= 1.0 || 0.0 >= inst->pathPosition) {
-        atPathEnd = (inst->pathSpeed == 0.0) ? false : true;
+    if (inst->pathPosition >= 1.0f || 0.0f >= inst->pathPosition) {
+        atPathEnd = (inst->pathSpeed == 0.0f) ? false : true;
 
         switch (inst->pathEndAction) {
             // stop moving
             case 0: {
-                if (inst->pathSpeed != 0.0) {
-                    inst->pathPosition = 1.0;
+                if (inst->pathSpeed >= 0.0f) {
+                    if (inst->pathSpeed != 0.0f) {
+                        inst->pathPosition = 1.0f;
+                        inst->pathIndex = -1;
+                    }
+                } else {
+                    inst->pathPosition = 0.0f;
                     inst->pathIndex = -1;
                 }
                 break;
             }
             // continue from start position (restart)
             case 1: {
-                if (0.0 > inst->pathPosition) {
-                    inst->pathPosition += 1.0;
+                if (0.0f > inst->pathPosition) {
+                    inst->pathPosition += 1.0f;
                 } else {
-                    inst->pathPosition -= 1.0;
+                    inst->pathPosition -= 1.0f;
                 }
                 break;
             }
             // continue from current position
             case 2: {
                 PathPositionResult pos1 = GamePath_getPosition(path, 1.0);
-                double xx = pos1.x - pos0.x;
-                double yy = pos1.y - pos0.y;
-                double xdif = inst->pathScale * (xx * cos(orient) + yy * sin(orient));
-                double ydif = inst->pathScale * (yy * cos(orient) - xx * sin(orient));
+                GMLReal xx = pos1.x - pos0.x;
+                GMLReal yy = pos1.y - pos0.y;
+                GMLReal xdif = inst->pathScale * (xx * GMLReal_cos(orient) + yy * GMLReal_sin(orient));
+                GMLReal ydif = inst->pathScale * (yy * GMLReal_cos(orient) - xx * GMLReal_sin(orient));
 
-                if (0.0 > inst->pathPosition) {
-                    inst->pathXStart -= xdif;
-                    inst->pathYStart -= ydif;
-                    inst->pathPosition += 1.0;
+                if (0.0f > inst->pathPosition) {
+                    inst->pathXStart -= (float) xdif;
+                    inst->pathYStart -= (float) ydif;
+                    inst->pathPosition += 1.0f;
                 } else {
-                    inst->pathXStart += xdif;
-                    inst->pathYStart += ydif;
-                    inst->pathPosition -= 1.0;
+                    inst->pathXStart += (float) xdif;
+                    inst->pathYStart += (float) ydif;
+                    inst->pathPosition -= 1.0f;
                 }
                 break;
             }
             // reverse
             case 3: {
-                if (0.0 > inst->pathPosition) {
+                if (0.0f > inst->pathPosition) {
                     inst->pathPosition = -inst->pathPosition;
-                    inst->pathSpeed = fabs(inst->pathSpeed);
+                    inst->pathSpeed = (float) GMLReal_fabs(inst->pathSpeed);
                 } else {
-                    inst->pathPosition = 2.0 - inst->pathPosition;
-                    inst->pathSpeed = -fabs(inst->pathSpeed);
+                    inst->pathPosition = 2.0f - inst->pathPosition;
+                    inst->pathSpeed = (float) -GMLReal_fabs(inst->pathSpeed);
                 }
                 break;
             }
             // default: stop
             default: {
-                inst->pathPosition = 1.0;
+                inst->pathPosition = 1.0f;
                 inst->pathIndex = -1;
                 break;
             }
@@ -1019,25 +1569,25 @@ static bool adaptPath(Runner* runner, Instance* inst) {
 
     // Find the new position in the room
     PathPositionResult newPos = GamePath_getPosition(path, inst->pathPosition);
-    double xx = newPos.x - pos0.x; // relative
-    double yy = newPos.y - pos0.y;
+    GMLReal xx = newPos.x - pos0.x; // relative
+    GMLReal yy = newPos.y - pos0.y;
 
-    double newx = inst->pathXStart + inst->pathScale * (xx * cos(orient) + yy * sin(orient));
-    double newy = inst->pathYStart + inst->pathScale * (yy * cos(orient) - xx * sin(orient));
+    GMLReal newx = inst->pathXStart + inst->pathScale * (xx * GMLReal_cos(orient) + yy * GMLReal_sin(orient));
+    GMLReal newy = inst->pathYStart + inst->pathScale * (yy * GMLReal_cos(orient) - xx * GMLReal_sin(orient));
 
     // Trick to set the direction: set hspeed/vspeed to delta, which updates direction
-    inst->hspeed = newx - inst->x;
-    inst->vspeed = newy - inst->y;
+    inst->hspeed = (float) (newx - inst->x);
+    inst->vspeed = (float) (newy - inst->y);
     Instance_computeSpeedFromComponents(inst);
 
     // Normal speed should not be used
-    inst->speed = 0.0;
-    inst->hspeed = 0.0;
-    inst->vspeed = 0.0;
+    inst->speed = 0.0f;
+    inst->hspeed = 0.0f;
+    inst->vspeed = 0.0f;
 
     // Set the new position
-    inst->x = newx;
-    inst->y = newy;
+    inst->x = (float) newx;
+    inst->y = (float) newy;
 
     return atPathEnd;
 }
@@ -1054,8 +1604,37 @@ void Runner_step(Runner* runner) {
         }
     }
 
+    // Advance image_index by image_speed for all active instances
+    int32_t animCount = (int32_t) arrlen(runner->instances);
+    repeat(animCount, i) {
+        Instance* inst = runner->instances[i];
+        if (!inst->active) continue;
+        if (0 > inst->spriteIndex) continue;
+
+        inst->imageIndex += inst->imageSpeed;
+
+        // Wrap image_index (matches HTML5 runner: manual subtract/add instead of using fmod)
+        Sprite* sprite = &runner->dataWin->sprt.sprites[inst->spriteIndex];
+        float frameCount = (float) sprite->textureCount;
+        if (inst->imageIndex >= frameCount) {
+            inst->imageIndex -= frameCount;
+            Runner_executeEvent(runner, inst, EVENT_OTHER, OTHER_ANIMATION_END);
+        } else if (0.0f > inst->imageIndex) {
+            inst->imageIndex += frameCount;
+            Runner_executeEvent(runner, inst, EVENT_OTHER, OTHER_ANIMATION_END);
+        }
+    }
+
     // Scroll backgrounds
     Runner_scrollBackgrounds(runner);
+
+    // Advance GMS2 layer parallax (hspeed/vspeed per frame)
+    size_t layerCount = arrlenu(runner->runtimeLayers);
+    repeat(layerCount, i) {
+        RuntimeLayer* rl = &runner->runtimeLayers[i];
+        rl->xOffset += rl->hSpeed;
+        rl->yOffset += rl->vSpeed;
+    }
 
     // Execute Begin Step for all instances
     Runner_executeEventForAll(runner, EVENT_STEP, STEP_BEGIN);
@@ -1088,17 +1667,21 @@ void Runner_step(Runner* runner) {
 
         repeat(GML_ALARM_COUNT, alarmIdx) {
             if (inst->alarm[alarmIdx] > 0) {
+#ifndef DISABLE_VM_TRACING
                 if (shgeti(runner->vmContext->alarmsToBeTraced, "*") != -1 || shgeti(runner->vmContext->alarmsToBeTraced, object->name) != -1) {
                     fprintf(stderr, "VM: [%s] Ticking down Alarm[%d] (instanceId=%d), current tick is %d\n", object->name, alarmIdx, inst->instanceId, inst->alarm[alarmIdx]);
                 }
+#endif
 
                 inst->alarm[alarmIdx]--;
                 if (inst->alarm[alarmIdx] == 0) {
                     inst->alarm[alarmIdx] = -1;
 
+#ifndef DISABLE_VM_TRACING
                     if (shgeti(runner->vmContext->alarmsToBeTraced, "*") != -1 || shgeti(runner->vmContext->alarmsToBeTraced, object->name) != -1) {
                         fprintf(stderr, "VM: [%s] Firing Alarm[%d] (instanceId=%d)\n", object->name, alarmIdx, inst->instanceId);
                     }
+#endif
 
                     Runner_executeEvent(runner, inst, EVENT_ALARM, alarmIdx);
                 }
@@ -1116,21 +1699,21 @@ void Runner_step(Runner* runner) {
         if (!inst->active) continue;
 
         // Friction: reduce speed toward zero (HTML5: AdaptSpeed)
-        if (inst->friction != 0.0) {
-            double ns = (inst->speed > 0.0) ? inst->speed - inst->friction : inst->speed + inst->friction;
-            if ((inst->speed > 0.0 && ns < 0.0) || (inst->speed < 0.0 && ns > 0.0)) {
-                inst->speed = 0.0;
-            } else if (inst->speed != 0.0) {
+        if (inst->friction != 0.0f) {
+            float ns = (inst->speed > 0.0f) ? inst->speed - inst->friction : inst->speed + inst->friction;
+            if ((inst->speed > 0.0f && ns < 0.0f) || (inst->speed < 0.0f && ns > 0.0f)) {
+                inst->speed = 0.0f;
+            } else if (inst->speed != 0.0f) {
                 inst->speed = ns;
             }
             Instance_computeComponentsFromSpeed(inst);
         }
 
         // Gravity: add velocity in gravity_direction (HTML5: AddTo_Speed)
-        if (inst->gravity != 0.0) {
-            double gravDirRad = inst->gravityDirection * (M_PI / 180.0);
-            inst->hspeed += inst->gravity * clampFloat(cos(gravDirRad));
-            inst->vspeed -= inst->gravity * clampFloat(sin(gravDirRad));
+        if (inst->gravity != 0.0f) {
+            GMLReal gravDirRad = inst->gravityDirection * (M_PI / 180.0);
+            inst->hspeed += (float) (inst->gravity * clampFloat(GMLReal_cos(gravDirRad)));
+            inst->vspeed -= (float) (inst->gravity * clampFloat(GMLReal_sin(gravDirRad)));
             Instance_computeSpeedFromComponents(inst);
         }
 
@@ -1140,7 +1723,7 @@ void Runner_step(Runner* runner) {
         }
 
         // Apply movement
-        if (inst->hspeed != 0.0 || inst->vspeed != 0.0) {
+        if (inst->hspeed != 0.0f || inst->vspeed != 0.0f) {
             inst->x += inst->hspeed;
             inst->y += inst->vspeed;
         }
@@ -1158,25 +1741,17 @@ void Runner_step(Runner* runner) {
     // Update view following and clamping
     updateViews(runner);
 
-    // Advance image_index by image_speed for all active instances
-    int32_t animCount = (int32_t) arrlen(runner->instances);
-    repeat(animCount, i) {
-        Instance* inst = runner->instances[i];
-        if (!inst->active) continue;
-        if (0 > inst->spriteIndex) continue;
-
-        inst->imageIndex += inst->imageSpeed;
-
-        // Wrap image_index (matches HTML5 runner: manual subtract/add instead of using fmod)
-        Sprite* sprite = &runner->dataWin->sprt.sprites[inst->spriteIndex];
-        double frameCount = (double) sprite->textureCount;
-        if (inst->imageIndex >= frameCount) {
-            inst->imageIndex -= frameCount;
-            Runner_executeEvent(runner, inst, EVENT_OTHER, OTHER_ANIMATION_END);
-        } else if (0.0 > inst->imageIndex) {
-            inst->imageIndex += frameCount;
-            Runner_executeEvent(runner, inst, EVENT_OTHER, OTHER_ANIMATION_END);
+    // Handle game restart
+    if (runner->pendingRoom == ROOM_RESTARTGAME) {
+        // See you soon!
+        // Free the currently-loaded non-eager room before reset so lazyLoadRooms stays steady-state.
+        if (runner->dataWin->lazyLoadRooms && runner->currentRoom != nullptr && !runner->currentRoom->eagerlyLoaded) {
+            DataWin_freeRoomPayload(runner->currentRoom);
         }
+        Runner_reset(runner);
+        Runner_initFirstRoom(runner);
+        runner->frameCount++;
+        return;
     }
 
     // Handle room transition
@@ -1195,8 +1770,6 @@ void Runner_step(Runner* runner) {
 
         fprintf(stderr, "Room changed: %s (room %d) -> %s (room %d)\n", oldRoomName, oldRoomIndex, newRoomName, newRoomIndex);
 
-        runner->renderer->vtable->onRoomEnd(runner->renderer);
-
         // If the old room is persistent, save its instance and visual state
         if (oldRoom->persistent) {
             SavedRoomState* state = &runner->savedRoomStates[oldRoomIndex];
@@ -1204,12 +1777,14 @@ void Runner_step(Runner* runner) {
             // Free any previously saved instances (from an earlier visit)
             int32_t prevSavedCount = (int32_t) arrlen(state->instances);
             repeat(prevSavedCount, i) {
+                hmdel(runner->instancesToId, state->instances[i]->instanceId);
                 Instance_free(state->instances[i]);
             }
             arrfree(state->instances);
             state->instances = nullptr;
             hmfree(state->tileLayerMap);
             state->tileLayerMap = nullptr;
+            freeRuntimeLayersArray(&state->runtimeLayers);
 
             // Separate persistent instances (travel with player) from room instances (saved)
             Instance** keptInstances = nullptr;
@@ -1221,6 +1796,7 @@ void Runner_step(Runner* runner) {
                 } else if (inst->active) {
                     arrput(state->instances, inst);
                 } else {
+                    hmdel(runner->instancesToId, inst->instanceId);
                     Instance_free(inst);
                 }
             }
@@ -1236,7 +1812,16 @@ void Runner_step(Runner* runner) {
             state->tileLayerMap = runner->tileLayerMap;
             runner->tileLayerMap = nullptr;
 
+            // Transfer runtime layer ownership to saved state
+            state->runtimeLayers = runner->runtimeLayers;
+            runner->runtimeLayers = nullptr;
+
             state->initialized = true;
+        }
+
+        // Free the outgoing room's payload under lazyLoadRooms, unless it's eagerly pinned or we're restarting the same room (initRoom would just re-load it).
+        if (runner->dataWin->lazyLoadRooms && !oldRoom->eagerlyLoaded && newRoomIndex != oldRoomIndex) {
+            DataWin_freeRoomPayload(oldRoom);
         }
 
         // Load new room
@@ -1244,14 +1829,6 @@ void Runner_step(Runner* runner) {
 
         // Fire Room Start for all instances
         Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
-#ifndef __WIIU__
-        if (runner->renderer != nullptr &&
-            runner->renderer->vtable != nullptr &&
-            runner->renderer->vtable->onRoomStart != nullptr) {
-            runner->renderer->vtable->onRoomStart(runner->renderer);
-        }
-#endif
-
     }
 
     Runner_cleanupDestroyedInstances(runner);
@@ -1309,14 +1886,14 @@ void Runner_dumpState(Runner* runner) {
         }
         if (hasAlarm) printf("\n");
 
-        // Self variables (non-array, sparse hashmap)
+        // Self variables
         bool hasSelfVars = false;
+        bool hasSelfArrays = false;
         repeat(hmlen(inst->selfVars), svIdx) {
             int32_t varID = inst->selfVars[svIdx].key;
             RValue val = inst->selfVars[svIdx].value;
             if (val.type == RVALUE_UNDEFINED) continue;
 
-            // Resolve variable name from VARI chunk
             const char* varName = "?";
             repeat(dataWin->vari.variableCount, varIdx) {
                 Variable* var = &dataWin->vari.variables[varIdx];
@@ -1326,34 +1903,19 @@ void Runner_dumpState(Runner* runner) {
                 }
             }
 
-            if (!hasSelfVars) { printf("  Self Variables:\n"); hasSelfVars = true; }
-            char* valStr = RValue_toStringFancy(val);
-            printf("    %s = %s\n", varName, valStr);
-            free(valStr);
-        }
-
-        // Self arrays
-        int64_t selfArrayLen = hmlen(inst->selfArrayMap);
-        if (selfArrayLen > 0) {
-            printf("  Self Arrays:\n");
-            repeat(selfArrayLen, arrIdx) {
-                int64_t key = inst->selfArrayMap[arrIdx].key;
-                RValue val = inst->selfArrayMap[arrIdx].value;
-                int32_t varID = (int32_t) (key >> 32);
-                int32_t arrayIndex = (int32_t) (key & 0xFFFFFFFF);
-
-                // Find variable name by scanning VARI entries
-                const char* varName = "<unknown>";
-                repeat(dataWin->vari.variableCount, varIdx) {
-                    Variable* var = &dataWin->vari.variables[varIdx];
-                    if (var->varID == varID && var->instanceType == INSTANCE_SELF) {
-                        varName = var->name;
-                        break;
-                    }
+            if (val.type == RVALUE_ARRAY && val.array != nullptr) {
+                if (!hasSelfArrays) { printf("  Self Arrays:\n"); hasSelfArrays = true; }
+                repeat(val.array->length, ai) {
+                    RValue inner = val.array->data[ai];
+                    if (inner.type == RVALUE_UNDEFINED) continue;
+                    char* innerStr = RValue_toStringFancy(inner);
+                    printf("    %s[%d] = %s\n", varName, (int) ai, innerStr);
+                    free(innerStr);
                 }
-
+            } else {
+                if (!hasSelfVars) { printf("  Self Variables:\n"); hasSelfVars = true; }
                 char* valStr = RValue_toStringFancy(val);
-                printf("    %s[%d] = %s\n", varName, arrayIndex, valStr);
+                printf("    %s = %s\n", varName, valStr);
                 free(valStr);
             }
         }
@@ -1373,27 +1935,19 @@ void Runner_dumpState(Runner* runner) {
         free(valStr);
     }
 
-    // Global arrays
-    int64_t globalArrayLen = hmlen(vm->globalArrayMap);
-    if (globalArrayLen > 0) {
-        repeat(globalArrayLen, arrIdx) {
-            int64_t key = vm->globalArrayMap[arrIdx].key;
-            RValue val = vm->globalArrayMap[arrIdx].value;
-            int32_t varID = (int32_t) (key >> 32);
-            int32_t arrayIndex = (int32_t) (key & 0xFFFFFFFF);
-
-            const char* varName = "<unknown>";
-            repeat(dataWin->vari.variableCount, varIdx) {
-                Variable* var = &dataWin->vari.variables[varIdx];
-                if (var->varID == varID && var->instanceType == INSTANCE_GLOBAL) {
-                    varName = var->name;
-                    break;
-                }
-            }
-
-            char* valStr = RValue_toStringFancy(val);
-            printf("  %s[%d] = %s\n", varName, arrayIndex, valStr);
-            free(valStr);
+    // Global arrays: scan globalVars slots for RVALUE_ARRAY entries
+    repeat(dataWin->vari.variableCount, varIdx) {
+        Variable* var = &dataWin->vari.variables[varIdx];
+        if (var->instanceType != INSTANCE_GLOBAL || var->varID < 0) continue;
+        if ((uint32_t) var->varID >= vm->globalVarCount) continue;
+        RValue val = vm->globalVars[var->varID];
+        if (val.type != RVALUE_ARRAY || val.array == nullptr) continue;
+        repeat(val.array->length, ai) {
+            RValue inner = val.array->data[ai];
+            if (inner.type == RVALUE_UNDEFINED) continue;
+            char* innerStr = RValue_toStringFancy(inner);
+            printf("  %s[%d] = %s\n", var->name, (int) ai, innerStr);
+            free(innerStr);
         }
     }
 
@@ -1410,9 +1964,11 @@ static void writeRValueJson(JsonWriter* w, RValue val) {
         case RVALUE_INT32:
             JsonWriter_int(w, val.int32);
             break;
+#ifndef NO_RVALUE_INT64
         case RVALUE_INT64:
             JsonWriter_int(w, val.int64);
             break;
+#endif
         case RVALUE_STRING:
             JsonWriter_string(w, val.string);
             break;
@@ -1422,12 +1978,25 @@ static void writeRValueJson(JsonWriter* w, RValue val) {
         case RVALUE_UNDEFINED:
             JsonWriter_null(w);
             break;
-        case RVALUE_ARRAY_REF: {
+        case RVALUE_ARRAY: {
+            // Render arrays as a JSON array. Skips RVALUE_UNDEFINED entries (they read as 0/null anyway).
+            JsonWriter_beginArray(w);
+            if (val.array != nullptr) {
+                repeat(val.array->length, ai) {
+                    writeRValueJson(w, val.array->data[ai]);
+                }
+            }
+            JsonWriter_endArray(w);
+            break;
+        }
+#if IS_BC17_OR_HIGHER_ENABLED
+        case RVALUE_METHOD: {
             char buf[64];
-            snprintf(buf, sizeof(buf), "<array_ref:%d>", val.int32);
+            snprintf(buf, sizeof(buf), "<method:%d>", val.method->codeIndex);
             JsonWriter_string(w, buf);
             break;
         }
+#endif
     }
 }
 
@@ -1544,42 +2113,6 @@ char* Runner_dumpStateJson(Runner* runner) {
             writeRValueJson(&w, val);
         }
         JsonWriter_endObject(&w);
-
-        // Self arrays
-        JsonWriter_key(&w, "selfArrays");
-        JsonWriter_beginObject(&w);
-        int64_t selfArrayLen = hmlen(inst->selfArrayMap);
-        if (selfArrayLen > 0) {
-            repeat(selfArrayLen, arrIdx) {
-                int64_t key = inst->selfArrayMap[arrIdx].key;
-                RValue val = inst->selfArrayMap[arrIdx].value;
-                int32_t varID = (int32_t) (key >> 32);
-                int32_t arrayIndex = (int32_t) (key & 0xFFFFFFFF);
-
-                // Find variable name
-                const char* varName = nullptr;
-                repeat(dataWin->vari.variableCount, varIdx) {
-                    Variable* var = &dataWin->vari.variables[varIdx];
-                    if (var->varID == varID && var->instanceType == INSTANCE_SELF) {
-                        varName = var->name;
-                        break;
-                    }
-                }
-
-                if (varName == nullptr) continue;
-
-                // Check if we already started this variable's object
-                // We write arrays as "varName": {"0": val, "1": val, ...}
-                // Since selfArrayMap entries may be interleaved, we build per-variable
-                // For simplicity, write each entry as varName[index] flattened
-                char compositeKey[256];
-                snprintf(compositeKey, sizeof(compositeKey), "%s[%d]", varName, arrayIndex);
-                JsonWriter_key(&w, compositeKey);
-                writeRValueJson(&w, val);
-            }
-        }
-        JsonWriter_endObject(&w);
-
         JsonWriter_endObject(&w);
     }
 
@@ -1634,37 +2167,6 @@ char* Runner_dumpStateJson(Runner* runner) {
         writeRValueJson(&w, val);
     }
     JsonWriter_endObject(&w);
-
-    // Global arrays
-    JsonWriter_key(&w, "globalArrays");
-    JsonWriter_beginObject(&w);
-    int64_t globalArrayLen = hmlen(vm->globalArrayMap);
-    if (globalArrayLen > 0) {
-        repeat(globalArrayLen, arrIdx) {
-            int64_t key = vm->globalArrayMap[arrIdx].key;
-            RValue val = vm->globalArrayMap[arrIdx].value;
-            int32_t varID = (int32_t) (key >> 32);
-            int32_t arrayIndex = (int32_t) (key & 0xFFFFFFFF);
-
-            const char* varName = nullptr;
-            repeat(dataWin->vari.variableCount, varIdx) {
-                Variable* var = &dataWin->vari.variables[varIdx];
-                if (var->varID == varID && var->instanceType == INSTANCE_GLOBAL) {
-                    varName = var->name;
-                    break;
-                }
-            }
-
-            if (varName == nullptr) continue;
-
-            char compositeKey[256];
-            snprintf(compositeKey, sizeof(compositeKey), "%s[%d]", varName, arrayIndex);
-            JsonWriter_key(&w, compositeKey);
-            writeRValueJson(&w, val);
-        }
-    }
-    JsonWriter_endObject(&w);
-
     JsonWriter_endObject(&w);
 
     char* result = JsonWriter_copyOutput(&w);
@@ -1675,28 +2177,9 @@ char* Runner_dumpStateJson(Runner* runner) {
 void Runner_free(Runner* runner) {
     if (runner == nullptr) return;
 
-    // Free all instances
-    repeat(arrlen(runner->instances), i) {
-        Instance_free(runner->instances[i]);
-    }
-    arrfree(runner->instances);
+    cleanupState(runner);
 
-    // Free saved room states
-    if (runner->savedRoomStates != nullptr) {
-        repeat(runner->dataWin->room.count, i) {
-            SavedRoomState* state = &runner->savedRoomStates[i];
-            int32_t savedCount = (int32_t) arrlen(state->instances);
-            repeat(savedCount, j) {
-                Instance_free(state->instances[j]);
-            }
-            arrfree(state->instances);
-            hmfree(state->tileLayerMap);
-        }
-        free(runner->savedRoomStates);
-    }
-
-    hmfree(runner->tileLayerMap);
-    shfree(runner->disabledObjects);
     RunnerKeyboard_free(runner->keyboard);
+    Instance_free(runner->globalScopeInstance);
     free(runner);
 }

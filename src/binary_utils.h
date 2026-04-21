@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -33,39 +34,17 @@ static inline int64_t BinaryUtils_readInt64(const uint8_t* data) {
 }
 
 static inline float BinaryUtils_readFloat32(const uint8_t* data) {
-#ifdef __WIIU__
-    uint32_t bits = BinaryUtils_readUint32(data);
-    float val;
-    memcpy(&val, &bits, 4);
-    return val;
-#else
     float val;
     memcpy(&val, data, 4);
     return val;
-#endif
 }
 
 static inline double BinaryUtils_readFloat64(const uint8_t* data) {
-#ifdef __WIIU__
-    uint64_t bits = (uint64_t) data[0] | ((uint64_t) data[1] << 8) | ((uint64_t) data[2] << 16) | ((uint64_t) data[3] << 24) |
-                    ((uint64_t) data[4] << 32) | ((uint64_t) data[5] << 40) | ((uint64_t) data[6] << 48) | ((uint64_t) data[7] << 56);
-    double val;
-    memcpy(&val, &bits, 8);
-    return val;
-#else
     double val;
     memcpy(&val, data, 8);
     return val;
-#endif
 }
 
 static inline void BinaryUtils_writeUint32(uint8_t* data, uint32_t val) {
-#ifdef __WIIU__
-    data[0] = (uint8_t) (val & 0xFF);
-    data[1] = (uint8_t) ((val >> 8) & 0xFF);
-    data[2] = (uint8_t) ((val >> 16) & 0xFF);
-    data[3] = (uint8_t) ((val >> 24) & 0xFF);
-#else
     memcpy(data, &val, 4);
-#endif
 }

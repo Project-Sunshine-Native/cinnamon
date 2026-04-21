@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -34,17 +35,8 @@ int32_t BinaryReader_readInt32(BinaryReader* reader);
 uint32_t BinaryReader_readUint32(BinaryReader* reader);
 float BinaryReader_readFloat32(BinaryReader* reader);
 uint64_t BinaryReader_readUint64(BinaryReader* reader);
+int64_t BinaryReader_readInt64(BinaryReader* reader);
 bool BinaryReader_readBool32(BinaryReader* reader);
-
-//Wii U specific binary handling, as this is the only platform that is Big-Endian
-#ifdef __WIIU__
-uint16_t BinaryReader_readUint16LE(const void* data);
-int16_t BinaryReader_readInt16LE(const void* data);
-uint32_t BinaryReader_readUint32LE(const void* data);
-int32_t BinaryReader_readInt32LE(const void* data);
-uint64_t BinaryReader_readUint64LE(const void* data);
-float BinaryReader_readFloat32LE(const void* data);
-#endif
 
 // Copies 'count' bytes from the current position into 'dest'.
 void BinaryReader_readBytes(BinaryReader* reader, void* dest, size_t count);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -32,11 +33,13 @@ typedef struct {
     void (*setChannelCount)(AudioSystem* audio, int32_t count);
     void (*groupLoad)(AudioSystem* audio, int32_t groupIndex);
     bool (*groupIsLoaded)(AudioSystem* audio, int32_t groupIndex);
+    int32_t (*createStream)(AudioSystem* audio, const char* filename);
+    bool (*destroyStream)(AudioSystem* audio, int32_t streamIndex);
 } AudioSystemVtable;
 
 // ===[ AudioSystem Base Struct ]===
 
 struct AudioSystem {
     AudioSystemVtable* vtable;
-    DataWin* dataWin;
+    DataWin** audioGroups;
 };
