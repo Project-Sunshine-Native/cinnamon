@@ -59,7 +59,7 @@ RSF             := $(TOPDIR)/$(RESOURCES)/template.rsf
 ARCH 		:= -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp
 COMMON      := -Wall -O3 -mword-relocations -fomit-frame-pointer -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__ -DLODEPNG_NO_COMPILE_ALLOCATORS
 # TODO: Fix unused functions
-CFLAGS 		:= $(COMMON) -std=gnu99 -Wno-unused-function -DLODEPNG_NO_COMPILE_ALLOCATORS
+CFLAGS 		:= $(COMMON) -std=gnu99 -Wno-unused-function -DLODEPNG_NO_COMPILE_ALLOCATORS -DENABLE_BC16 -DENABLE_BC17
 CXXFLAGS    := $(COMMON) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS     := $(ARCH)
 LDFLAGS     := $(ARCH) -Wl,-Map,$(notdir $*.map)

@@ -425,6 +425,9 @@ int main(int argc, char *argv[])
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
+    // GameMaker expects draw_sprite_ext color to multiply with the texture.
+    // Citro2D defaults to a solid/lerp tint; use multiplicative tinting instead.
+    C2D_SetTintMode(C2D_TintMult);
     gfxSet3D(true);
     // consoleInit(GFX_BOTTOM, NULL);
 
@@ -450,8 +453,10 @@ int main(int argc, char *argv[])
             .parseOptn = true,
             .parseLang = true,
             .parseExtn = true,
-            .parseSond = true,
-            .parseAgrp = true,
+            .parseSond = false, // Disable sound parsing for speed
+            .parseAgrp = false, // Disable audio groups for performance
+            .parseSprt = true,
+            .parseBgnd = true,
             .parseSprt = true,
             .parseBgnd = true,
             .parsePath = true,
@@ -468,7 +473,10 @@ int main(int argc, char *argv[])
             .parseFunc = true,
             .parseStrg = true,
             .parseTxtr = true,
-            .parseAudo = true,
+            /* Embedded AUDO blobs duplicate what we ship as BCWAV under romfs:/audio and
+               would exhaust the ~4MB ctr heap during parse (see parseAUDO in data_win.c).
+               N3DSAudio plays from CWAV files only — it never reads dw->audo.entries. */
+            .parseAudo = false,
             .skipLoadingPreciseMasksForNonPreciseSprites = true,
             .progressCallback = progressCb,
             .progressCallbackUserData = &lbState,
@@ -582,8 +590,28 @@ int main(int argc, char *argv[])
 
     // Initialize the runner
     LogToSD("LOADING RUNNER");
-    Runner *runner = Runner_create(dataWin, vm, (FileSystem *)n3dsFileSystem);
+    Runner *runner = Runner_create(dataWin, vm, NULL, (FileSystem *)n3dsFileSystem, NULL);
     runner->audioSystem = audioSystem;
+    runner->osType = OS_3DS;
+    runner->disableAsrielBackgroundEffects = true; // Enable by default on 3DS for performance
+    /* Heavy decorative object — skip on 3DS (see PS2 CONFIG.JSN disabledObjects pattern). */
+    sh_new_strdup(runner->disabledObjects);
+    shput(runner->disabledObjects, "lava_object", 1);
+
+    // Temporary perf mitigation: Asriel fight background effects can be extremely expensive on 3DS.
+    // Disable any suspicious Asriel background helper objects by name heuristic.
+    if (runner->disableAsrielBackgroundEffects) {
+        for (uint32_t oi = 0; oi < dataWin->objt.count; oi++) {
+            const char* n = dataWin->objt.objects[oi].name;
+            if (!n) continue;
+            // Keep this conservative: only disable objects whose names clearly indicate Asriel background FX.
+            if (strstr(n, "bg") || strstr(n, "BG") || strstr(n, "square") || strstr(n, "block") ||
+                strstr(n, "effect") || strstr(n, "particle")) {
+                shput(runner->disabledObjects, n, 1);
+                printf("3DS: disabled object for perf: %s\n", n);
+            }
+        }
+    }
     // runner->debugMode = args.debug;
     LogToSD("RUNNER OK");
 
@@ -1053,8 +1081,12 @@ int main(int argc, char *argv[])
                 float viewAngle = runner->viewAngles[vi];
 
                 runner->viewCurrent = vi;
-                // TODO: Add renderer, see first comment about  renderer
-                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX * 400 / gameW, portY * 240 / gameH, portW * 400 / gameW, portH * 240 / gameH, viewAngle, vi);
+                // Always render to the top screen render target (viewIndex=0).
+                // We still expose view_current = vi to GML via runner->viewCurrent.
+                renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH,
+                                            portX * 400 / gameW, portY * 240 / gameH,
+                                            portW * 400 / gameW, portH * 240 / gameH,
+                                            viewAngle, 0);
 
                 Runner_draw(runner);
 
@@ -1067,7 +1099,8 @@ int main(int argc, char *argv[])
         {
             // No views enabled or views disabled: render with default full-screen view
             runner->viewCurrent = 0;
-            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f, 0);
+            /* Port size is framebuffer pixels; game WxH is the view (fixes scale vs 400x240 top screen). */
+            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, 400, 240, 0.0f, 0);
             Runner_draw(runner);
             renderer->vtable->endView(renderer);
         }
