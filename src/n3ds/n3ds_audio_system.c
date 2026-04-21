@@ -246,13 +246,6 @@ static bool buildCwavPathFromFile(const Sound* sound, char* outPath, size_t outS
     return n > 0 && (size_t) n < outSize;
 }
 
-static bool buildSdmcCwavPathFromStem(const char* stem, char* outPath, size_t outSize) {
-    if (!stem || !stem[0] || !outPath || outSize == 0) return false;
-    // Prefer sdmc:/cinnamon/audio/ but also allow directly under sdmc:/cinnamon/.
-    int n = snprintf(outPath, outSize, "sdmc:/cinnamon/audio/%s.cwav", stem);
-    return n > 0 && (size_t)n < outSize;
-}
-
 // Minimal BCWAV (bannertool makecwav) header parser.
 // Only reads the fields the runtime actually needs: sample rate, channels,
 // loop info, and the byte offset within the file where PCM16 audio starts.
@@ -324,7 +317,7 @@ static bool parseBcwavHeader(FILE* f, BcwavInfo* out) {
 
 static void n3dsInit(AudioSystem* audio, DataWin* dataWin, FileSystem* fileSystem) {
     N3DSAudioSystem* n3ds = (N3DSAudioSystem*) audio;
-    n3ds->dataWin = dataWin;
+    n3ds->base.dataWin = dataWin;
     n3ds->fileSystem = fileSystem;
     n3ds->masterGain = 1.0f;
 
@@ -458,7 +451,7 @@ static void n3dsUpdate(AudioSystem* audio, float deltaTime) {
 
 static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t priority, bool loop) {
     N3DSAudioSystem* n3ds = (N3DSAudioSystem*) audio;
-    DataWin* dw = n3ds->dataWin;
+    DataWin* dw = n3ds->base.dataWin;
 
     if (!n3ds->initialized) return -1;
     // Fully muted: reject play requests before any file I/O/cache allocations.
@@ -532,32 +525,6 @@ static int32_t n3dsPlaySound(AudioSystem* audio, int32_t soundIndex, int32_t pri
         bool hasFilePath = buildCwavPathFromFile(sound, filePath, sizeof(filePath));
         AUDIO_DBG_PLAY("N3DSAudio[play]: cache miss, resolvedPath='%s'\n", hasFilePath ? filePath : "<none>");
         file = hasFilePath ? fopen(filePath, "rb") : NULL;
-
-        // Fallback: allow loading from SD card to support modded audio / external packs.
-        if (!file && sound && sound->file && sound->file[0]) {
-            // Re-derive the same stem we used in buildCwavPathFromFile
-            const char* base = sound->file;
-            const char* slash = strrchr(base, '/');
-            if (slash) base = slash + 1;
-            const char* bslash = strrchr(base, '\\');
-            if (bslash) base = bslash + 1;
-
-            char stem[256];
-            size_t len = strlen(base);
-            if (len >= sizeof(stem)) len = sizeof(stem) - 1;
-            memcpy(stem, base, len);
-            stem[len] = '\0';
-            char* dot = strrchr(stem, '.');
-            if (dot) *dot = '\0';
-
-            char sdPath[512] = {0};
-            if (buildSdmcCwavPathFromStem(stem, sdPath, sizeof(sdPath))) {
-                file = fopen(sdPath, "rb");
-                if (file) {
-                    AUDIO_DBG_PLAY("N3DSAudio[play]: opened SD CWAV '%s'\n", sdPath);
-                }
-            }
-        }
 
         if (!file) {
             AUDIO_ERR("N3DSAudio: CWAV not found by file stem: sound='%s' file='%s'\n",
