@@ -238,7 +238,7 @@ static void glDestroy(Renderer* renderer) {
     free(gl);
 }
 
-static void glBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
+static void glBeginFrame(Renderer* renderer, [[maybe_unused]] uint32_t clearColor, [[maybe_unused]] uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
     GLRenderer* gl = (GLRenderer*) renderer;
 
     gl->quadCount = 0;
@@ -276,7 +276,7 @@ static void glBeginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32
     glViewport(0, 0, gameW, gameH);
 }
 
-static void glBeginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle) {
+static void glBeginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle, [[maybe_unused]] uint32_t viewIndex) {
     GLRenderer* gl = (GLRenderer*) renderer;
 
     gl->quadCount = 0;
@@ -962,6 +962,8 @@ static RendererVtable glVtable = {
     .createSpriteFromSurface = glCreateSpriteFromSurface,
     .deleteSprite = glDeleteSprite,
     .drawTile = nullptr,
+    .onRoomEnd = nullptr,
+    .onRoomStart = nullptr,
 };
 
 // ===[ Public API ]===

@@ -58,6 +58,7 @@ typedef struct {
     bool traceEventInherited;
     const char* recordInputsPath;
     const char* playbackInputsPath;
+    bool disableAsrielBackgroundEffects;
 } CommandLineArgs;
 
 static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) {
@@ -90,6 +91,7 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
         {"disassemble", required_argument, nullptr, 'A'},
         {"record-inputs", required_argument, nullptr, 'I'},
         {"playback-inputs", required_argument, nullptr, 'P'},
+        {"disable-asriel-bg-effects", no_argument, nullptr, 'B'},
         {nullptr,               0,                 nullptr,  0 }
     };
 
@@ -221,6 +223,9 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
                 break;
             case 'P':
                 args->playbackInputsPath = optarg;
+                break;
+            case 'B':
+                args->disableAsrielBackgroundEffects = true;
                 break;
             default:
                 fprintf(stderr, "Usage: %s [--headless] [--screenshot=PATTERN] [--screenshot-at-frame=N ...] <path to data.win or game.unx>\n", argv[0]);
@@ -464,9 +469,10 @@ int main(int argc, char* argv[]) {
     // Initialize the file system
     GlfwFileSystem* glfwFileSystem = GlfwFileSystem_create(args.dataWinPath);
 
-    // Initialize the runner
-    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) glfwFileSystem);
+    // Initialize the runner (renderer/audio attached after GLFW/window setup)
+    Runner* runner = Runner_create(dataWin, vm, nullptr, (FileSystem*) glfwFileSystem, nullptr);
     runner->debugMode = args.debug;
+    runner->disableAsrielBackgroundEffects = args.disableAsrielBackgroundEffects;
 
     // Set up input recording/playback (both can be active: playback then continue recording)
     if (args.playbackInputsPath != nullptr) {
