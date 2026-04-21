@@ -544,7 +544,7 @@ static void WiiURenderer_destroy(Renderer* base) {
     free(renderer);
 }
 
-static void WiiURenderer_beginFrame(Renderer* base, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
+static void WiiURenderer_beginFrame(Renderer* base, [[maybe_unused]] uint32_t clearColor, [[maybe_unused]] uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
     (void) windowW;
     (void) windowH;
 
@@ -567,7 +567,7 @@ static void WiiURenderer_beginFrame(Renderer* base, int32_t gameW, int32_t gameH
     renderer->queuedQuadCount = 0;
 }
 
-static void WiiURenderer_beginView(Renderer* base, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle) {
+static void WiiURenderer_beginView(Renderer* base, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle, [[maybe_unused]] uint32_t viewIndex) {
     (void) viewAngle;
 
     WiiURenderer* renderer = (WiiURenderer*) base;
@@ -1035,6 +1035,8 @@ static RendererVtable WiiURendererVtable = {
     .createSpriteFromSurface = WiiURenderer_createSpriteFromSurface,
     .deleteSprite = WiiURenderer_deleteSprite,
     .drawTile = NULL,
+    .onRoomEnd = NULL,
+    .onRoomStart = NULL,
     .onRoomEnd = WiiURenderer_onRoomEnd,
 };
 

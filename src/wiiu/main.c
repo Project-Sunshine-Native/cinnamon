@@ -381,7 +381,7 @@ int main(int argc, char* argv[]) {
     bootLog("stage: after WiiUFileSystem_create");
     presentLoadingProgress(0.86f);
 
-    Runner* runner = Runner_create(dataWin, vm, (FileSystem*) fileSystem);
+    Runner* runner = Runner_create(dataWin, vm, NULL, (FileSystem*) fileSystem, NULL);
     bootLog("stage: after Runner_create");
     presentLoadingProgress(0.90f);
 
@@ -457,7 +457,7 @@ int main(int argc, char* argv[]) {
         clock_gettime(CLOCK_MONOTONIC, &renderStart);
 
         WiiURenderer_setClearColor((WiiURenderer*) renderer, runner->drawBackgroundColor ? runner->backgroundColor : 0x000000);
-        renderer->vtable->beginFrame(renderer, gameW, gameH, gameW, gameH);
+        renderer->vtable->beginFrame(renderer, 0, 0, gameW, gameH, gameW, gameH);
 
         if (!loggedFirstFrame) {
             bootLog("frame: after beginFrame");
@@ -482,7 +482,8 @@ int main(int argc, char* argv[]) {
                     (int32_t) lroundf((float) activeRoom->views[vi].portY * portScaleY),
                     (int32_t) lroundf((float) activeRoom->views[vi].portWidth * portScaleX),
                     (int32_t) lroundf((float) activeRoom->views[vi].portHeight * portScaleY),
-                    runner->viewAngles[vi]
+                    runner->viewAngles[vi],
+                    (uint32_t) vi
                 );
                 if (!loggedFirstFrame) {
                     bootLog("frame: before Runner_draw view");
@@ -498,7 +499,7 @@ int main(int argc, char* argv[]) {
 
         if (!anyViewRendered) {
             runner->viewCurrent = 0;
-            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
+            renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f, 0);
             if (!loggedFirstFrame) {
                 bootLog("frame: before Runner_draw default");
             }
