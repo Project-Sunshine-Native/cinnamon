@@ -294,7 +294,7 @@ static void WiiURenderer_pushCommand(WiiURenderer* renderer, const WiiUQuadComma
 static void WiiURenderer_bindShader(WiiURenderer* renderer) {
     GX2SetShaderMode(GX2_SHADER_MODE_UNIFORM_BLOCK);
     GX2SetShaderModeEx(
-        renderer->shaderGroup.vertexShader->mode,
+        GX2_SHADER_MODE_UNIFORM_BLOCK,
         GX2GetVertexShaderGPRs(renderer->shaderGroup.vertexShader),
         GX2GetVertexShaderStackEntries(renderer->shaderGroup.vertexShader),
         0,

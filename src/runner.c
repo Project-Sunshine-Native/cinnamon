@@ -8,12 +8,30 @@
 #include "collision.h"
 
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
 #include "stb_ds.h"
+
+__attribute__((weak)) void Runner_platformBootLog(const char* message) {
+    (void) message;
+}
+
+static void Runner_bootLog(const char* message) {
+    Runner_platformBootLog(message);
+}
+
+static void Runner_bootLogf(const char* format, ...) {
+    char buffer[192];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    Runner_platformBootLog(buffer);
+}
 
 // ===[ Runtime Layer Teardown Helpers ]===
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer) {
@@ -763,10 +781,13 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     require(roomIndex >= 0 && dataWin->room.count > (uint32_t) roomIndex);
 
     Room* room = &dataWin->room.rooms[roomIndex];
+    Runner_bootLogf("runner: initRoom begin %s (%d)", room->name, roomIndex);
 
     // Lazy-room load: if the payload wasn't loaded, read it from the data.win file now before anything touches the room's game objects/tiles/layers.
     if (!room->payloadLoaded) {
+        Runner_bootLog("runner: loading room payload");
         DataWin_loadRoomPayload(dataWin, roomIndex);
+        Runner_bootLog("runner: room payload loaded");
     }
 
     SavedRoomState* savedState = &runner->savedRoomStates[roomIndex];
@@ -827,6 +848,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
 
         // No Create events, no preCreateCode, no creationCode, no room creation code
         fprintf(stderr, "Runner: Room restored (persistent): %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+        Runner_bootLogf("runner: initRoom restored persistent (%d instances)", (int) arrlen(runner->instances));
         return;
     }
 
@@ -985,6 +1007,9 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         // Skip instances that already had their Create event fired (persistent carry-overs)
         if (inst->createEventFired) continue;
         inst->createEventFired = true;
+        if ((i % 32u) == 0u || i + 1u == room->gameObjectCount) {
+            Runner_bootLogf("runner: create pass %u/%u (inst=%d obj=%d)", i + 1u, room->gameObjectCount, inst->instanceId, inst->objectIndex);
+        }
 
         Runner_executeEvent(runner, inst, EVENT_PRECREATE, 0);
         executeCode(runner, inst, roomObj->preCreateCode);
@@ -995,14 +1020,17 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
     // Run room creation code
     if (room->creationCodeId >= 0 && dataWin->code.count > (uint32_t) room->creationCodeId) {
         // Room creation code runs in global context (no specific instance)
+        Runner_bootLogf("runner: room creation code begin id=%d", room->creationCodeId);
         RValue result = VM_executeCode(runner->vmContext, room->creationCodeId);
         RValue_free(&result);
+        Runner_bootLog("runner: room creation code end");
     }
 
     // Mark this room as initialized for persistent room support
     savedState->initialized = true;
 
     fprintf(stderr, "Runner: Room loaded: %s (room %d) with %d instances\n", room->name, roomIndex, (int) arrlen(runner->instances));
+    Runner_bootLogf("runner: initRoom end (%d instances)", (int) arrlen(runner->instances));
 }
 
 // Cleans up the runner state, used when freeing the Runner or when restarting the Runner
@@ -1251,6 +1279,7 @@ void Runner_initFirstRoom(Runner* runner) {
     require(dataWin->gen8.roomOrderCount > 0);
 
     int32_t firstRoomIndex = dataWin->gen8.roomOrder[0];
+    Runner_bootLogf("runner: initFirstRoom begin (roomIndex=%d)", firstRoomIndex);
 
     // Run global init scripts with the global scope instance as "self"
     // In GMS 2.3+ (BC17), GLOB scripts store function declarations on "self" via Pop.v.v
@@ -1259,21 +1288,30 @@ void Runner_initFirstRoom(Runner* runner) {
         int32_t codeId = dataWin->glob.codeIds[i];
         if (codeId >= 0 && dataWin->code.count > (uint32_t) codeId) {
             fprintf(stderr, "Runner: Executing global init script: %s\n", dataWin->code.entries[codeId].name);
+            Runner_bootLogf("runner: global init begin %u/%u %s", i + 1u, dataWin->glob.count, dataWin->code.entries[codeId].name);
             RValue result = VM_executeCode(runner->vmContext, codeId);
             RValue_free(&result);
+            Runner_bootLogf("runner: global init end %u/%u", i + 1u, dataWin->glob.count);
         }
     }
     runner->vmContext->currentInstance = nullptr;
+    Runner_bootLog("runner: global init complete");
 
     // Initialize the first room
+    Runner_bootLog("runner: init first room begin");
     initRoom(runner, firstRoomIndex);
+    Runner_bootLog("runner: init first room end");
 
     // Fire Game Start for all instances
+    Runner_bootLog("runner: game start begin");
     Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_GAME_START);
     runner->gameStartFired = true;
+    Runner_bootLog("runner: game start end");
 
     // Fire Room Start for all instances
+    Runner_bootLog("runner: room start begin");
     Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ROOM_START);
+    Runner_bootLog("runner: room start end");
 }
 
 // ===[ Collision Event Dispatch ]===
