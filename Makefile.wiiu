@@ -13,6 +13,11 @@ endif
 TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/wut/share/wut_rules
 
+# Default to 2-way parallel builds unless caller already set -j.
+ifeq ($(filter -j%,$(MAKEFLAGS)),)
+MAKEFLAGS += -j2
+endif
+
 TARGET      := undertale
 BUILD       := build-wiiu
 SOURCES     := src src/wiiu
@@ -41,8 +46,8 @@ WIIU_SHADER_PREBUILT := $(WIIU_SHADERS) $(WIIU_SHADER_HDR)
 HAVE_CAFEGLSL := $(if $(wildcard $(CAFEGLSL)),1,0)
 
 COMMON      := -Wall -O2 -ffunction-sections -fdata-sections $(MACHDEP) $(INCLUDE) -D__WIIU__
-CFLAGS      := $(COMMON) -std=gnu99 -Wno-unused-function
-CXXFLAGS    := $(COMMON) -std=gnu++11 -fno-rtti -fno-exceptions
+CFLAGS      := $(COMMON) -std=gnu99 -Wno-unused-function -DENABLE_BC16 -DENABLE_BC17
+CXXFLAGS    := $(COMMON) -std=gnu++11 -fno-rtti -fno-exceptions -DENABLE_BC16 -DENABLE_BC17
 ASFLAGS     := $(MACHDEP)
 LDFLAGS     := $(RPXSPECS) -Wl,-Map,$(notdir $*.map),--gc-sections
 LIBS        := -lSDL2 -lwut -lm

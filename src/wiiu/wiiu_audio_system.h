@@ -49,6 +49,7 @@ typedef struct {
 
 typedef struct {
     AudioSystem base;
+    DataWin* dataWin;
     FileSystem* fileSystem;
     float masterGain;
     bool initialized;

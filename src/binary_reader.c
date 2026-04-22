@@ -1,5 +1,6 @@
 #include "binary_reader.h"
 #include "utils.h"
+#include "binary_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -49,45 +50,87 @@ uint8_t BinaryReader_readUint8(BinaryReader* reader) {
 }
 
 int16_t BinaryReader_readInt16(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[2];
+    readCheck(reader, raw, 2);
+    return BinaryUtils_readInt16(raw);
+#else
     int16_t value;
     readCheck(reader, &value, 2);
     return value;
+#endif
 }
 
 uint16_t BinaryReader_readUint16(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[2];
+    readCheck(reader, raw, 2);
+    return BinaryUtils_readUint16(raw);
+#else
     uint16_t value;
     readCheck(reader, &value, 2);
     return value;
+#endif
 }
 
 int32_t BinaryReader_readInt32(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[4];
+    readCheck(reader, raw, 4);
+    return BinaryUtils_readInt32(raw);
+#else
     int32_t value;
     readCheck(reader, &value, 4);
     return value;
+#endif
 }
 
 uint32_t BinaryReader_readUint32(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[4];
+    readCheck(reader, raw, 4);
+    return BinaryUtils_readUint32(raw);
+#else
     uint32_t value;
     readCheck(reader, &value, 4);
     return value;
+#endif
 }
 
 float BinaryReader_readFloat32(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[4];
+    readCheck(reader, raw, 4);
+    return BinaryUtils_readFloat32(raw);
+#else
     float value;
     readCheck(reader, &value, 4);
     return value;
+#endif
 }
 
 uint64_t BinaryReader_readUint64(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[8];
+    readCheck(reader, raw, 8);
+    return (uint64_t) BinaryUtils_readInt64(raw);
+#else
     uint64_t value;
     readCheck(reader, &value, 8);
     return value;
+#endif
 }
 
 int64_t BinaryReader_readInt64(BinaryReader* reader) {
+#if CINNAMON_BIG_ENDIAN
+    uint8_t raw[8];
+    readCheck(reader, raw, 8);
+    return BinaryUtils_readInt64(raw);
+#else
     int64_t value;
     readCheck(reader, &value, 8);
     return value;
+#endif
 }
 
 bool BinaryReader_readBool32(BinaryReader* reader) {

@@ -902,11 +902,6 @@ static void resolveVariableWrite(VMContext* ctx, int32_t instanceType, uint32_t 
         return;
     }
 
-#ifndef DISABLE_VM_TRACING
-    bool shouldLogGlobal = false;
-    bool shouldLogInstance = false;
-#endif
-
     switch (instanceType) {
         case INSTANCE_LOCAL: {
             uint32_t localSlot = resolveLocalSlot(ctx, varDef->varID);

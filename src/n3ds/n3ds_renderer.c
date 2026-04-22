@@ -806,8 +806,6 @@ static bool ensurePageDecoded(TexCachePage* page, uint32_t pageIdx) {
 // swizzle buffer.  page->pixels stays alive until CEndFrame.
 
 static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t pageIdx) {
-    CRenderer3DS* C = g_renderer;
-    
     entry->texW = gpuTexDim(entry->srcW);
     entry->texH = gpuTexDim(entry->srcH);
 
@@ -1010,9 +1008,6 @@ static void drawRegion(CRenderer3DS* C,
                         // (after normalization for negative width/height).
                         float pivotX, float pivotY)
 {
-    bool flipX = dstW < 0.0f;
-    bool flipY = dstH < 0.0f;
-
     if (isRotatedRectOffscreen(C, dstX, dstY, dstW, dstH, angle)) return;
 
     CFlushQueuedRects(C);
