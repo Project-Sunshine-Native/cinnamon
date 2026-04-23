@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common.h"
 #include <stddef.h>
+#include <stdbool.h>
 
 #define INI_SERIALIZE_DEFAULT_INITIAL_CAPACITY 256
 

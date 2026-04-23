@@ -506,8 +506,11 @@ static bool WiiUAudio_decodeSound(WiiUAudioSystem* wiiu, Sound* sound, WiiUDecod
     );
     WiiUAudio_bootLog(buffer);
 
-    if (sound->audioFile >= 0 && (uint32_t) sound->audioFile < wiiu->dataWin->audo.count) {
-        AudioEntry* entry = &wiiu->dataWin->audo.entries[sound->audioFile];
+    if (sound->audioFile >= 0 && (uint32_t) sound->audioFile < wiiu->base.dataWin->audo.count) {
+        AudioEntry* entry = &wiiu->base.dataWin->audo.entries[sound->audioFile];
+        if (entry->data == NULL) {
+            DataWin_loadAudio(wiiu->base.dataWin, (uint32_t) sound->audioFile);
+        }
         snprintf(
             buffer,
             sizeof(buffer),
@@ -533,8 +536,8 @@ static bool WiiUAudio_decodeSound(WiiUAudioSystem* wiiu, Sound* sound, WiiUDecod
     }
 
     if (isEmbedded) {
-        if (sound->audioFile < 0 || (uint32_t) sound->audioFile >= wiiu->dataWin->audo.count) return false;
-        AudioEntry* entry = &wiiu->dataWin->audo.entries[sound->audioFile];
+        if (sound->audioFile < 0 || (uint32_t) sound->audioFile >= wiiu->base.dataWin->audo.count) return false;
+        AudioEntry* entry = &wiiu->base.dataWin->audo.entries[sound->audioFile];
         if (entry->data == NULL) return false;
         if (!WiiUAudio_decodeSoundData(wiiu, entry->data, entry->dataSize, out)) {
             WiiUAudio_bootLog("wiiu_audio: embedded decode failed");
@@ -573,8 +576,8 @@ static bool WiiUAudio_decodeSound(WiiUAudioSystem* wiiu, Sound* sound, WiiUDecod
         }
     }
 
-    if (sound->audioFile >= 0 && (uint32_t) sound->audioFile < wiiu->dataWin->audo.count) {
-        AudioEntry* entry = &wiiu->dataWin->audo.entries[sound->audioFile];
+    if (sound->audioFile >= 0 && (uint32_t) sound->audioFile < wiiu->base.dataWin->audo.count) {
+        AudioEntry* entry = &wiiu->base.dataWin->audo.entries[sound->audioFile];
         if (entry->data != NULL && entry->dataSize > 0) {
             WiiUAudio_bootLog("wiiu_audio: trying AUDO fallback");
             if (WiiUAudio_decodeSoundData(wiiu, entry->data, entry->dataSize, out)) {
@@ -618,7 +621,7 @@ static WiiUSoundInstance* WiiUAudio_findFreeSlot(WiiUAudioSystem* wiiu) {
 static void WiiUAudioSystem_init(AudioSystem* audio, DataWin* dataWin, FileSystem* fileSystem) {
     WiiUAudio_bootLog("wiiu_audio: init begin");
     WiiUAudioSystem* wiiu = (WiiUAudioSystem*) audio;
-    wiiu->dataWin = dataWin;
+    wiiu->base.dataWin = dataWin;
     wiiu->fileSystem = fileSystem;
     wiiu->masterGain = 1.0f;
     wiiu->decodedSounds = safeCalloc(dataWin->sond.count, sizeof(WiiUDecodedSound));
@@ -662,7 +665,7 @@ static void WiiUAudioSystem_destroy(AudioSystem* audio) {
         wiiu->deviceId = 0;
     }
     if (wiiu->decodedSounds != NULL) {
-        repeat(wiiu->dataWin->sond.count, i) {
+        repeat(wiiu->base.dataWin->sond.count, i) {
             free(wiiu->decodedSounds[i].samples);
         }
         free(wiiu->decodedSounds);
@@ -698,7 +701,7 @@ static void WiiUAudioSystem_update(AudioSystem* audio, float deltaTime) {
 
 static int32_t WiiUAudioSystem_playSound(AudioSystem* audio, int32_t soundIndex, int32_t priority, bool loop) {
     WiiUAudioSystem* wiiu = (WiiUAudioSystem*) audio;
-    DataWin* dw = wiiu->dataWin;
+    DataWin* dw = wiiu->base.dataWin;
     char buffer[192];
     snprintf(buffer, sizeof(buffer), "wiiu_audio: playSound begin sound=%d priority=%d loop=%s", soundIndex, priority, loop ? "true" : "false");
     WiiUAudio_bootLog(buffer);

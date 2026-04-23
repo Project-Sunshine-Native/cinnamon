@@ -431,7 +431,7 @@ int main(int argc, char* argv[]) {
     }
 
     VMContext* vm = VM_create(dataWin);
-    Runner* runner = Runner_create(dataWin, vm, NULL, fileSystem, NULL);
+    Runner* runner = Runner_create(dataWin, vm, fileSystem);
 
     // Parse disabledObjects from CONFIG.JSN
     JsonValue* disabledObjectsArr = JsonReader_getObject(configRoot, "disabledObjects");
@@ -601,7 +601,7 @@ int main(int argc, char* argv[]) {
             if (!deferDrawToAfterAllSteps) {
                 gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
 
-                renderer->vtable->beginFrame(renderer, 0, 0, gameW, gameH, 640, 448);
+                renderer->vtable->beginFrame(renderer, gameW, gameH, 640, 448);
 
                 // Clear with room background color
                 if (runner->drawBackgroundColor) {
@@ -633,7 +633,7 @@ int main(int argc, char* argv[]) {
                         float viewAngle = runner->viewAngles[vi];
 
                         runner->viewCurrent = (int32_t) vi;
-                        renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle, (uint32_t)vi);
+                        renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
 
                         Runner_draw(runner);
 
@@ -645,7 +645,7 @@ int main(int argc, char* argv[]) {
                 if (!anyViewRendered) {
                     // No views enabled: render with default full-screen view
                     runner->viewCurrent = 0;
-                    renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f, 0);
+                    renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
                     Runner_draw(runner);
                     renderer->vtable->endView(renderer);
                 }
@@ -669,7 +669,7 @@ int main(int argc, char* argv[]) {
         if (deferDrawToAfterAllSteps && gameFramesRan > 0) {
             gsKit_clear(gsGlobal, GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x80, 0x00));
 
-            renderer->vtable->beginFrame(renderer, 0, 0, gameW, gameH, 640, 448);
+            renderer->vtable->beginFrame(renderer, gameW, gameH, 640, 448);
 
             // Clear with room background color
             if (runner->drawBackgroundColor) {
@@ -701,7 +701,7 @@ int main(int argc, char* argv[]) {
                     float viewAngle = runner->viewAngles[vi];
 
                     runner->viewCurrent = (int32_t) vi;
-                    renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle, (uint32_t)vi);
+                    renderer->vtable->beginView(renderer, viewX, viewY, viewW, viewH, portX, portY, portW, portH, viewAngle);
 
                     Runner_draw(runner);
 
@@ -713,7 +713,7 @@ int main(int argc, char* argv[]) {
             if (!anyViewRendered) {
                 // No views enabled: render with default full-screen view
                 runner->viewCurrent = 0;
-                renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f, 0);
+                renderer->vtable->beginView(renderer, 0, 0, gameW, gameH, 0, 0, gameW, gameH, 0.0f);
                 Runner_draw(runner);
                 renderer->vtable->endView(renderer);
             }

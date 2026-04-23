@@ -29,6 +29,13 @@ typedef struct {
 } WiiUBatchVertex;
 
 typedef struct {
+    float targetWidth;
+    float targetHeight;
+    uint32_t xOffset;
+    uint32_t yOffset;
+} WiiUPresentLayout;
+
+typedef struct {
     float x;
     float y;
 } WiiUVec2;
@@ -71,17 +78,7 @@ typedef struct {
 
     int32_t frameWidth;
     int32_t frameHeight;
-
-    // 640x480 offscreen render target.  The game draws into this buffer every
-    // frame, and it is then blitted to the TV and DRC scan buffers using the
-    // POINT sampler for nearest-neighbour integer upscaling.
-    GX2ColorBuffer offscreenColorBuffer;
-    GX2Texture     offscreenTexture;
-    bool           offscreenReady;
-
-    // TV scan buffer dimensions, detected once at init from GX2GetSystemTVScanMode().
-    uint32_t tvWidth;
-    uint32_t tvHeight;
+    WiiUPresentLayout presentLayout;
 
     int32_t viewX;
     int32_t viewY;

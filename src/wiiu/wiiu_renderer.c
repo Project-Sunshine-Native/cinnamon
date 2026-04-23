@@ -39,65 +39,9 @@
 #define WIIU_MAX_QUADS 4096
 #define WIIU_VERTICES_PER_QUAD 6
 
-// The game always renders into a fixed 640x480 offscreen colour buffer.
-// The GPU then blits this to each scan buffer (TV / DRC) using the POINT
-// sampler, giving a hardware nearest-neighbour integer upscale.
-#define WIIU_GAME_WIDTH  640u
-#define WIIU_GAME_HEIGHT 480u
-
-// DRC scan buffer is always 854x480.
-#define WIIU_DRC_WIDTH  854u
-#define WIIU_DRC_HEIGHT 480u
-
-// Detect the TV scan-buffer resolution from the system scan mode.
-// This mirrors the logic in libwhb/src/gfx.c so our blit quad can be
-// sized correctly.
-static void WiiURenderer_detectTVResolution(WiiURenderer* renderer) {
-    switch (GX2GetSystemTVScanMode()) {
-        case GX2_TV_SCAN_MODE_480I:
-        case GX2_TV_SCAN_MODE_480P:
-            if (GX2GetSystemTVAspectRatio() == GX2_ASPECT_RATIO_16_9) {
-                renderer->tvWidth  = 854;
-                renderer->tvHeight = 480;
-            } else {
-                renderer->tvWidth  = 640;
-                renderer->tvHeight = 480;
-            }
-            break;
-        case GX2_TV_SCAN_MODE_1080I:
-        case GX2_TV_SCAN_MODE_1080P:
-            renderer->tvWidth  = 1920;
-            renderer->tvHeight = 1080;
-            break;
-        case GX2_TV_SCAN_MODE_720P:
-        default:
-            renderer->tvWidth  = 1280;
-            renderer->tvHeight = 720;
-            break;
-    }
-}
-
-// Compute clip-space coordinates for the integer-scaled blit rect centred
-// inside a scan buffer of (scanW x scanH).
-// Returns the (x0,y0)-(x1,y1) clip corners for the fullscreen blit quad.
-static void WiiURenderer_blitRect(uint32_t scanW, uint32_t scanH,
-                                   float* x0, float* y0, float* x1, float* y1) {
-    uint32_t scaleX = scanW / WIIU_GAME_WIDTH;
-    uint32_t scaleY = scanH / WIIU_GAME_HEIGHT;
-    uint32_t scale  = scaleX < scaleY ? scaleX : scaleY;
-    if (scale < 1) scale = 1;
-
-    uint32_t rectW = WIIU_GAME_WIDTH  * scale;
-    uint32_t rectH = WIIU_GAME_HEIGHT * scale;
-    uint32_t offX  = (scanW - rectW) / 2u;
-    uint32_t offY  = (scanH - rectH) / 2u;
-
-    // Convert pixel offsets to clip space [-1, 1].
-    *x0 = ((float) offX                / (float) scanW) * 2.0f - 1.0f;
-    *y0 = 1.0f - ((float)(offY + rectH) / (float) scanH) * 2.0f;
-    *x1 = ((float)(offX + rectW)        / (float) scanW) * 2.0f - 1.0f;
-    *y1 = 1.0f - ((float) offY          / (float) scanH) * 2.0f;
-}
+// Render to the full Wii U scan-buffer width and center the game's 4:3 image inside it.
+#define WIIU_RENDER_WIDTH  854
+#define WIIU_RENDER_HEIGHT 480
 
 __attribute__((weak)) void WiiURenderer_platformBootLog(const char* message) {
     (void) message;
@@ -129,14 +73,19 @@ static float WiiURenderer_snapPixel(float value) {
     return floorf(value + 0.5f);
 }
 
+static void WiiURenderer_updatePresentLayout(WiiURenderer* renderer) {
+    renderer->presentLayout.targetWidth = 640;
+    renderer->presentLayout.targetHeight = 480;
+    renderer->presentLayout.xOffset = (WIIU_RENDER_WIDTH - renderer->presentLayout.targetWidth) / 2u;
+    renderer->presentLayout.yOffset = (WIIU_RENDER_HEIGHT - renderer->presentLayout.targetHeight) / 2u;
+}
+
 void WiiURenderer_refreshOutputState(WiiURenderer* renderer) {
     if (renderer == NULL) return;
 
-    // Re-detect in case the user changed the TV mode at runtime.
-    WiiURenderer_detectTVResolution(renderer);
-
-    GX2SetTVScale(renderer->tvWidth, renderer->tvHeight);
-    GX2SetDRCScale(WIIU_DRC_WIDTH, WIIU_DRC_HEIGHT);
+    WiiURenderer_updatePresentLayout(renderer);
+    GX2SetTVScale(WIIU_RENDER_WIDTH, WIIU_RENDER_HEIGHT);
+    GX2SetDRCScale(WIIU_RENDER_WIDTH, WIIU_RENDER_HEIGHT);
 }
 
 
@@ -294,7 +243,7 @@ static void WiiURenderer_pushCommand(WiiURenderer* renderer, const WiiUQuadComma
 static void WiiURenderer_bindShader(WiiURenderer* renderer) {
     GX2SetShaderMode(GX2_SHADER_MODE_UNIFORM_BLOCK);
     GX2SetShaderModeEx(
-        GX2_SHADER_MODE_UNIFORM_BLOCK,
+        renderer->shaderGroup.vertexShader->mode,
         GX2GetVertexShaderGPRs(renderer->shaderGroup.vertexShader),
         GX2GetVertexShaderStackEntries(renderer->shaderGroup.vertexShader),
         0,
@@ -362,13 +311,14 @@ static WiiUVec2 WiiURenderer_worldToGame(WiiURenderer* renderer, float worldX, f
     return result;
 }
 
-// Game coordinates → NDC for the 640x480 offscreen render target.
-// The offscreen target IS the game buffer, so this is just a straightforward
-// pixel-to-clip mapping with no layout offset needed.
-static WiiUVec2 WiiURenderer_gameToClip(float x, float y) {
+static WiiUVec2 WiiURenderer_gameToClip(const WiiURenderer* renderer, WiiUVec2 point) {
     WiiUVec2 result;
-    result.x = (x / (float) WIIU_GAME_WIDTH)  * 2.0f - 1.0f;
-    result.y = 1.0f - (y / (float) WIIU_GAME_HEIGHT) * 2.0f;
+    float targetX = (float) renderer->presentLayout.xOffset +
+        ((point.x / (float) renderer->frameWidth) * (float) renderer->presentLayout.targetWidth);
+    float targetY = (float) renderer->presentLayout.yOffset +
+        ((point.y / (float) renderer->frameHeight) * (float) renderer->presentLayout.targetHeight);
+    result.x = (targetX / (float) WIIU_RENDER_WIDTH) * 2.0f - 1.0f;
+    result.y = 1.0f - (targetY / (float) WIIU_RENDER_HEIGHT) * 2.0f;
     return result;
 }
 
@@ -458,11 +408,11 @@ static void WiiURenderer_appendGradientQuad(
 static void WiiURenderer_buildQuadVertices(WiiURenderer* renderer, const WiiUQuadCommand* command) {
     WiiURenderer_ensureVertexCapacity(renderer, WIIU_VERTICES_PER_QUAD);
     WiiURenderer_mapVertexBuffer(renderer);
-    WiiUVec2 c00 = WiiURenderer_gameToClip(command->p00.x, command->p00.y);
-    WiiUVec2 c10 = WiiURenderer_gameToClip(command->p10.x, command->p10.y);
-    WiiUVec2 c01 = WiiURenderer_gameToClip(command->p01.x, command->p01.y);
+    WiiUVec2 c00 = WiiURenderer_gameToClip(renderer, command->p00);
+    WiiUVec2 c10 = WiiURenderer_gameToClip(renderer, command->p10);
+    WiiUVec2 c01 = WiiURenderer_gameToClip(renderer, command->p01);
     WiiUVec2 p11 = { command->p10.x + (command->p01.x - command->p00.x), command->p10.y + (command->p01.y - command->p00.y) };
-    WiiUVec2 c11 = WiiURenderer_gameToClip(p11.x, p11.y);
+    WiiUVec2 c11 = WiiURenderer_gameToClip(renderer, p11);
 
     if (command->gradient) {
         WiiURenderer_emitVertex(renderer, c00, command->u0, command->v0, command->color0, command->alpha);
@@ -481,11 +431,18 @@ static void WiiURenderer_buildQuadVertices(WiiURenderer* renderer, const WiiUQua
     }
 }
 
-// Render all queued game commands into the 640x480 offscreen colour buffer,
-// which must already be bound as the current render target.
-static void WiiURenderer_renderGameCommands(WiiURenderer* renderer) {
-    GX2SetViewport(0.0f, 0.0f, (float) WIIU_GAME_WIDTH, (float) WIIU_GAME_HEIGHT, 0.0f, 1.0f);
-    GX2SetScissor(0, 0, WIIU_GAME_WIDTH, WIIU_GAME_HEIGHT);
+static void WiiURenderer_renderCommandsToTarget(WiiURenderer* renderer) {
+    uint32_t presentWidth = (uint32_t) lroundf(renderer->presentLayout.targetWidth);
+    uint32_t presentHeight = (uint32_t) lroundf(renderer->presentLayout.targetHeight);
+
+    // Render fills the full 854x480 framebuffer
+    GX2SetViewport(0.0f, 0.0f, (float) WIIU_RENDER_WIDTH, (float) WIIU_RENDER_HEIGHT, 0.0f, 1.0f);
+    GX2SetScissor(
+        (uint32_t) renderer->presentLayout.xOffset,
+        (uint32_t) renderer->presentLayout.yOffset,
+        presentWidth,
+        presentHeight
+    );
     renderer->batchVertexCount = 0;
 
     if (renderer->commandCount == 0) return;
@@ -511,85 +468,6 @@ static void WiiURenderer_renderGameCommands(WiiURenderer* renderer) {
         WiiURenderer_flushVertices(renderer, renderer->batchVertexCount, currentTexturePageId);
         renderer->batchVertexCount = 0;
     }
-}
-
-// Blit the 640x480 offscreen colour buffer to the currently-bound scan buffer
-// (TV or DRC) using a single fullscreen quad.  The quad is sized to the
-// largest integer multiple of 640x480 that fits inside (scanW x scanH) and
-// centred.  The existing POINT sampler gives nearest-neighbour upscaling.
-static void WiiURenderer_blitOffscreenToScanBuffer(WiiURenderer* renderer, uint32_t scanW, uint32_t scanH) {
-    float x0, y0, x1, y1;
-    WiiURenderer_blitRect(scanW, scanH, &x0, &y0, &x1, &y1);
-
-    GX2SetViewport(0.0f, 0.0f, (float) scanW, (float) scanH, 0.0f, 1.0f);
-    GX2SetScissor(0, 0, scanW, scanH);
-
-    WiiURenderer_bindShader(renderer);
-    WiiURenderer_setCommonState(false);  // no blending for the final blit
-
-    WiiURenderer_ensureVertexCapacity(renderer, WIIU_VERTICES_PER_QUAD);
-    WiiURenderer_mapVertexBuffer(renderer);
-    renderer->batchVertexCount = 0;
-
-    // Full white tint, UV covers the entire 640x480 texture.
-    // Offscreen color buffers are sampled upside-down relative to our
-    // top-left game coordinate system, so flip V during the blit pass.
-    const uint32_t white = 0xFFFFFF;
-    const float    alpha = 1.0f;
-    WiiURenderer_emitVertex(renderer, (WiiUVec2){x0, y1}, 0.0f, 0.0f, white, alpha); // BL
-    WiiURenderer_emitVertex(renderer, (WiiUVec2){x1, y1}, 1.0f, 0.0f, white, alpha); // BR
-    WiiURenderer_emitVertex(renderer, (WiiUVec2){x0, y0}, 0.0f, 1.0f, white, alpha); // TL
-    WiiURenderer_emitVertex(renderer, (WiiUVec2){x0, y0}, 0.0f, 1.0f, white, alpha); // TL
-    WiiURenderer_emitVertex(renderer, (WiiUVec2){x1, y1}, 1.0f, 0.0f, white, alpha); // BR
-    WiiURenderer_emitVertex(renderer, (WiiUVec2){x1, y0}, 1.0f, 1.0f, white, alpha); // TR
-
-    WiiURenderer_flushVerticesWithTexture(renderer, renderer->batchVertexCount, &renderer->offscreenTexture);
-    renderer->batchVertexCount = 0;
-}
-
-static bool WiiURenderer_initOffscreenBuffer(WiiURenderer* renderer) {
-    // Allocate a 640x480 tiled colour buffer as the offscreen render target.
-    memset(&renderer->offscreenColorBuffer, 0, sizeof(renderer->offscreenColorBuffer));
-    renderer->offscreenColorBuffer.surface.dim       = GX2_SURFACE_DIM_TEXTURE_2D;
-    renderer->offscreenColorBuffer.surface.width     = WIIU_GAME_WIDTH;
-    renderer->offscreenColorBuffer.surface.height    = WIIU_GAME_HEIGHT;
-    renderer->offscreenColorBuffer.surface.depth     = 1;
-    renderer->offscreenColorBuffer.surface.mipLevels = 1;
-    renderer->offscreenColorBuffer.surface.format    = GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8;
-    renderer->offscreenColorBuffer.surface.aa        = GX2_AA_MODE1X;
-    renderer->offscreenColorBuffer.surface.use       = GX2_SURFACE_USE_TEXTURE | GX2_SURFACE_USE_COLOR_BUFFER;
-    renderer->offscreenColorBuffer.surface.tileMode  = GX2_TILE_MODE_DEFAULT;
-    GX2CalcSurfaceSizeAndAlignment(&renderer->offscreenColorBuffer.surface);
-    GX2InitColorBufferRegs(&renderer->offscreenColorBuffer);
-
-    renderer->offscreenColorBuffer.surface.image =
-        WiiURenderer_gpuAlloc(renderer->offscreenColorBuffer.surface.alignment,
-                              renderer->offscreenColorBuffer.surface.imageSize);
-    GX2Invalidate(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_COLOR_BUFFER,
-                  renderer->offscreenColorBuffer.surface.image,
-                  renderer->offscreenColorBuffer.surface.imageSize);
-
-    // Build a GX2Texture view of the same surface so we can sample it during blit.
-    memset(&renderer->offscreenTexture, 0, sizeof(renderer->offscreenTexture));
-    renderer->offscreenTexture.surface        = renderer->offscreenColorBuffer.surface;
-    renderer->offscreenTexture.viewFirstMip   = 0;
-    renderer->offscreenTexture.viewNumMips    = 1;
-    renderer->offscreenTexture.viewFirstSlice = 0;
-    renderer->offscreenTexture.viewNumSlices  = 1;
-    renderer->offscreenTexture.compMap        = GX2_COMP_MAP(GX2_SQ_SEL_R, GX2_SQ_SEL_G, GX2_SQ_SEL_B, GX2_SQ_SEL_A);
-    GX2InitTextureRegs(&renderer->offscreenTexture);
-
-    renderer->offscreenReady = true;
-    return true;
-}
-
-static void WiiURenderer_destroyOffscreenBuffer(WiiURenderer* renderer) {
-    if (renderer->offscreenColorBuffer.surface.image != NULL) {
-        WiiURenderer_gpuFree(renderer->offscreenColorBuffer.surface.image);
-    }
-    memset(&renderer->offscreenColorBuffer, 0, sizeof(renderer->offscreenColorBuffer));
-    memset(&renderer->offscreenTexture,     0, sizeof(renderer->offscreenTexture));
-    renderer->offscreenReady = false;
 }
 
 static bool WiiURenderer_initShaderPipeline(WiiURenderer* renderer) {
@@ -639,27 +517,15 @@ static void WiiURenderer_init(Renderer* base, DataWin* dataWin) {
         return;
     }
 
-    // Detect TV output resolution before the first refreshOutputState so the
-    // present layout is correct from the very first frame.
-    WiiURenderer_detectTVResolution(renderer);
+    // Scale TV and DRC scan buffers from 854x480 up to their native output resolution.
+    // This means we render once at 480p and GX2 handles the upscale, avoiding manual
+    // nearest-neighbour present layout math entirely.
     WiiURenderer_refreshOutputState(renderer);
-
-    {
-        char tvLog[128];
-        snprintf(tvLog, sizeof(tvLog),
-            "wiiu_renderer: TV scan mode detected: %ux%u (point-filter integer upscale)",
-            renderer->tvWidth, renderer->tvHeight);
-        WiiURenderer_bootLog(tvLog);
-    }
+    WiiURenderer_bootLog("wiiu_renderer: GX2 scale set to 854x480");
 
     renderer->clearR = 0;
     renderer->clearG = 0;
     renderer->clearB = 0;
-
-    if (!WiiURenderer_initOffscreenBuffer(renderer)) {
-        WiiURenderer_bootLog("wiiu_renderer: failed to create offscreen buffer");
-        return;
-    }
 
     WiiURenderer_loadTexturePages(renderer, dataWin);
     WiiURenderer_bootLog("wiiu_renderer: gpu path ready");
@@ -670,7 +536,6 @@ static void WiiURenderer_destroy(Renderer* base) {
     WiiURenderer* renderer = (WiiURenderer*) base;
 
     WiiURenderer_freeTexturePages(renderer);
-    WiiURenderer_destroyOffscreenBuffer(renderer);
     WiiURenderer_destroyVertexBuffer(renderer);
     if (renderer->shaderReady) {
         WHBGfxFreeShaderGroup(&renderer->shaderGroup);
@@ -679,13 +544,14 @@ static void WiiURenderer_destroy(Renderer* base) {
     free(renderer);
 }
 
-static void WiiURenderer_beginFrame(Renderer* base, [[maybe_unused]] uint32_t clearColor, [[maybe_unused]] uint32_t speed, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
+static void WiiURenderer_beginFrame(Renderer* base, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH) {
     (void) windowW;
     (void) windowH;
 
     WiiURenderer* renderer = (WiiURenderer*) base;
     renderer->frameWidth = gameW;
     renderer->frameHeight = gameH;
+    WiiURenderer_updatePresentLayout(renderer);
     renderer->viewX = 0;
     renderer->viewY = 0;
     renderer->viewW = gameW;
@@ -701,7 +567,7 @@ static void WiiURenderer_beginFrame(Renderer* base, [[maybe_unused]] uint32_t cl
     renderer->queuedQuadCount = 0;
 }
 
-static void WiiURenderer_beginView(Renderer* base, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle, [[maybe_unused]] uint32_t viewIndex) {
+static void WiiURenderer_beginView(Renderer* base, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle) {
     (void) viewAngle;
 
     WiiURenderer* renderer = (WiiURenderer*) base;
@@ -788,54 +654,49 @@ static void WiiURenderer_endFrame(Renderer* base) {
     WHBGfxBeginRender();
     WiiURenderer_refreshOutputState(renderer);
 
-    // ── Pass 1: render game commands into the 640x480 offscreen buffer ──────
-    // We use WHBGfxBeginRenderTV as a convenient way to get a valid GX2 context,
-    // then immediately redirect the render target to our offscreen buffer.
-    clock_gettime(CLOCK_MONOTONIC, &tvStart);
-    WHBGfxBeginRenderTV();
-
-    GX2SetColorBuffer(&renderer->offscreenColorBuffer, GX2_RENDER_TARGET_0);
-    GX2SetViewport(0.0f, 0.0f, (float) WIIU_GAME_WIDTH, (float) WIIU_GAME_HEIGHT, 0.0f, 1.0f);
-    GX2SetScissor(0, 0, WIIU_GAME_WIDTH, WIIU_GAME_HEIGHT);
-
-    // Clear to the game background colour.
-    GX2ClearColor(&renderer->offscreenColorBuffer,
+    // Render DRC at 854x480
+    clock_gettime(CLOCK_MONOTONIC, &drcStart);
+    WHBGfxBeginRenderDRC();
+    GX2SetScissor(0, 0, WIIU_RENDER_WIDTH, WIIU_RENDER_HEIGHT);
+    WHBGfxClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    GX2SetScissor(
+        (uint32_t) renderer->presentLayout.xOffset,
+        (uint32_t) renderer->presentLayout.yOffset,
+        (uint32_t) lroundf(renderer->presentLayout.targetWidth),
+        (uint32_t) lroundf(renderer->presentLayout.targetHeight)
+    );
+    WHBGfxClearColor(
         (float) renderer->clearR / 255.0f,
         (float) renderer->clearG / 255.0f,
         (float) renderer->clearB / 255.0f,
-        1.0f);
-    GX2SetContextState(WHBGfxGetTVContextState());
-    GX2SetColorBuffer(&renderer->offscreenColorBuffer, GX2_RENDER_TARGET_0);
-
-    WiiURenderer_renderGameCommands(renderer);
-    GX2DrawDone();
-
-    // Make the offscreen surface readable as a texture for the blit pass.
-    GX2Invalidate(GX2_INVALIDATE_MODE_COLOR_BUFFER | GX2_INVALIDATE_MODE_TEXTURE,
-                  renderer->offscreenColorBuffer.surface.image,
-                  renderer->offscreenColorBuffer.surface.imageSize);
-
-    // Restore TV scan buffer as render target, then blit.
-    GX2SetColorBuffer(WHBGfxGetTVColourBuffer(), GX2_RENDER_TARGET_0);
-    GX2SetViewport(0.0f, 0.0f, (float) renderer->tvWidth, (float) renderer->tvHeight, 0.0f, 1.0f);
-    GX2SetScissor(0, 0, renderer->tvWidth, renderer->tvHeight);
-    WHBGfxClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-
-    WiiURenderer_blitOffscreenToScanBuffer(renderer, renderer->tvWidth, renderer->tvHeight);
-
-    WHBGfxFinishRenderTV();
-    clock_gettime(CLOCK_MONOTONIC, &tvEnd);
-
-    // ── Pass 2: blit the same offscreen buffer to the DRC ───────────────────
-    clock_gettime(CLOCK_MONOTONIC, &drcStart);
-    WHBGfxBeginRenderDRC();
-    WHBGfxClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    WiiURenderer_blitOffscreenToScanBuffer(renderer, WIIU_DRC_WIDTH, WIIU_DRC_HEIGHT);
+        1.0f
+    );
+    WiiURenderer_renderCommandsToTarget(renderer);
     WHBGfxFinishRenderDRC();
     GX2DrawDone();
     clock_gettime(CLOCK_MONOTONIC, &drcEnd);
 
+    // Render TV at 854x480
+    clock_gettime(CLOCK_MONOTONIC, &tvStart);
+    WHBGfxBeginRenderTV();
+    GX2SetScissor(0, 0, WIIU_RENDER_WIDTH, WIIU_RENDER_HEIGHT);
+    WHBGfxClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    GX2SetScissor(
+        (uint32_t) renderer->presentLayout.xOffset,
+        (uint32_t) renderer->presentLayout.yOffset,
+        (uint32_t) lroundf(renderer->presentLayout.targetWidth),
+        (uint32_t) lroundf(renderer->presentLayout.targetHeight)
+    );
+    WHBGfxClearColor(
+        (float) renderer->clearR / 255.0f,
+        (float) renderer->clearG / 255.0f,
+        (float) renderer->clearB / 255.0f,
+        1.0f
+    );
+    WiiURenderer_renderCommandsToTarget(renderer);
+    WHBGfxFinishRenderTV();
     WHBGfxFinishRender();
+    clock_gettime(CLOCK_MONOTONIC, &tvEnd);
 
     renderer->perfRenderTvMs += WiiURenderer_elapsedMs(&tvStart, &tvEnd);
     renderer->perfRenderDrcMs += WiiURenderer_elapsedMs(&drcStart, &drcEnd);
@@ -1053,8 +914,7 @@ static void WiiURenderer_drawText(Renderer* base, const char* text, float x, flo
     if (!renderer->texturePages[fontTpag->texturePageId].ready) return;
 
     GX2Texture* page = &renderer->texturePages[fontTpag->texturePageId].texture;
-    PreprocessedText processedPt = TextUtils_preprocessGmlText(text);
-    const char* processed = processedPt.text;
+    char* processed = TextUtils_preprocessGmlText(text);
     int32_t textLen = (int32_t) strlen(processed);
     int32_t lineCount = TextUtils_countLines(processed, textLen);
     float totalHeight = (float) lineCount * (float) font->emSize;
@@ -1128,7 +988,7 @@ static void WiiURenderer_drawText(Renderer* base, const char* text, float x, flo
         lineStart = TextUtils_skipNewline(processed, lineEnd, textLen);
     }
 
-    PreprocessedText_free(processedPt);
+    free(processed);
 }
 
 static void WiiURenderer_flush(Renderer* base) {
@@ -1175,8 +1035,6 @@ static RendererVtable WiiURendererVtable = {
     .createSpriteFromSurface = WiiURenderer_createSpriteFromSurface,
     .deleteSprite = WiiURenderer_deleteSprite,
     .drawTile = NULL,
-    .onRoomEnd = NULL,
-    .onRoomStart = NULL,
     .onRoomEnd = WiiURenderer_onRoomEnd,
 };
 

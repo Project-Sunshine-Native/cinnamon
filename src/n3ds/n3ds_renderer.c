@@ -74,33 +74,33 @@ static int g_boxDbgPrints = 0;
 typedef struct { size_t size; uint32_t _pad; } LodePNGAllocHeader;
 
 void* lodepng_malloc(size_t size) {
-    // Use linear heap for PNG decode buffers (ctr app heap is too small).
-    // Header stores payload size so we can emulate realloc.
-    if (size == 0) return NULL;
-    size_t total = size + sizeof(LodePNGAllocHeader);
-    LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
-    if (!hdr) return NULL;
-    hdr->size = size;
-    return (void*) (hdr + 1);
+    //size_t total = size + sizeof(LodePNGAllocHeader);
+    //LodePNGAllocHeader* hdr = (LodePNGAllocHeader*) linearAlloc(total);
+    //if (!hdr) return NULL;
+    //hdr->size = size;
+    //return hdr + 1;
+    return malloc(size);
 }
 
 void lodepng_free(void* ptr);
 
 void* lodepng_realloc(void* ptr, size_t new_size) {
-    if (!ptr) return lodepng_malloc(new_size);
-    if (!new_size) { lodepng_free(ptr); return NULL; }
-    LodePNGAllocHeader* old_hdr = ((LodePNGAllocHeader*)ptr) - 1;
-    size_t old_size = old_hdr->size;
-    void* new_ptr = lodepng_malloc(new_size);
-    if (!new_ptr) return NULL;
-    memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
-    lodepng_free(ptr);
-    return new_ptr;
+    //if (!ptr)      return lodepng_malloc(new_size);
+    //if (!new_size) { lodepng_free(ptr); return NULL; }
+    //LodePNGAllocHeader* old_hdr = (LodePNGAllocHeader*)ptr - 1;
+    //size_t old_size = old_hdr->size;
+    //void* new_ptr = lodepng_malloc(new_size);
+    //if (!new_ptr) return NULL;
+    //memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
+    //lodepng_free(ptr);
+    //return new_ptr;
+    return realloc(ptr, new_size);
 }
 
 void lodepng_free(void* ptr) {
-    if (!ptr) return;
-    linearFree(((LodePNGAllocHeader*)ptr) - 1);
+    //if (!ptr) return;
+    //linearFree((LodePNGAllocHeader*)ptr - 1);
+    free(ptr);
 }
 
 #include "lodepng.h"
@@ -809,14 +809,6 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
     entry->texW = gpuTexDim(entry->srcW);
     entry->texH = gpuTexDim(entry->srcH);
 
-    // Ensure enough linear headroom for GPU tex + swizzle scratch.
-    // Without this, we hit C3D_TexInit/linearAlloc failures and sprites render as missing/cut boxes.
-    {
-        size_t bufSize = (size_t)entry->texW * entry->texH * 4;
-        // Add slack for allocator fragmentation and command buffers.
-        evictRegionsForDecode(pageIdx, bufSize + (512 * 1024));
-    }
-
     if (!C3D_TexInit(&entry->tex,
                      (uint16_t)entry->texW, (uint16_t)entry->texH,
                      GPU_RGBA8)) {
@@ -829,8 +821,7 @@ static bool uploadRegion(TexCachePage* page, RegionCacheEntry* entry, uint32_t p
     }
 
     size_t bufSize = (size_t)entry->texW * entry->texH * 4;
-    
-    uint8_t* swizzle = (uint8_t*) linearAlloc(bufSize);
+    uint8_t* swizzle = (uint8_t*)linearAlloc(bufSize);
     if (!swizzle) {
         LOG_ERR("CRenderer3DS: linearAlloc(%lu KB) failed for swizzle page %lu\n",
                 (unsigned long)(bufSize / 1024), (unsigned long)pageIdx);
@@ -938,26 +929,19 @@ static bool registerPage(DataWin* dw, TexCachePage* page, uint32_t blobOffset, u
     uint32_t hdr_buf[9];
     memset(hdr_buf, 0, sizeof(hdr_buf));
     uint8_t* hdr = (uint8_t*)hdr_buf;
+    
+    if (!dw || !dw->file) {
+        LOG_ERR("CRenderer3DS: page %lu - data.win stream is unavailable\n", (unsigned long)pageIdx);
+        page->loadFailed = true;
+        return false;
+    }
 
-    // Textures are now eagerly loaded into blobData during parse.
-    // Read the PNG header directly from blobData instead of from the file.
-    uint8_t* blobData = DataWin_loadTexture(dw, pageIdx);
-    if (!blobData || dw->txtr.textures[pageIdx].blobSize < 33) {
-        // Fallback: try dw->file if available (lazyLoadFile path)
-        if (dw->file) {
-            if (fseek(dw->file, (long)blobOffset, SEEK_SET) != 0 ||
-                fread(hdr, 1, 33, dw->file) != 33) {
-                LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header\n", (unsigned long)pageIdx);
-                page->loadFailed = true;
-                return false;
-            }
-        } else {
-            LOG_ERR("CRenderer3DS: page %lu - texture blobData unavailable\n", (unsigned long)pageIdx);
-            page->loadFailed = true;
-            return false;
-        }
-    } else {
-        memcpy(hdr, blobData, 33);
+    if (fseek(dw->file, (long)blobOffset, SEEK_SET) != 0 ||
+        fread(hdr, 1, 33, dw->file) != 33) {
+        LOG_ERR("CRenderer3DS: page %lu - failed to read PNG header from data.win\n",
+                (unsigned long)pageIdx);
+        page->loadFailed = true;
+        return false;
     }
 
     // Provide a valid LodePNGState to prevent NULL pointer dereferences
@@ -1003,11 +987,11 @@ static void drawRegion(CRenderer3DS* C,
                         float dstX,  float dstY,
                         float dstW,  float dstH,
                         float angle, u32 color,
-                        float blend,
-                        // Pivot in destination space, relative to the sprite's top-left
-                        // (after normalization for negative width/height).
-                        float pivotX, float pivotY)
+                        float blend)
 {
+    bool flipX = dstW < 0.0f;
+    bool flipY = dstH < 0.0f;
+
     if (isRotatedRectOffscreen(C, dstX, dstY, dstW, dstH, angle)) return;
 
     CFlushQueuedRects(C);
@@ -1128,16 +1112,15 @@ static void drawRegion(CRenderer3DS* C,
 
                 float drawX = chunkDestX;
                 float drawY = chunkDestY;
-
-                // Rotation pivot: GameMaker rotates around the sprite origin, not the chunk center.
-                // Convert the global pivot (relative to sprite top-left) into this chunk's local space.
                 float centerX = 0.0f;
                 float centerY = 0.0f;
                 if (angle != 0.0f) {
-                    float relChunkX = chunkDestX - baseDestX;
-                    float relChunkY = chunkDestY - baseDestY;
-                    centerX = pivotX - relChunkX;
-                    centerY = pivotY - relChunkY;
+                    centerX = chunkDestW * 0.5f;
+                    centerY = chunkDestH * 0.5f;
+                    // C2D applies center as an origin offset from pos; keep
+                    // the visual top-left fixed by advancing pos to the center.
+                    drawX += centerX;
+                    drawY += centerY;
                 }
 
                 C2D_DrawParams params = {
@@ -1506,11 +1489,7 @@ static void CInit(Renderer* renderer, DataWin* dataWin) {
         //printf("CRenderer3DS: running on Old 3DS - skipping font glyph preload\n");
     }
 
-    // Font preload pins thousands of glyph regions as permanent GPU textures, which
-    // quickly exhausts linear RAM and causes C3D_TexInit/linearAlloc failures for sprites.
-    // Keep runtime stable by skipping preload; glyph regions will be generated lazily.
-    // (If you want this back, preload only a small subset of fonts.)
-    // preloadFontGlyphs(C, dataWin);
+    preloadFontGlyphs(C, dataWin);
 
     printf("CRenderer3DS: initialized (%lu pages, region-cache mode)\n",
            (unsigned long)pageCount);
@@ -1564,7 +1543,7 @@ static void CDestroy(Renderer* renderer) {
     free(C->tpagToFrameIndex);
     free(C->tpagToBackgroundIndex);
     free(C->tpagFallbackLogged);
-    
+
     free(C);
 }
 
@@ -1612,16 +1591,6 @@ static void CBeginView(Renderer* renderer,
             effectivePortY += borderInsetY;
             effectivePortW = borderInnerW;
             effectivePortH = borderInnerH;
-        }
-    }
-
-    /* Pillarbox widescreen (16:9) into a centered 4:3 area on the top screen so side bars are black. */
-    if (viewIndex == 0 && effectivePortW > 0 && effectivePortH > 0) {
-        int32_t innerW = (int32_t)lroundf((float)effectivePortH * 4.0f / 3.0f);
-        if (innerW < effectivePortW) {
-            int32_t inset = (effectivePortW - innerW) / 2;
-            effectivePortX += inset;
-            effectivePortW = innerW;
         }
     }
 
@@ -1681,8 +1650,16 @@ static void CBeginFrame(Renderer* renderer, u32 clearColor, uint32_t speed, int3
     }
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 
-    // Always use lazy clear to avoid flickering on slow frames (e.g., during room transitions).
-    // The lazy clear in CSelectRenderTargetForView will clear each screen on first use.
+    // In lag mode skip the pre-emptive clear to avoid flickering: the lazy
+    // clear in CSelectRenderTargetForView will clear each screen on first use.
+    // Outside lag mode pre-clear both so screens with no draws this frame
+    // remain valid (not stale).
+    if (!C->lagMode) {
+        C2D_TargetClear(C->top, C->frameClearColor);
+        C2D_TargetClear(C->bottom, C->frameClearColor);
+        C->topClearedThisFrame = true;
+        C->bottomClearedThisFrame = true;
+    }
 }
 
 static void CEndFrame(Renderer* renderer) {
@@ -1705,13 +1682,8 @@ static void CEndFrame(Renderer* renderer) {
         //}
     //}
 
-    // Simple 4:3 pillarbox on the top screen: draw two black side bars.
-    // This is independent of view math and guarantees 4:3 presentation.
-    CSelectRenderTargetForView(C, 0);
-    C2D_DrawRectSolid(0.0f,   0.0f, 0.98f, 40.0f, 240.0f, C2D_Color32(0, 0, 0, 255));
-    C2D_DrawRectSolid(360.0f, 0.0f, 0.98f, 40.0f, 240.0f, C2D_Color32(0, 0, 0, 255));
-
     if (C->border.tex && C->border.subtex) {
+        CSelectRenderTargetForView(C, 0);
         C2D_DrawImageAt(C->border, 0, 0, 0.99f, NULL, 1.0f, 1.0f);
     }
 
@@ -1736,15 +1708,15 @@ static void CEndFrame(Renderer* renderer) {
             double tpms = 1000.0 / 268111856.0;
             double invFrames = 1.0 / (double)C->lagWindowFrameCount;
             fprintf(stderr,
-                "[LAG/%lu] Sprite=%.2fms(%lu) SpritePart=%.2fms(%lu) "
-                "Text=%.2fms(%lu) Rect=%.2fms(%lu) Line=%.2fms(%lu) Region=%.2fms(%lu) RectMerge=%lu\n",
-                (unsigned long)C->lagWindowFrameCount,
-                (double)C->lagWindowSpriteTicks     * tpms * invFrames, (unsigned long)C->lagWindowSpriteN,
-                (double)C->lagWindowSpritePartTicks * tpms * invFrames, (unsigned long)C->lagWindowSpritePartN,
-                (double)C->lagWindowTextTicks       * tpms * invFrames, (unsigned long)C->lagWindowTextN,
-                (double)C->lagWindowRectTicks       * tpms * invFrames, (unsigned long)C->lagWindowRectN,
-                (double)C->lagWindowLineTicks       * tpms * invFrames, (unsigned long)C->lagWindowLineN,
-                (double)C->lagWindowRegionTicks     * tpms * invFrames, (unsigned long)C->lagWindowRegionN,
+                "[LAG/%u] Sprite=%.2fms(%u) SpritePart=%.2fms(%u) "
+                "Text=%.2fms(%u) Rect=%.2fms(%u) Line=%.2fms(%u) Region=%.2fms(%u) RectMerge=%lu\n",
+                C->lagWindowFrameCount,
+                (double)C->lagWindowSpriteTicks     * tpms * invFrames, C->lagWindowSpriteN,
+                (double)C->lagWindowSpritePartTicks * tpms * invFrames, C->lagWindowSpritePartN,
+                (double)C->lagWindowTextTicks       * tpms * invFrames, C->lagWindowTextN,
+                (double)C->lagWindowRectTicks       * tpms * invFrames, C->lagWindowRectN,
+                (double)C->lagWindowLineTicks       * tpms * invFrames, C->lagWindowLineN,
+                (double)C->lagWindowRegionTicks     * tpms * invFrames, C->lagWindowRegionN,
                 (unsigned long)(C->lagWindowRectCmdMerged / C->lagWindowFrameCount));
 
             C->lagWindowSpriteTicks = C->lagWindowSpritePartTicks = C->lagWindowTextTicks = 0;
@@ -1755,15 +1727,6 @@ static void CEndFrame(Renderer* renderer) {
             C->lagWindowFrameCount = 0;
         }
     }
-
-    // Ensure both screens are cleared if not already done (prevents stale graphics).
-    if (!C->topClearedThisFrame) {
-        C2D_TargetClear(C->top, C->frameClearColor);
-    }
-    if (!C->bottomClearedThisFrame) {
-        C2D_TargetClear(C->bottom, C->frameClearColor);
-    }
-
     C->frameCounter++;
     C3D_FrameEnd(0);
 }
@@ -1944,9 +1907,9 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     }
 
     if (g_boxDbgPrints < 120 && (tpagIndex == 352 || tpagIndex == 2504)) {
-        printf("[BOX DBG] frame=%u tpag=%ld x=%.2f y=%.2f scale=%.3f,%.3f a=%.3f dst=%.2f,%.2f %.2fx%.2f check=%.2f,%.2f %.2fx%.2f viewScale=%.3f,%.3f off=%.2f,%.2f\n",
+        printf("[BOX DBG] frame=%u tpag=%d x=%.2f y=%.2f scale=%.3f,%.3f a=%.3f dst=%.2f,%.2f %.2fx%.2f check=%.2f,%.2f %.2fx%.2f viewScale=%.3f,%.3f off=%.2f,%.2f\n",
                (unsigned)C->frameCounter,
-               (long)tpagIndex,
+               tpagIndex,
                x, y, xscale, yscale, alpha,
                dstX, dstY, dstW, dstH,
                checkX, checkY, checkW, checkH,
@@ -1993,7 +1956,7 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                             C2D_PlainImageTint(&tint,
                                 C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                             (uint8_t)(alpha * 255.0f)),
-                                1.0f);
+                                0.0f);
 
                             // Backgrounds have no bounding-box concept, so tpag->boundingWidth/Height
                             // is 0 and sheetDstW/H would be 0 too. Use the actual subtex dimensions
@@ -2052,19 +2015,19 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
                         C2D_PlainImageTint(&tint,
                             C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                         (uint8_t)(alpha * 255.0f)),
-                            1.0f);
+                            0.0f);
 
-                        /* GM rotates around the sprite origin (originX, originY), not bbox center.
-                           Citro2D: pos = top-left of draw rect; center = pivot from that corner. */
-                        float pivotX = 0.0f;
-                        float pivotY = 0.0f;
-                        if (angleDeg != 0.0f) {
-                            pivotX = originX * xscale * C->scaleX;
-                            pivotY = originY * yscale * C->scaleY;
-                        }
                         C2D_DrawParams params = {
-                            .pos    = { sheetNormX, sheetNormY, sheetNormW, sheetNormH },
-                            .center = { pivotX, pivotY },
+                            .pos    = {
+                                sheetNormX + (angleDeg != 0.0f ? sheetNormW * 0.5f : 0.0f),
+                                sheetNormY + (angleDeg != 0.0f ? sheetNormH * 0.5f : 0.0f),
+                                sheetNormW,
+                                sheetNormH
+                            },
+                            .center = {
+                                (angleDeg != 0.0f ? sheetNormW * 0.5f : 0.0f),
+                                (angleDeg != 0.0f ? sheetNormH * 0.5f : 0.0f)
+                            },
                             .depth  = C->zCounter,
                             .angle  = angleRad,
                         };
@@ -2088,17 +2051,11 @@ static void CDrawSprite(Renderer* renderer, int32_t tpagIndex,
     if (pageIdx < C->pageCacheCount) {
         u32 tintColor = C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                      (uint8_t)(alpha * 255.0f));
-        // Pivot: GameMaker origin in atlas fallback is relative to the sprite bounding box,
-        // while dstX/dstY are based on the trimmed TPAG content rect (targetX/targetY).
-        // Therefore pivot relative to the trimmed dest rect is (origin - target) * scale.
-        float pivotX = ((originX - (float)tpag->targetX) * xscale) * C->scaleX;
-        float pivotY = ((originY - (float)tpag->targetY) * yscale) * C->scaleY;
         drawRegion(C, pageIdx,
                    (float)tpag->sourceX,    (float)tpag->sourceY,
                    (float)tpag->sourceWidth, (float)tpag->sourceHeight,
                    dstX, dstY, dstW, dstH,
-                   angleRad, tintColor, 1.0f,
-                   pivotX, pivotY);
+                   angleRad, tintColor, 0.0f);
     } else {
         DBG_LOG("CDrawSprite: ERROR - pageIdx %lu out of range (count %lu)\n",
                 (unsigned long)pageIdx, (unsigned long)C->pageCacheCount);
@@ -2195,7 +2152,7 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                                 C2D_PlainImageTint(&tint,
                                     C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                                 (uint8_t)(alpha * 255.0f)),
-                                    1.0f);
+                                    0.0f);
 
                                 C2D_DrawParams params = {
                                     .pos    = { dstX, dstY, dstW, dstH },
@@ -2233,8 +2190,7 @@ static void CDrawSpritePart(Renderer* renderer, int32_t tpagIndex,
                    dstX, dstY, dstW, dstH, 0.0f,
                    C2D_Color32(BGR_R(color), BGR_G(color), BGR_B(color),
                                (uint8_t)(alpha * 255.0f)),
-                   1.0f,
-                   0.0f, 0.0f);
+                   0.0f);
     } else {
         DBG_LOG("CDrawSpritePart: ERROR - Page %lu out of range\n", (unsigned long)pageIdx);
         C2D_DrawRectSolid(dstX, dstY, C->zCounter, dstW, dstH, C2D_Color32(255, 0, 0, 255));
@@ -2515,8 +2471,7 @@ static void CDrawText(Renderer* renderer, const char* text,
                          BGR_B(renderer->drawColor), 255));
 
     // Preprocess GML text (# -> newline, \# -> #)
-    PreprocessedText processedPt = TextUtils_preprocessGmlText(text);
-    const char* processed = processedPt.text;
+    char* processed = TextUtils_preprocessGmlText(text);
     int32_t textLen = (int32_t)strlen(processed);
 
     // Vertical alignment
@@ -2574,8 +2529,7 @@ static void CDrawText(Renderer* renderer, const char* text,
                         C2D_Color32(BGR_R(renderer->drawColor), BGR_G(renderer->drawColor),
                                     BGR_B(renderer->drawColor),
                                     (uint8_t)(renderer->drawAlpha * 255.0f)),
-                    1.0f,
-                    0.0f, 0.0f);
+                    1.0f);
             }
 
             cursorX += (float)glyph->shift;
@@ -2597,7 +2551,7 @@ static void CDrawText(Renderer* renderer, const char* text,
             break;
     }
 
-    PreprocessedText_free(processedPt);
+    free(processed);
     C2D_Fade(0);
     if (C->lagMode) { C->lagTextTicks += svcGetSystemTick() - _lagTXT0; C->lagTextN++; }
 }

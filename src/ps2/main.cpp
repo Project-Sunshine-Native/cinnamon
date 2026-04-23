@@ -412,7 +412,7 @@ int main(int argc, char* argv[]) {
     }
 
     VMContext* vm = VM_create(dataWin);
-    Runner* runner = Runner_create(dataWin, vm, nullptr, fileSystem, nullptr);
+    Runner* runner = Runner_create(dataWin, vm, fileSystem);
 
     {
         struct mallinfo mi = mallinfo();
