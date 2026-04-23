@@ -890,7 +890,7 @@ static void gsDestroy(Renderer* renderer) {
     free(gs);
 }
 
-static void gsBeginFrame(Renderer* renderer, [[maybe_unused]] uint32_t clearColor, [[maybe_unused]] uint32_t speed, [[maybe_unused]] int32_t gameW, [[maybe_unused]] int32_t gameH, [[maybe_unused]] int32_t windowW, [[maybe_unused]] int32_t windowH) {
+static void gsBeginFrame(Renderer* renderer, [[maybe_unused]] int32_t gameW, [[maybe_unused]] int32_t gameH, [[maybe_unused]] int32_t windowW, [[maybe_unused]] int32_t windowH) {
     GsRenderer* gs = (GsRenderer*) renderer;
     gs->zCounter = 1;
     gs->frameCounter++;
@@ -900,7 +900,7 @@ static void gsEndFrame([[maybe_unused]] Renderer* renderer) {
     // No-op: flip happens in main loop
 }
 
-static void gsBeginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, [[maybe_unused]] int32_t portX, [[maybe_unused]] int32_t portY, [[maybe_unused]] int32_t portW, [[maybe_unused]] int32_t portH, [[maybe_unused]] float viewAngle, [[maybe_unused]] uint32_t viewIndex) {
+static void gsBeginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH, [[maybe_unused]] int32_t portX, [[maybe_unused]] int32_t portY, [[maybe_unused]] int32_t portW, [[maybe_unused]] int32_t portH, [[maybe_unused]] float viewAngle) {
     GsRenderer* gs = (GsRenderer*) renderer;
     gs->viewX = viewX;
     gs->viewY = viewY;
@@ -1415,8 +1415,6 @@ static RendererVtable gsVtable = {
     .createSpriteFromSurface = gsCreateSpriteFromSurface,
     .deleteSprite = gsDeleteSprite,
     .drawTile = gsDrawTile,
-    .onRoomEnd = NULL,
-    .onRoomStart = NULL,
 };
 
 // ===[ Public API ]===

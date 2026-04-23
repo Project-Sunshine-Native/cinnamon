@@ -1,14 +1,7 @@
 #pragma once
 
-#include "common.h"
 #include <stdint.h>
 #include <string.h>
-
-#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
-#define CINNAMON_BIG_ENDIAN 1
-#else
-#define CINNAMON_BIG_ENDIAN 0
-#endif
 
 // Little-endian reads/writes from a raw byte buffer.
 // These are portable and work regardless of host endianness.
@@ -40,7 +33,7 @@ static inline int64_t BinaryUtils_readInt64(const uint8_t* data) {
 }
 
 static inline float BinaryUtils_readFloat32(const uint8_t* data) {
-#if CINNAMON_BIG_ENDIAN
+#ifdef __WIIU__
     uint32_t bits = BinaryUtils_readUint32(data);
     float val;
     memcpy(&val, &bits, 4);
@@ -53,15 +46,9 @@ static inline float BinaryUtils_readFloat32(const uint8_t* data) {
 }
 
 static inline double BinaryUtils_readFloat64(const uint8_t* data) {
-#if CINNAMON_BIG_ENDIAN
-    uint64_t bits = (uint64_t) data[0] |
-                    ((uint64_t) data[1] << 8) |
-                    ((uint64_t) data[2] << 16) |
-                    ((uint64_t) data[3] << 24) |
-                    ((uint64_t) data[4] << 32) |
-                    ((uint64_t) data[5] << 40) |
-                    ((uint64_t) data[6] << 48) |
-                    ((uint64_t) data[7] << 56);
+#ifdef __WIIU__
+    uint64_t bits = (uint64_t) data[0] | ((uint64_t) data[1] << 8) | ((uint64_t) data[2] << 16) | ((uint64_t) data[3] << 24) |
+                    ((uint64_t) data[4] << 32) | ((uint64_t) data[5] << 40) | ((uint64_t) data[6] << 48) | ((uint64_t) data[7] << 56);
     double val;
     memcpy(&val, &bits, 8);
     return val;
@@ -73,7 +60,7 @@ static inline double BinaryUtils_readFloat64(const uint8_t* data) {
 }
 
 static inline void BinaryUtils_writeUint32(uint8_t* data, uint32_t val) {
-#if CINNAMON_BIG_ENDIAN
+#ifdef __WIIU__
     data[0] = (uint8_t) (val & 0xFF);
     data[1] = (uint8_t) ((val >> 8) & 0xFF);
     data[2] = (uint8_t) ((val >> 16) & 0xFF);

@@ -70,7 +70,6 @@ typedef struct {
 typedef struct {
     AudioSystem base;
     FileSystem* fileSystem;
-    DataWin* dataWin;  // stored here since AudioSystem base no longer carries it
 
     bool initialized;
     int32_t maxChannels;
