@@ -1,5 +1,8 @@
 # Cinnamon
-A fork of Butterscotch with 3DS and Wii U support!
+
+## CINNAMON IS NOT FINISHED AND WILL HAVE BUGS.
+
+An extremely scuffedfork of Butterscotch with 3DS and Wii U support!
 
 ### TO-DO:
 - Optimize 3DS
