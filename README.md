@@ -5,7 +5,7 @@
 <h1 align="center">Cinnamon</h1>
 
 > [!IMPORTANT]  
-> Cinnamon is not finished and will have bugs.
+> Cinnamon is not finished and will have bugs. 3DS is going through a rewrite so you cannot build at this time.
 
 Cinnamon aims to be a open source re-implementation of GameMaker: Studio's runner for the 3DS and Wii U. This opens up lots of oppourtunities for games like Pizza Tower, Forager, Undertale, and Deltarune to run on the 3DS and Wii U.
 
