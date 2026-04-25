@@ -1,18 +1,15 @@
-# Cinnamon
+<p align="center">
+<a href="https://discord.gg/AahyBCvVR2"><img src="https://img.shields.io/discord/1406856655920168971?color=5865F2&logo=discord&logoColor=white&label=discord"></a>
+</p>
 
-## CINNAMON IS NOT FINISHED AND WILL HAVE BUGS.
+<h1 align="center">Cinnamon</h1>
 
-An extremely scuffedfork of Butterscotch with 3DS and Wii U support!
+> [!IMPORTANT]  
+> Cinnamon is not finished and will have bugs.
 
-### TO-DO:
-- Optimize 3DS
-- Fix room advancing on 3DS
-- Convert Asriel background into an animation
-- Fix Muffet pet attack
-- Fix rotation
-- Add colored sprites (3DS)
-- Disable lava_object or turn it into an animation
-- UPDATE SRC!!
+Cinnamon aims to be a open source re-implementation of GameMaker: Studio's runner for the 3DS and Wii U. This opens up lots of oppourtunities for games like Pizza Tower, Forager, Undertale, and Deltarune to run on the 3DS and Wii U.
+
+Games like UNDERTALE have already been successfully ported to the Wii U and 3DS and are playable the whole way through. While only Bytecode version 15 is supported as of now, more bytecodes and features will be implemented in the future.
 
 ### File Explanations:
 - runner.c handles events, rooms, instances, etc.
