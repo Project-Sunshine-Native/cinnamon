@@ -7,7 +7,7 @@
 > [!IMPORTANT]  
 > Cinnamon is not finished and will have bugs. 3DS is going through a rewrite so you cannot build at this time.
 
-Cinnamon aims to be a open source re-implementation of GameMaker: Studio's runner for the 3DS and Wii U. This opens up lots of oppourtunities for games like Pizza Tower, Forager, Undertale, and Deltarune to run on the 3DS and Wii U.
+Cinnamon aims to be a open source re-implementation of GameMaker: Studio's runner for the 3DS and Wii U. This opens up lots of opportunities for games like Pizza Tower, Forager, Undertale, and Deltarune to run on the 3DS and Wii U.
 
 Games like UNDERTALE have already been successfully ported to the Wii U and 3DS and are playable the whole way through. While only Bytecode version 16 is supported as of now, more bytecodes and features will be implemented in the future.
 
