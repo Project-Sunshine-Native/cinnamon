@@ -1,3 +1,5 @@
+// vm.c: runs the bytecode of the game
+
 #include "vm.h"
 #include "vm_builtins.h"
 #include "instance.h"

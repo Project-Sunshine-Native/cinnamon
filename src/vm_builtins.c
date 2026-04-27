@@ -1,3 +1,5 @@
+// vm_builtins.c: handles built in variables and funcs
+
 #include "vm_builtins.h"
 #include "instance.h"
 #include "runner.h"

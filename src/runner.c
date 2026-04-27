@@ -1,3 +1,5 @@
+// runner.c: handles events, rooms, instances, etc.
+
 #include "runner.h"
 #include "vm.h"
 #include "utils.h"
