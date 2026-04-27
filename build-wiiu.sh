@@ -12,7 +12,7 @@ VERSION="1.0.0"
 
 SOURCE_DIR="./source"
 BUILD_DIR="./build"
-OUTPUT_DIR="./output-wiiu"
+OUTPUT_DIR="./output/wiiu"
 
 ICON="./resources/wiiu/icon.png"        # 128x128 PNG
 TV_IMAGE="./resources/wiiu/tv.png"      # 1280x720 PNG  (TV banner)

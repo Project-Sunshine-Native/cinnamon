@@ -35,12 +35,12 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET      := $(notdir $(CURDIR))
 PROFILE ?= 0
-BUILD       := build-n3ds$(if $(filter 0,$(PROFILE)),,-profile)
+BUILD       := build/n3ds$(if $(filter 0,$(PROFILE)),,-profile)
 SOURCES     := src src/n3ds
 DATA        := data
 INCLUDES    := src src/n3ds 
 GRAPHICS    := gfx
-OUTPUT      := output
+OUTPUT      := output/3ds
 RESOURCES   := resources/3ds/meta
 ROMFS       := resources/3ds/romfs
 GFXBUILD    := $(ROMFS)/gfx

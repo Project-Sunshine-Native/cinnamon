@@ -10,7 +10,7 @@ set VERSION=1.0.0
 
 set SOURCE_DIR=.\source
 set BUILD_DIR=.\build
-set OUTPUT_DIR=.\output-wiiu
+set OUTPUT_DIR=.\output/wiiu
 
 set ICON=.\resources\wiiu\icon.png
 set TV_IMAGE=.\resources\wiiu\tv.png

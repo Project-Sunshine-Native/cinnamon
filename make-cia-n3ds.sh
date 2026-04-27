@@ -4,7 +4,7 @@ export DEVKITARM=$DEVKITPRO/devkitARM
 MAKEROM="$DEVKITPRO/tools/bin/makerom"
 
 # Basic makerom params (avoid using RSF). Override values as needed.
-OUT_DIR=./build-n3ds
+OUT_DIR=./build/n3ds
 ELF="$OUT_DIR/cinnamon.elf"
 OUT_CIA="$OUT_DIR/cinnamon.cia"
 

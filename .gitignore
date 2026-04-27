@@ -30,7 +30,6 @@
 build-n3ds/
 build-wiiu/
 
-output-wiiu/
-output-3ds/
+output/
 
 .vscode/

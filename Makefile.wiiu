@@ -14,11 +14,11 @@ TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/wut/share/wut_rules
 
 TARGET      := undertale
-BUILD       := build-wiiu
 SOURCES     := src src/wiiu
 INCLUDES    := src src/wiiu
 RESOURCES	:= resources/wiiu
-OUTPUT      := output-wiiu
+OUTPUT      := output/wiiu
+BUILD       := build-wiiu
 CONTENT_DIR := $(TOPDIR)/$(OUTPUT)/content
 
 export APP_NAME        := Undertale
