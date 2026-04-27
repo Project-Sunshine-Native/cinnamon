@@ -16,7 +16,7 @@ include $(DEVKITPRO)/wut/share/wut_rules
 TARGET      := undertale
 BUILD       := build-wiiu
 SOURCES     := src src/wiiu
-INCLUDES    := include src src/wiiu
+INCLUDES    := src src/wiiu
 OUTPUT      := output-wiiu
 CONTENT_DIR := $(TOPDIR)/$(OUTPUT)/content
 
