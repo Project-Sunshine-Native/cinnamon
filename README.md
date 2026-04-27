@@ -13,4 +13,4 @@ Games like UNDERTALE have already been successfully ported to the Wii U and 3DS 
 
 ## Disclaimer
 
-Cinnamon has no association, endorsement, or any connection whatsoever with any of the software that it facilitates, and does not provide any games by itself. In order to use Cinnamon, you will need to provide your own game files.
+Cinnamon has no association, endorsement, or any connection whatsoever with any of the software that it facilitates, and does not provide any of the software it can run by itself. In order to use Cinnamon, you will need to provide your own game files.
