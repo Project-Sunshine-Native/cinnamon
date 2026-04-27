@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 #include "utils.h"
 
 Instance* Instance_create(uint32_t instanceId, int32_t objectIndex, double x, double y) {

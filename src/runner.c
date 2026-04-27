@@ -11,7 +11,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 
 // ===[ Helper: Find event action in object hierarchy ]===
 // Walks the parent chain starting from objectIndex to find an event handler.

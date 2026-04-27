@@ -29,6 +29,7 @@
 # Build directories
 build-n3ds/
 build-wiiu/
+build/
 
 output/
 
