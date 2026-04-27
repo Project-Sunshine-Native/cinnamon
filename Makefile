@@ -41,8 +41,8 @@ DATA        := data
 INCLUDES    := src src/n3ds 
 GRAPHICS    := gfx
 OUTPUT      := output
-RESOURCES   := resources
-ROMFS       := romfs
+RESOURCES   := resources/3ds/meta
+ROMFS       := resources/3ds/romfs
 GFXBUILD    := $(ROMFS)/gfx
 #---------------------------------------------------------------------------------
 # Resource Setup
