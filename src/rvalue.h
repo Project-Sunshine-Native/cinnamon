@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 #include "utils.h"
 
 #include "json_writer.h"

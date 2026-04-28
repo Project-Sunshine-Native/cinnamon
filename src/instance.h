@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 #include "rvalue.h"
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 
 #define GML_ALARM_COUNT 12
 

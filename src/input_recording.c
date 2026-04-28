@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 
 InputRecording* InputRecording_createRecorder(const char* filePath) {
     InputRecording* rec = safeCalloc(1, sizeof(InputRecording));

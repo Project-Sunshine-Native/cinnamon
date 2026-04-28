@@ -6,7 +6,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 #include "utils.h"
 
 #ifdef __3DS__

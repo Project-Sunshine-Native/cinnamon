@@ -31,8 +31,9 @@
 #include <string.h>
 #include <time.h>
 
+#include <stb/image/stb_image.h>
+
 #include "../matrix_math.h"
-#include "../stb_image.h"
 #include "../text_utils.h"
 #include "../utils.h"
 

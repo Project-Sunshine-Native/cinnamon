@@ -11,7 +11,7 @@
 #include <ctype.h>
 #include <time.h>
 
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
 #include "text_utils.h"
 #include "collision.h"
 #include "ini.h"
