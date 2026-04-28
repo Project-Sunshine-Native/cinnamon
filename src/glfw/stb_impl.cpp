@@ -5,4 +5,4 @@
 #include "stb_image_write.h"
 
 #define STB_DS_IMPLEMENTATION
-#include "stb_ds.h"
+#include <stb/ds/stb_ds.h>
