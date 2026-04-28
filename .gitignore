@@ -27,10 +27,6 @@
 *.lib
 
 # Build directories
-build-n3ds/
-build-wiiu/
-
-output-wiiu/
-output-3ds/
+build/
 
 .vscode/
