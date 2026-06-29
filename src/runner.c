@@ -28,6 +28,7 @@
 #ifdef __3DS__
 void N3DSRenderer_beginBottomScreenGUIEx(Renderer* renderer, int32_t guiW, int32_t guiH, float scaleX, float scaleY, float offsetX, float offsetY);
 void N3DSRenderer_beginBottomScreenGUI(Renderer* renderer, int32_t guiW, int32_t guiH);
+void N3DSRenderer_beginBottomScreenGUIView(Renderer* renderer, int32_t guiW, int32_t guiH, int32_t viewX, int32_t viewY);
 void N3DSRenderer_endBottomScreenGUI(Renderer* renderer);
 void N3DSRenderer_beginBottomScreenGUI2x(Renderer* renderer, int32_t guiW, int32_t guiH);
 void N3DSRenderer_endBottomScreenGUI2x(Renderer* renderer);
@@ -107,6 +108,12 @@ static const float k3DSBottomBattleFieldScale = 1.0f;
 static const float k3DSBottomBattleFieldYOffset = 0.0f;
 static const float k3DSTopBattleEnemyInstanceYOffset = 112.0f;
 
+// Bottom-screen text/dialogue/inventory UI toggle
+// Set to 0 to render text boxes and inventory on the top screen (normal behavior)
+#ifndef N3DS_ENABLE_BOTTOM_TEXT_UI
+#define N3DS_ENABLE_BOTTOM_TEXT_UI 1
+#endif
+
 static bool Runner_stringContainsToken(const char* haystack, const char* needle) {
     return haystack != NULL && needle != NULL && strstr(haystack, needle) != NULL;
 }
@@ -116,6 +123,7 @@ static bool Runner_objectMatches3DSNameInHierarchy(Runner* runner, int32_t objec
 static bool Runner_objectContains3DSTokenInHierarchy(Runner* runner, int32_t objectIndex, const char* needle);
 static bool Runner_is3DSLiveBattleBorderObject(Runner* runner, Instance* inst);
 static bool Runner_shouldHideOn3DSTopScreen(Runner* runner, Instance* inst);
+static bool Runner_is3DSBattleUIObject(Runner* runner, Instance* inst);
 static bool Runner_is3DSBattleBackdropInstance(Runner* runner, Instance* inst);
 static bool Runner_shouldOffset3DSTopBattleInstance(Runner* runner, Instance* inst);
 static bool Runner_is3DSBattleFieldObject(Runner* runner, Instance* inst);
@@ -320,6 +328,80 @@ static bool Runner_is3DSBattleWriterObjectIndex(Runner* runner, int32_t objectIn
         Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "OBJ_NOMSCWRITER");
 }
 
+static bool Runner_is3DSTextUIObjectIndex(Runner* runner, int32_t objectIndex) {
+    if (!Runner_is3DSValidObjectIndex(runner, objectIndex)) return false;
+    // Writer objects (all variants inherit from obj_base_writer)
+    if (Runner_is3DSBattleWriterObjectIndex(runner, objectIndex)) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "OBJ_INSTAWRITER")) return true;
+    // Dialogue and choice objects
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_dialoguer")) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_choicer")) return true;
+    // Damage number writers
+    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "dmgwriter")) return true;
+    // Overworld game menu, inventory, and other UI
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_overworldcontroller")) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_gamemenu_fake")) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_itemswapper")) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_answernodule")) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_savepoint_fake")) return true;
+    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "songwriter")) return true;
+    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "FinalWriter")) return true;
+    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "floweydmgwriter")) return true;
+    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "mettatonnn_writer")) return true;
+    if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_face")) return true;
+    return false;
+}
+
+static bool Runner_is3DSTextUIObject(Runner* runner, Instance* inst) {
+    if (runner == NULL || inst == NULL) return false;
+    // If the object is already handled by the battle UI system, exclude it from text UI to prevent double-drawing
+    if (Runner_is3DSBattleUIObject(runner, inst)) return false;
+    return Runner_is3DSTextUIObjectIndex(runner, inst->objectIndex);
+}
+
+static bool Runner_has3DSTextUI(Runner* runner) {
+    if (runner == NULL || runner->instances == NULL) return false;
+    int32_t instanceCount = (int32_t) arrlen(runner->instances);
+    repeat(instanceCount, i) {
+        Instance* inst = runner->instances[i];
+        if (inst == NULL || inst->destroyed || !inst->active || !inst->visible) continue;
+        if (Runner_is3DSTextUIObject(runner, inst)) return true;
+    }
+    return false;
+}
+
+static void Runner_prepare3DSTextUIState(Runner* runner) {
+    if (runner == NULL || runner->n3dsDrawTextUIStateValid) return;
+    runner->n3dsDrawTextUIActive = false;
+    if (!N3DS_ENABLE_BOTTOM_TEXT_UI) { runner->n3dsDrawTextUIStateValid = true; return; }
+    runner->n3dsDrawTextUIActive = Runner_has3DSTextUI(runner);
+    runner->n3dsDrawTextUIStateValid = true;
+}
+
+static bool Runner_is3DSTextUIObjectCheck(Runner* runner, Instance* inst) {
+    if (!N3DS_ENABLE_BOTTOM_TEXT_UI) return false;
+    if (runner == NULL || inst == NULL) return false;
+    Runner_prepare3DSTextUIState(runner);
+    return runner->n3dsDrawTextUIActive && Runner_is3DSTextUIObject(runner, inst);
+}
+
+static void Runner_prepare3DSTextUIList(Runner* runner, Drawable* drawables, int32_t drawableCount) {
+    if (runner == NULL || runner->n3dsTextUIListValid) return;
+    arrsetlen(runner->n3dsTextUIInstances, 0);
+    Runner_prepare3DSTextUIState(runner);
+    if (!runner->n3dsDrawTextUIActive) { runner->n3dsTextUIListValid = true; return; }
+    repeat(drawableCount, i) {
+        Drawable* d = &drawables[i];
+        if (d->type != DRAWABLE_INSTANCE) continue;
+        Instance* inst = d->instance;
+        if (inst == NULL || !inst->active || !inst->visible) continue;
+        if (Runner_is3DSTextUIObject(runner, inst)) {
+            arrput(runner->n3dsTextUIInstances, inst);
+        }
+    }
+    runner->n3dsTextUIListValid = true;
+}
+
 static bool Runner_has3DSTopEnemyDialogue(Runner* runner, Drawable* drawables, int32_t drawableCount) {
     if (runner == NULL || drawables == NULL || drawableCount <= 0) return false;
 
@@ -376,7 +458,7 @@ static float Runner_get3DSTopBattleInstanceYOffset(Runner* runner, Instance* ins
     if (inst == NULL) return 0.0f;
     if (Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "asgoreb") ||
         Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "asgorespear")) {
-        return -200.0f;
+        return 0.0f;
     }
     return k3DSTopBattleEnemyInstanceYOffset;
 }
@@ -728,10 +810,64 @@ static void Runner_draw3DSBottomBattleUI(Runner* runner, Drawable* drawables, in
     N3DSRenderer_endBottomScreenGUI(runner->renderer);
 }
 
+static void Runner_draw3DSBottomTextUI(Runner* runner, Drawable* drawables, int32_t drawableCount, int32_t subtype, bool drawBattleFieldOnly, float scale, float yOffset) {
+    if (runner == NULL || runner->renderer == NULL) return;
+#ifdef N3DS_DISABLE_BOTTOM_SCREEN
+    (void) drawables;
+    (void) drawableCount;
+    (void) subtype;
+    (void) drawBattleFieldOnly;
+    (void) scale;
+    (void) yOffset;
+    return;
+#endif
+    if (!N3DS_ENABLE_BOTTOM_TEXT_UI) return;
+    (void) drawBattleFieldOnly;
+    int32_t slot = EventSlotMap_lookup(&runner->eventSlotMap, EVENT_DRAW, subtype);
+    if (subtype != DRAW_NORMAL && slot < 0) return;
+    Runner_prepare3DSTextUIList(runner, drawables, drawableCount);
+    if (!runner->n3dsDrawTextUIActive) return;
+    Instance** instances = runner->n3dsTextUIInstances;
+    int32_t instanceCount = (int32_t) arrlen(instances);
+    if (instanceCount <= 0) return;
+
+    int32_t viewIndex = runner->viewCurrent;
+    int32_t guiW = runner->views[viewIndex].viewWidth;
+    int32_t guiH = runner->views[viewIndex].viewHeight;
+    if (guiW <= 0) guiW = 320;
+    if (guiH <= 0) guiH = 240;
+    int32_t viewX = runner->views[viewIndex].viewX;
+    int32_t viewY = runner->views[viewIndex].viewY;
+
+    if (scale == 1.0f && yOffset == 0.0f) {
+        N3DSRenderer_beginBottomScreenGUIView(runner->renderer, guiW, guiH, viewX, viewY);
+    } else {
+        N3DSRenderer_beginBottomScreenGUIEx(runner->renderer, guiW, guiH, scale, scale, 0.0f, yOffset);
+    }
+    repeat(instanceCount, i) {
+        Instance* inst = instances[i];
+        if (inst == NULL || !inst->active || !inst->visible) continue;
+        int32_t ownerObjectIndex = -1;
+        int32_t codeId = slot >= 0
+            ? ResolvedEventTable_lookup(&runner->eventTable, inst->objectIndex, slot, &ownerObjectIndex)
+            : -1;
+        if (codeId >= 0) {
+            Runner_executeResolvedEvent(runner, inst, EVENT_DRAW, subtype, codeId, ownerObjectIndex);
+        } else {
+            if (subtype == DRAW_NORMAL) {
+                Renderer_drawSelf(runner->renderer, inst);
+            }
+        }
+    }
+    N3DSRenderer_endBottomScreenGUI(runner->renderer);
+}
+
 static bool Runner_shouldHideOn3DSTopScreen(Runner* runner, Instance* inst) {
     if (runner == NULL || runner->renderer == NULL || inst == NULL) return false;
     if (Runner_is3DSAsrielBattle(runner)) return false;
-    return Runner_is3DSBattleUIObject(runner, inst);
+    if (Runner_is3DSBattleUIObject(runner, inst)) return true;
+    if (Runner_is3DSTextUIObjectCheck(runner, inst)) return true;
+    return false;
 }
 #endif
 
@@ -1854,6 +1990,7 @@ void Runner_draw(Runner* runner) {
                 }
                 n3dsTopScreenDrawInstanceCursor++;
             }
+            if (Runner_is3DSTextUIObjectCheck(runner, inst)) continue;
 #endif
             int32_t ownerObjectIndex = -1;
             int32_t codeId = drawNormalSlot >= 0
@@ -2069,6 +2206,7 @@ void Runner_draw(Runner* runner) {
         Runner_draw3DSBottomBattleUI(runner, drawables, drawableCount, DRAW_NORMAL, true, battleFieldScale, battleFieldYOffset);
         Runner_draw3DSBottomBattleUI(runner, drawables, drawableCount, DRAW_NORMAL, false, 1.0f, 0.0f);
         }
+        Runner_draw3DSBottomTextUI(runner, drawables, drawableCount, DRAW_NORMAL, false, 1.0f, 0.0f);
     }
 #endif
     if (traceDraw) {
@@ -2179,6 +2317,8 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, float displa
     runner->n3dsDrawBattleStateValid = false;
     runner->n3dsBattleReplayListsValid = false;
     runner->n3dsTopScreenGUIListValid = false;
+    runner->n3dsDrawTextUIStateValid = false;
+    runner->n3dsTextUIListValid = false;
     repeat(3, i) runner->n3dsTopScreenGUIResponderListsValid[i] = false;
 
     bool viewsEnabled = (activeRoom->flags & 1) != 0;
