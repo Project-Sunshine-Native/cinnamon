@@ -103,8 +103,8 @@ static void Runner_executeResolvedEvent(Runner* runner, Instance* instance, int3
 
 #ifdef __3DS__
 //bottom screen battlefield offset factor
-static const float k3DSBottomBattleFieldScale = 2.0f;
-static const float k3DSBottomBattleFieldYOffset = -60.0f;
+static const float k3DSBottomBattleFieldScale = 1.0f;
+static const float k3DSBottomBattleFieldYOffset = 0.0f;
 static const float k3DSTopBattleEnemyInstanceYOffset = 112.0f;
 
 static bool Runner_stringContainsToken(const char* haystack, const char* needle) {
@@ -372,6 +372,15 @@ static bool Runner_shouldOffset3DSTopBattleInstance(Runner* runner, Instance* in
     return true;
 }
 
+static float Runner_get3DSTopBattleInstanceYOffset(Runner* runner, Instance* inst) {
+    if (inst == NULL) return 0.0f;
+    if (Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "asgoreb") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "asgorespear")) {
+        return -200.0f;
+    }
+    return k3DSTopBattleEnemyInstanceYOffset;
+}
+
 static bool Runner_is3DSBattleUIObject(Runner* runner, Instance* inst) {
     if (runner == NULL || inst == NULL) return false;
     if (!Runner_is3DSValidObjectIndex(runner, inst->objectIndex)) return false;
@@ -417,6 +426,30 @@ static bool Runner_is3DSBattleUIObject(Runner* runner, Instance* inst) {
             Runner_stringContainsToken(spriteName, "soul")) {
             return true;
         }
+    }
+
+    if (Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "blt") ||
+        Runner_objectMatches3DSNameInHierarchy(runner, inst->objectIndex, "obj_asgore_spearswipe") ||
+        Runner_objectMatches3DSNameInHierarchy(runner, inst->objectIndex, "obj_asgore_spearswipegen") ||
+        Runner_objectMatches3DSNameInHierarchy(runner, inst->objectIndex, "obj_asgorebulparent") ||
+        Runner_objectMatches3DSNameInHierarchy(runner, inst->objectIndex, "obj_asgoreattackgen") ||
+        Runner_objectMatches3DSNameInHierarchy(runner, inst->objectIndex, "obj_asgore_firehit") ||
+        Runner_objectMatches3DSNameInHierarchy(runner, inst->objectIndex, "obj_asgorefakespear") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "menubone") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "bonestab") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "bonewall") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "boneplat") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "boneloop") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "sans_bonebul") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "discoball") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "legline") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "sidedam") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "woshspiral") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "blackbox_rewind") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "answernode") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "target") ||
+        Runner_objectContains3DSTokenInHierarchy(runner, inst->objectIndex, "eyeflash")) {
+        return true;
     }
 
     if (runner->n3dsDrawDodgingBullets && Runner_is3DSInstanceInsideBattleField(runner, inst)) {
@@ -1834,7 +1867,7 @@ void Runner_draw(Runner* runner) {
                 Runner_shouldOffset3DSTopBattleInstance(runner, inst)) {
                 offsetTopBattleEnemy = true;
                 savedY = inst->y;
-                inst->y += k3DSTopBattleEnemyInstanceYOffset;
+                inst->y += Runner_get3DSTopBattleInstanceYOffset(runner, inst);
             }
 #endif
             if (codeId >= 0) {
