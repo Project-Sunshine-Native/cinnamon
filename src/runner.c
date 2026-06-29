@@ -109,7 +109,7 @@ static const float k3DSBottomBattleFieldYOffset = 0.0f;
 static const float k3DSTopBattleEnemyInstanceYOffset = 112.0f;
 
 // Bottom-screen text/dialogue/inventory UI toggle
-// Set to 0 to render text boxes and inventory on the top screen (normal behavior)
+// Set to 0 to render text boxes on top.. or turn it off in runner menu lmao
 #ifndef N3DS_ENABLE_BOTTOM_TEXT_UI
 #define N3DS_ENABLE_BOTTOM_TEXT_UI 1
 #endif
@@ -330,14 +330,12 @@ static bool Runner_is3DSBattleWriterObjectIndex(Runner* runner, int32_t objectIn
 
 static bool Runner_is3DSTextUIObjectIndex(Runner* runner, int32_t objectIndex) {
     if (!Runner_is3DSValidObjectIndex(runner, objectIndex)) return false;
-    // Writer objects (all variants inherit from obj_base_writer)
+    // Writer objects (all variants inherit from obj_base_writer.. a future issue with other games maybe)
     if (Runner_is3DSBattleWriterObjectIndex(runner, objectIndex)) return true;
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "OBJ_INSTAWRITER")) return true;
-    // Dialogue and choice objects
+    // Dialogue and choice objects.. this maps ALL text in the game so other games that use the same variables will have an issue uh oh 
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_dialoguer")) return true;
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_choicer")) return true;
-    // Damage number writers
-    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "dmgwriter")) return true;
     // Overworld game menu, inventory, and other UI
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_overworldcontroller")) return true;
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_gamemenu_fake")) return true;
@@ -345,8 +343,6 @@ static bool Runner_is3DSTextUIObjectIndex(Runner* runner, int32_t objectIndex) {
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_answernodule")) return true;
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_savepoint_fake")) return true;
     if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "songwriter")) return true;
-    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "FinalWriter")) return true;
-    if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "floweydmgwriter")) return true;
     if (Runner_objectContains3DSTokenInHierarchy(runner, objectIndex, "mettatonnn_writer")) return true;
     if (Runner_objectMatches3DSNameInHierarchy(runner, objectIndex, "obj_face")) return true;
     return false;
