@@ -63,9 +63,9 @@ Of course, there are exceptions that break game compatibility altogether:
 
 ## Building For Wii U
 
-You must have a proper devkitPro Wii U enviroment set up and configured for your platform.
+You must have a proper devkitPro Wii U enviroment set up and configured for your platform. The `wiiu-sdl2` and `ppc-bzip2` devkitPro packages also need to be installed.
 
-On Windows, make sure MinGW is located in your system PATH (C:/MinGW/bin) before proceeding with build instructions
+On Windows, make sure MinGW is located in your system PATH (C:/MinGW/bin) before proceeding with build instructions.
 
 Configure with the Wii U CMake wrapper and then build:
 
@@ -95,7 +95,7 @@ On Windows, build from PowerShell with:
 
 You must have a proper devkitPro 3DS environment set up and configured for your platform.
 
-On Windows, make sure MinGW is located in your system PATH (C:/MinGW/bin) before proceeding with build instructions
+On Windows, make sure MinGW is located in your system PATH (C:/MinGW/bin) before proceeding with build instructions.
 
 Configure and build it with the devkitPro 3DS toolchain:
 
