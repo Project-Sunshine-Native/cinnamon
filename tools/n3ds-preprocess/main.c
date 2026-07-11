@@ -910,7 +910,7 @@ static void appendDebugName(char* dst, size_t dstSize, const char* name) {
 
     size_t len = strlen(dst);
 
-    // FIX: If the buffer is already completely full, stop
+   
     if (len >= dstSize - 1) return;
 
     if (len > 0) {
