@@ -907,7 +907,12 @@ static void sanitizeLabel(char* dst, size_t dstSize, const char* src) {
 static void appendDebugName(char* dst, size_t dstSize, const char* name) {
     if (dst == NULL || dstSize == 0 || name == NULL || name[0] == '\0') return;
     if (strstr(dst, name) != NULL) return;
+
     size_t len = strlen(dst);
+
+    // FIX: If the buffer is already completely full, stop
+    if (len >= dstSize - 1) return;
+
     if (len > 0) {
         snprintf(dst + len, dstSize - len, ", %s", name);
     } else {
