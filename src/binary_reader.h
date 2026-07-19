@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+//It either helps reading the FILE or the buffer
 typedef struct {
     FILE* file;
     size_t fileSize;
@@ -18,6 +19,7 @@ typedef struct {
     size_t bufferPos; // current read position relative to bufferBase
 } BinaryReader;
 
+// Creates the structure based on the file
 BinaryReader BinaryReader_create(FILE* file, size_t fileSize);
 
 // Sets a memory buffer for bulk chunk reading

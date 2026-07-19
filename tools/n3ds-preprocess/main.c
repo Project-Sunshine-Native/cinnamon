@@ -300,34 +300,24 @@ static bool readRegistryString(HKEY root, const char* subKey, const char* valueN
 static void applyDefaultToolPaths(Options* out) {
     if (out == NULL) return;
 
-#if N3DS_PREPROCESS_HOST_WINDOWS
-    if (getExecutableDir(out->toolDirStorage, sizeof(out->toolDirStorage))) {
-        char adjacentPath[1024];
+    #if N3DS_PREPROCESS_HOST_WINDOWS
+        if (getExecutableDir(out->toolDirStorage, sizeof(out->toolDirStorage))) {
+            char adjacentPath[1024];
 
-        snprintf(adjacentPath, sizeof(adjacentPath), "%s\\tex3ds.exe", out->toolDirStorage);
-        if (fileExists(adjacentPath)) {
-            snprintf(out->tex3dsExeStorage, sizeof(out->tex3dsExeStorage), "%s", adjacentPath);
-            out->tex3dsExe = out->tex3dsExeStorage;
+            snprintf(adjacentPath, sizeof(adjacentPath), "%s\\tex3ds.exe", out->toolDirStorage);
+            if (fileExists(adjacentPath)) {
+                snprintf(out->tex3dsExeStorage, sizeof(out->tex3dsExeStorage), "%s", adjacentPath);
+                out->tex3dsExe = out->tex3dsExeStorage;
+            }
         }
-    }
-#endif
-
+    #endif
+    
     if (out->tex3dsExe == NULL) {
-        const char* devkitpro = getenv("DEVKITPRO");
-        if (devkitpro != NULL && devkitpro[0] != '\0') {
-#if N3DS_PREPROCESS_HOST_WINDOWS
-            snprintf(out->tex3dsExeStorage, sizeof(out->tex3dsExeStorage), "%s/tools/bin/tex3ds.exe", devkitpro);
-#else
-            snprintf(out->tex3dsExeStorage, sizeof(out->tex3dsExeStorage), "%s/tools/bin/tex3ds", devkitpro);
-#endif
-            out->tex3dsExe = out->tex3dsExeStorage;
-        } else {
-#if N3DS_PREPROCESS_HOST_WINDOWS
-            out->tex3dsExe = "C:/devkitPro/tools/bin/tex3ds.exe";
-#else
-            out->tex3dsExe = "/opt/devkitpro/tools/bin/tex3ds";
-#endif
-        }
+        #if N3DS_PREPROCESS_HOST_WINDOWS
+                    out->tex3dsExe = "C:/devkitPro/tools/bin/tex3ds.exe";
+        #else
+                    out->tex3dsExe = "/opt/devkitpro/tools/bin/tex3ds";
+        #endif            
     }
 
 }
@@ -434,6 +424,8 @@ static bool ensureDirRecursive(const char* path) {
 
     return ensureDir(temp);
 }
+
+
 
 static bool ensureOutputDirs(const char* outputDir) {
     if (!ensureDirRecursive(outputDir)) {
@@ -4243,6 +4235,8 @@ static bool pathLooksLikeRootDrive(const char* path) {
             (strlen(path) == 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/')));
 }
 
+
+/* Identifies if the candidate of the path in windows contains the file data.win*/
 static bool resolveUndertaleDataWinPath(const char* candidate, char* dataWinPath, size_t dataWinPathSize) {
     if (candidate == NULL || candidate[0] == '\0') return false;
 
@@ -4974,6 +4968,11 @@ int main(int argc, char** argv) {
 
     if (options.inputPath == NULL || options.outputDir == NULL) {
         printUsage(argv[0]);
+        return 1;
+    }
+
+    if(!fileExists(options.tex3dsExe)){
+        fprintf(stderr, "Could not find tex3ds at: %s\nExplicit the path using [--tex3ds <path>]\n",options.tex3dsExe);
         return 1;
     }
 

@@ -24,23 +24,27 @@ void BinaryReader_clearBuffer(BinaryReader* reader) {
 }
 
 static void readCheck(BinaryReader* reader, void* dest, size_t bytes) {
+    //First read what if it the buffer
     if (reader->buffer != nullptr) {
+        //Edgecase to looking outside the buffer
         if (reader->bufferPos + bytes > reader->bufferSize) {
             size_t absPos = reader->bufferBase + reader->bufferPos;
             fprintf(stderr, "BinaryReader: buffer read error at position 0x%zX (requested %zu bytes, buffer has %zu remaining)\n", absPos, bytes, reader->bufferSize - reader->bufferPos);
             abort();
         }
-        memcpy(dest, reader->buffer + reader->bufferPos, bytes);
-        reader->bufferPos += bytes;
+        memcpy(dest, reader->buffer + reader->bufferPos, bytes); //Doesn't validate memory overlapping 
+        reader->bufferPos += bytes; //Updates the buffer position for the following chunk
         return;
     }
 
-    size_t read = fread(dest, 1, bytes, reader->file);
+    //If there is nothing on the buffer, reads directly into the file
+    size_t read = fread(dest, 1, bytes, reader->file); //Read elements of 1 byte size, returns item read
     if (read != bytes) {
         long pos = ftell(reader->file) - (long) read;
         fprintf(stderr, "BinaryReader: read error at position 0x%lX (requested %zu bytes, got %zu, file size 0x%zX)\n", pos, bytes, read, reader->fileSize);
         abort();
     }
+    // By now the item is in dest location
 }
 
 uint8_t BinaryReader_readUint8(BinaryReader* reader) {
@@ -63,7 +67,7 @@ uint16_t BinaryReader_readUint16(BinaryReader* reader) {
 
 int32_t BinaryReader_readInt32(BinaryReader* reader) {
     uint32_t value;
-    readCheck(reader, &value, sizeof(value));
+    readCheck(reader, &value, sizeof(value)); //Saves a uint32 elements into value
     return (int32_t) BinaryUtils_toLittle32(value);
 }
 
