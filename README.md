@@ -4,13 +4,13 @@
     <img src="icon.png" height="128px"></img>
 </p>
 <p align="center">
-    <a href="https://discord.gg/AahyBCvVR2"><img src="https://img.shields.io/discord/1406856655920168971?color=5865F2&logo=discord&logoColor=white&label=discord"></a>
+    <a href="https://discord.gg/undertale3ds"><img src="https://img.shields.io/discord/1406856655920168971?color=5865F2&logo=discord&logoColor=white&label=discord"></a>
 </p>
 
 ---
 
 > [!IMPORTANT]  
-> Cinnamon is not finished and will have bugs. 
+> Cinnamon may not work with every game and games may have quirks that do not exist in the original GML runner.
 
 When you create a game in GameMaker: Studio and export it, GameMaker: Studio exports the game code as bytecode instead of native compiled code, and that bytecode is compatible with any other GameMaker: Studio runner (also known as YoYo runner), as long as they have matching GameMaker: Studio versions. This is similar to how Java applications work.
 
@@ -29,9 +29,9 @@ Cinnamon aims to be a open source re-implementation of GameMaker Studios runner 
 
 ## Game Compatibility
 
-Butterscotch's and Cinnamon's goal is to be able to have Undertale v1.08 (GameMaker: Studio 1.4.1804, Bytecode Version 16) fully playable. But we do want to support more GameMaker: Studio games in the future too!
+Cinnamon's goal is to be able to have most GML games fully playable. 
 
-While our target is Undertale v1.08, that doesn't mean that other games CAN'T run in Cinnamon! Because Cinnamon itself is a runner and not a Undertale port/remake, you CAN run other GameMaker: Studio games with it and, as long as the game is compiled with GameMaker: Studio 1.4.1804 and they only use GML variables and functions that Cinnamon supports, it should work fine.
+Of course, there are hardware limits. These are consoles that are more than a decade old and while Cinnamon is heavily optimized, games with heavy 3D or heavy particle systems MAY not work.
 
 Here are the Bytecode Versions that Cinnamon supports
 
@@ -40,26 +40,31 @@ Here are the Bytecode Versions that Cinnamon supports
 
 However, that doesn't mean that a game that uses a compatible version WILL run! The bytecode support is still a WIP, and Cinnamon may have quirks that the original GameMaker: Studio runner may not have.
 
+We do want to support more bytecode versions in the future (since Butterscotch supports more than 16 and 17) but currently, bytecode versions that arent 16 or 17 wont work.
+
 Of course, there are exceptions that break game compatibility altogether:
 
 * Games compiled with YYC, because they use native code instead of bytecode. 
 * Games compiled with the new [GMRT](https://github.com/YoYoGames/GMRT-Beta/tree/main), because they use native code instead of bytecode.
+This includes game like Forager, Hyperlight Drifter, and more. 
 
 ## Supported Platforms
 * Nintendo 3DS
 * Nintendo Wii U
-* ...and maybe more in the future!
+* ...and maybe more Nintendo consoles like the Wii soon!
+
+Cinnamon was made for Project Sunshines ports.
 
 ## Project Sunshine
 * Project Sunshine is a project that aims to use Cinnamon to port a variety of games (such as UNDERTALE, DELTARUNE, and maybe more games in the future) to the Wii U, 3DS, and maybe more consoles like the GameCube in the future! You can get beta builds on our [Discord](https://discord.gg/AahyBCvVR2) aswell as news on the ports.
 ### UNDERTALE: Wii U Edition
 * A released, full port of UNDERTALE on the Wii U. You can download this port on our releases page or on our Discord.
 ### DELTARUNE: Wii U Edition
-* A full port of DELTARUNE to the Wii U. Still currently in development. Expect a Chapter 1 release date of before July.
+* A full port of DELTARUNE Chapters 1-5 to the Wii U. Still currently in development.
 ### UNDERTALE: 3DS Edition
 * A full port of UNDERTALE to the 3DS with 3DS exclusive features such as 3D and bottom screen features.
 ### DELTARUNE: 3DS Edition
-* A full port of atleast Chapter One of DELTARUNE to the 3DS.
+* A full port of DELTARUNE Chapters 1-5 to the old and new 3DS.
 
 ## Building For Wii U
 
