@@ -32,7 +32,7 @@ static void N3DSFileSystem_openSdIoLog(void) {
     return;
 #else
     if (gN3DSSdIoLogFile != NULL) return;
-    gN3DSSdIoLogFile = fopen("sdmc:/3ds/cinnamon/sd_io.log", "a");
+    gN3DSSdIoLogFile = fopen("sdmc:/3ds/undertale/sd_io.log", "a");
     if (gN3DSSdIoLogFile != NULL) {
         setvbuf(gN3DSSdIoLogFile, NULL, _IOLBF, 0);
     }
@@ -305,7 +305,7 @@ N3DSFileSystem* N3DSFileSystem_create(const char* romfsBasePath, const char* sav
     N3DSFileSystem* fs = safeCalloc(1, sizeof(N3DSFileSystem));
     fs->base.vtable = &N3DSFileSystem_vtable;
     fs->romfsBasePath = safeStrdup(romfsBasePath != NULL ? romfsBasePath : "romfs:/");
-    fs->saveBasePath = safeStrdup(saveBasePath != NULL ? saveBasePath : "sdmc:/3ds/cinnamon/");
+    fs->saveBasePath = safeStrdup(saveBasePath != NULL ? saveBasePath : "sdmc:/3ds/undertale/");
     fs->resolvedPathCache = NULL;
     sh_new_strdup(fs->resolvedPathCache);
     return fs;
