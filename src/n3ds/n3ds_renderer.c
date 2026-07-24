@@ -3483,6 +3483,13 @@ void N3DSRenderer_beginBottomScreenGUI(Renderer* base, int32_t guiW, int32_t gui
     N3DSRenderer_beginBottomScreenGUIEx(base, guiW, guiH, 1.0f, 1.0f, 0.0f, 0.0f);
 }
 
+void N3DSRenderer_beginBottomScreenGUIView(Renderer* base, int32_t guiW, int32_t guiH, int32_t viewX, int32_t viewY) {
+    N3DSRenderer_beginBottomScreenGUIEx(base, guiW, guiH, 1.0f, 1.0f, 0.0f, 0.0f);
+    N3DSRenderer* renderer = (N3DSRenderer*) base;
+    renderer->viewX = viewX;
+    renderer->viewY = viewY;
+}
+
 void N3DSRenderer_endBottomScreenGUI(Renderer* base) {
     if (base == NULL) return;
 

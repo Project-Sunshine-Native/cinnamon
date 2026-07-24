@@ -482,6 +482,11 @@ typedef struct Runner {
     Instance** n3dsBattleFieldInstances;
     Instance** n3dsBattleUIInstances;
     Instance** n3dsTopScreenGUIInstances;
+    // Bottom-screen text/dialogue/inventory UI state (separate from battle)
+    bool n3dsDrawTextUIStateValid;
+    bool n3dsDrawTextUIActive;
+    bool n3dsTextUIListValid;
+    Instance** n3dsTextUIInstances;
     bool n3dsTopScreenGUIResponderListsValid[3];
     N3DSResolvedDrawEvent* n3dsTopScreenGUIResponderEvents[3];
 
