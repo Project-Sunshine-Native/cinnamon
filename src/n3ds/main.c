@@ -460,6 +460,8 @@ static void N3DS_drawFallbackRoomBorder(void) {
 
 static char* chooseDataWinPath(void) {
     if (fileExists("romfs:/data.win")) return safeStrdup("romfs:/data.win");
+    if (fileExists("romfs:/game.unx")) return safeStrdup("romfs:/game.unx");
+    if (fileExists("sdmc:/3ds/cinnamon/game.unx")) return safeStrdup("sdmc:/3ds/cinnamon/game.unx");
     return safeStrdup("sdmc:/3ds/cinnamon/data.win");
 }
 

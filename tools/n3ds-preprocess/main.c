@@ -4247,11 +4247,7 @@ static bool resolveUndertaleDataWinPath(const char* candidate, char* dataWinPath
     if (candidate == NULL || candidate[0] == '\0') return false;
 
     if (fileExists(candidate)) {
-        if (stringContainsIgnoreCase(candidate, "data.win")) {
-            snprintf(dataWinPath, dataWinPathSize, "%s", candidate);
-            return true;
-        }
-        if (stringContainsIgnoreCase(candidate, "game.unx")) {
+        if (stringContainsIgnoreCase(candidate, "data.win") || stringContainsIgnoreCase(candidate, "game.unx")) {
             snprintf(dataWinPath, dataWinPathSize, "%s", candidate);
             return true;
         }
