@@ -4251,6 +4251,10 @@ static bool resolveUndertaleDataWinPath(const char* candidate, char* dataWinPath
             snprintf(dataWinPath, dataWinPathSize, "%s", candidate);
             return true;
         }
+        if (stringContainsIgnoreCase(candidate, "game.unx")) {
+            snprintf(dataWinPath, dataWinPathSize, "%s", candidate);
+            return true;
+        }
         return false;
     }
 
@@ -4261,6 +4265,15 @@ static bool resolveUndertaleDataWinPath(const char* candidate, char* dataWinPath
     snprintf(directPath, sizeof(directPath), "%s\\data.win", candidate);
 #else
     snprintf(directPath, sizeof(directPath), "%s/data.win", candidate);
+#endif
+    if (fileExists(directPath)) {
+        snprintf(dataWinPath, dataWinPathSize, "%s", directPath);
+        return true;
+    }
+#if N3DS_PREPROCESS_HOST_WINDOWS
+    snprintf(directPath, sizeof(directPath), "%s\\game.unx", candidate);
+#else
+    snprintf(directPath, sizeof(directPath), "%s/game.unx", candidate);
 #endif
     if (fileExists(directPath)) {
         snprintf(dataWinPath, dataWinPathSize, "%s", directPath);
@@ -4277,6 +4290,12 @@ static bool resolveUndertaleDataWinPath(const char* candidate, char* dataWinPath
         snprintf(dataWinPath, dataWinPathSize, "%s\\data.win", candidate);
 #else
         snprintf(dataWinPath, dataWinPathSize, "%s/data.win", candidate);
+#endif
+        if (fileExists(dataWinPath)) return true;
+#if N3DS_PREPROCESS_HOST_WINDOWS
+        snprintf(dataWinPath, dataWinPathSize, "%s\\game.unx", candidate);
+#else
+        snprintf(dataWinPath, dataWinPathSize, "%s/game.unx", candidate);
 #endif
         if (fileExists(dataWinPath)) return true;
     }
@@ -4978,8 +4997,8 @@ int main(int argc, char** argv) {
     }
 
     if (!normalizeInputDataWinPath(&options)) {
-        fprintf(stderr, "Could not resolve data.win from: %s\n", options.inputPath);
-        fprintf(stderr, "Pass either the Undertale folder or the full path to data.win.\n");
+        fprintf(stderr, "Could not resolve data.win or game.unx from: %s\n", options.inputPath);
+        fprintf(stderr, "Pass either the Undertale folder or the full path to data.win or game.unx.\n");
         return 1;
     }
 
