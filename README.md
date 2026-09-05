@@ -10,7 +10,7 @@
 ---
 
 > [!IMPORTANT]  
-> Cinnamon may not work with every game and games may have quirks that do not exist in the original GML runner.
+> The latest version of Cinnamon can now be found [here](https://github.com/Grayforz2468/cinnamon-latest) due to GitHub support being very bad. This repo will still be updated with releases and will have occasional code updates. 
 
 When you create a game in GameMaker: Studio and export it, GameMaker: Studio exports the game code as bytecode instead of native compiled code, and that bytecode is compatible with any other GameMaker: Studio runner (also known as YoYo runner), as long as they have matching GameMaker: Studio versions. This is similar to how Java applications work.
 
