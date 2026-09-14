@@ -57,7 +57,7 @@ This includes game like Forager, Hyperlight Drifter, and more.
 Cinnamon was made for Project Sunshines ports.
 
 ## Project Sunshine
-* Project Sunshine is a project that aims to use Cinnamon to port a variety of games (such as UNDERTALE, DELTARUNE, and maybe more games in the future) to the Wii U, 3DS, and maybe more consoles like the GameCube in the future! You can get beta builds on our [Discord](https://discord.gg/undertale3ds) aswell as news on the ports.
+* Project Sunshine is a project that aims to use Cinnamon to port a variety of games (such as UNDERTALE, DELTARUNE, and maybe more games in the future) to the Wii U, 3DS, Wii, GameCube, and maybe more consoles in the future! You can get beta builds on our [Discord](https://discord.gg/undertale3ds) aswell as news on the ports.
 ### UNDERTALE: Wii U Edition
 * A released, full port of UNDERTALE on the Wii U. You can download this port on our releases page or on our Discord.
 ### DELTARUNE: Wii U Edition
