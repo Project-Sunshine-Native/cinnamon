@@ -1,7 +1,6 @@
 <h1 align="center">Cinnamon</h1>
 
-<p align="center">
-    <img src="icon.png" height="128px"></img>
+
 </p>
 <p align="center">
     <a href="https://discord.gg/undertale3ds"><img src="https://img.shields.io/discord/1406856655920168971?color=5865F2&logo=discord&logoColor=white&label=discord"></a>
@@ -24,7 +23,7 @@ If this already exists, then whats stopping people from porting Butterscotch to 
 
 This is where Cinnamon, a fork of Butterscotch comes in!
 
-Cinnamon aims to be a open source re-implementation of GameMaker Studios runner **for the 3DS and Wii U.** This opens up lots of opportunities for games like Pizza Tower, Undertale Yellow, Undertale, and Deltarune to run on the 3DS and Wii U.
+Cinnamon aims to be a open source re-implementation of GameMaker Studios runner **for the 3DS, Wii, GameCube, and Wii U.** This opens up lots of opportunities for games like Pizza Tower, Undertale Yellow, Undertale, and Deltarune to run on the 3DS, Wii, GameCube, and Wii U.
 
 
 ## Game Compatibility
@@ -51,12 +50,14 @@ This includes game like Forager, Hyperlight Drifter, and more.
 ## Supported Platforms
 * Nintendo 3DS
 * Nintendo Wii U
-* ...and maybe more Nintendo consoles like the Wii soon!
+* Nintendo Wii
+* Nintendo Gamecube (in the future)
+* ...and maybe more Nintendo consoles in the future!
 
 Cinnamon was made for Project Sunshines ports.
 
 ## Project Sunshine
-* Project Sunshine is a project that aims to use Cinnamon to port a variety of games (such as UNDERTALE, DELTARUNE, and maybe more games in the future) to the Wii U, 3DS, and maybe more consoles like the GameCube in the future! You can get beta builds on our [Discord](https://discord.gg/AahyBCvVR2) aswell as news on the ports.
+* Project Sunshine is a project that aims to use Cinnamon to port a variety of games (such as UNDERTALE, DELTARUNE, and maybe more games in the future) to the Wii U, 3DS, and maybe more consoles like the GameCube in the future! You can get beta builds on our [Discord](https://discord.gg/undertale3ds) aswell as news on the ports.
 ### UNDERTALE: Wii U Edition
 * A released, full port of UNDERTALE on the Wii U. You can download this port on our releases page or on our Discord.
 ### DELTARUNE: Wii U Edition
@@ -65,6 +66,14 @@ Cinnamon was made for Project Sunshines ports.
 * A full port of UNDERTALE to the 3DS with 3DS exclusive features such as 3D and bottom screen features.
 ### DELTARUNE: 3DS Edition
 * A full port of DELTARUNE Chapters 1-5 to the old and new 3DS.
+### UNDERTALE: Wii Edition
+* A full port of UNDERTALE to the Wii.
+### DELTARUNE Wii Edition
+* A full port of DELTARUNE to the Wii.
+### UNDERTALE: GameCube Edition
+* A full port of UNDERTALE to the GameCube.
+### DELTARUNE GameCube Edition
+* A full port of DELTARUNE Chapter 1 to the GameCube.
 
 ## Building For Wii U
 
