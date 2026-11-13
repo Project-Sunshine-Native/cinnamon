@@ -1,3 +1,5 @@
+
+
 <h1 align="center">Cinnamon</h1>
 
 
@@ -7,6 +9,9 @@
 </p>
 
 ---
+> [!IMPORTANT]  
+> This is an older repository of Cinnamon, and will only sometimes be updated with the latest source. For the most up to date source, please check https://github.com/Project-Sunshine-Native/cinnamon-runner
+
 Cinnamon is a **fully human made** fork of the Butterscotch GameMaker runner specifically targeting the Nintendo 3DS, Wii, and Wii U
 
 The 3DS, Wii, and Wii U backends were built by humans and humans only. No AI tools were used for development!
